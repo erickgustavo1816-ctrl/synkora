@@ -23,8 +23,10 @@ import { GuiToolCard, GuiToolGroupCard } from './GuiToolCard'
 import GuiMessageCopy from './GuiMessageCopy'
 import GuiErrorLine from './GuiErrorLine'
 import GuiQueuedMessageCard from './GuiQueuedMessageCard'
-import GuiComposerDeliveryActions from './GuiComposerDeliveryActions'
 import GuiAttachmentChips from './GuiAttachmentChips'
+import GuiComposerNotice, { type GuiComposerNoticeValue } from './GuiComposerNotice'
+import GuiAgentPulse from './GuiAgentPulse'
+import GuiBrowserReferenceChips from './GuiBrowserReferenceChips'
 import GuiSelectionMenu, { type GuiSelectionAction } from './GuiSelectionMenu'
 import {
   GUI_QUOTE_MAX_COUNT,
@@ -50,7 +52,6 @@ import {
 import { syncInputOverlayScroll } from '../guiFileMentions'
 import { useGuiFileMentions } from '../useGuiFileMentions'
 import { guiCopyableAssistantId } from '../guiMessageCopyPresentation'
-import { guiThinkingPresentation } from '../guiThinkingPresentation'
 import { guiBackgroundWorkPresentation } from '../guiBackgroundWorkPresentation'
 import {
   groupConsecutiveGuiTools,
@@ -90,6 +91,8 @@ import {
 } from '../guiApi'
 import { useGuiDraft } from '../useGuiDraft'
 import { useGuiComposerAttachments } from '../useGuiComposerAttachments'
+import { useGuiBrowserReferences } from '../useGuiBrowserReferences'
+import type { GuiBrowserReference } from '../../../shared/guiBrowserReferences'
 import { useGuiDropZone } from '../useGuiDropZone'
 import { useGuiComposerFit } from '../useGuiComposerFit'
 import { dragTransferHasFiles, guiDropZoneLabel } from '../guiDropZone'
@@ -106,8 +109,10 @@ import {
 import { guiContextPanelPresentation } from '../guiContextPanel'
 import {
   guiExpensiveSwitchNote,
+  guiHeavyConversationTip,
   guiOdometerPresentation,
-  guiSeatQuotaPresentation
+  guiSeatQuotaPresentation,
+  guiUsageMetersPresentation
 } from '../guiCostSignals'
 import {
   GUI_COMPOSER_ATTACHMENT_MAX_FILES,
@@ -118,7 +123,7 @@ import {
 import { shouldBlurGuiComposerOnOutsidePointerDown } from '../guiComposerFocus'
 import { guiAwaitingGoDecision } from '../guiAskForGo'
 import { guiComposerClearPlan } from '../guiComposerDelivery'
-import { dispatchOneGuiQueuedMessage } from '../guiQueuedDelivery'
+import { forceOneGuiQueuedMessage } from '../guiQueuedDelivery'
 import { parseGuiJsonCard } from '../guiJsonCard'
 import { useGuiTranscriptWindow } from '../useGuiTranscriptWindow'
 
@@ -296,12 +301,13 @@ function GuiOwnerBubble({
 }: {
   paneId: string
   item: Extract<GuiItem, { kind: 'user' }>
-}): React.JSX.Element {
+}): React.JSX.Element | null {
   // D4' (2026-09-02) — o dono: *"se eu quiser eu posso forçar, aí forçando ele
   // para o turno e lê o que eu quero falar, quando for algo urgente."* Um
   // gesto por vez: com a chamada em voo o botão desliga, senão dois cliques
   // virariam dois cortes.
   const [forcing, setForcing] = useState(false)
+  const [cancelling, setCancelling] = useState(false)
   const [refusal, setRefusal] = useState<string | null>(null)
   // D6 — O RECIBO. Sob a bolha (que não muda em nada), uma linha mono conta o
   // destino da fala; sem entrega, nada é desenhado e a bolha fica idêntica à
@@ -311,6 +317,7 @@ function GuiOwnerBubble({
   // armadilha, então ele leva o próprio nome, citando a fala.
   const stamp = ownerDeliveryStamp(item.delivery, Date.now())
   const label = ownerBubbleLabel(stamp)
+  const cancelledAway = item.delivery?.state === 'cancelled'
   const forceNow = useCallback(async (): Promise<void> => {
     setForcing(true)
     setRefusal(null)
@@ -320,6 +327,16 @@ function GuiOwnerBubble({
     // cai na linha de aviso da própria bolha, do lado do gesto que falhou.
     if (!result.ok) setRefusal(ownerForceRefusalText(result.error))
   }, [item.id, paneId])
+  const cancel = useCallback(async (): Promise<void> => {
+    setCancelling(true)
+    setRefusal(null)
+    const result = await guiApi.cancelOwnerMessage(paneId, item.id)
+    setCancelling(false)
+    if (!result.ok) setRefusal(`não deu para cancelar — ${result.error ?? 'a sessão não respondeu'}`)
+  }, [item.id, paneId])
+  // Cancelada = some (ordem do dono, 2026-09-16). O redutor já tira o item do
+  // fio; este guarda cobre uma bolha montada com a entrega cancelada por fora.
+  if (cancelledAway) return null
   return (
     <div className="gui-msg user" {...(label ? { role: 'group', 'aria-label': label } : {})}>
       <span className="gui-msg-tag">você</span>
@@ -329,7 +346,8 @@ function GuiOwnerBubble({
         paneId={paneId}
         presented
       />
-      <div className="gui-msg-text">{item.text}</div>
+      <GuiBrowserReferenceChips paneId={paneId} references={item.browserReferences ?? []} className="gui-msg-browser-references" />
+      {item.text.trim() && <div className="gui-msg-text">{item.text}</div>}
       {stamp && (
         <span className={`gui-owner-state gui-owner-state-${stamp.tone}`}>
           <i className="gui-owner-state-mark" aria-hidden="true" />
@@ -340,10 +358,18 @@ function GuiOwnerBubble({
               className="gui-owner-force"
               data-tip={stamp.action.hint}
               aria-label={ownerForceLabel(item.text)}
-              disabled={forcing}
+              disabled={forcing || cancelling}
               onClick={() => void forceNow()}
             >
               {stamp.action.label}
+            </button>
+          )}
+          {stamp.action && (
+            <button type="button" className="gui-owner-force gui-owner-cancel"
+              aria-label="Cancelar mensagem ainda não lida"
+              data-tip="retira a mensagem: o agente não vai obedecê-la, e nada é interrompido"
+              disabled={forcing || cancelling} onClick={() => void cancel()}>
+              {cancelling ? 'cancelando…' : 'cancelar'}
             </button>
           )}
         </span>
@@ -646,7 +672,6 @@ export default function GuiPane({
   const finishGuiReveal = useStore((s) => s.finishGuiReveal)
   const queueGuiMessage = useStore((s) => s.queueGuiMessage)
   const discardGuiQueuedMessage = useStore((s) => s.discardGuiQueuedMessage)
-  const retryGuiQueuedMessage = useStore((s) => s.retryGuiQueuedMessage)
   const claimGuiQueuedMessage = useStore((s) => s.claimGuiQueuedMessage)
   const acknowledgeGuiQueuedMessage = useStore((s) => s.acknowledgeGuiQueuedMessage)
   const restoreGuiQueuedMessage = useStore((s) => s.restoreGuiQueuedMessage)
@@ -793,6 +818,8 @@ export default function GuiPane({
 
   const { draft, setDraft, clearDraft } = useGuiDraft(paneId)
   const { attachments, setAttachments, clearAttachments } = useGuiComposerAttachments(paneId)
+  const { references: browserReferences, error: browserReferenceError,
+    remove: removeBrowserReference, consume: consumeBrowserReferences } = useGuiBrowserReferences(paneId)
   const [submitPending, setSubmitPending] = useState(false)
   const submitInFlightRef = useRef(false)
   const latestDraftRef = useRef(draft)
@@ -807,7 +834,12 @@ export default function GuiPane({
     if (readOnly) return
     setGuiComposerBusy(paneId, busyMenu !== null || attaching)
   }, [attaching, busyMenu, paneId, readOnly, setGuiComposerBusy])
-  const [attachmentError, setAttachmentError] = useState<string | null>(null)
+  const [attachmentError, setAttachmentError] = useState<GuiComposerNoticeValue | null>(null)
+  const reportAttachmentError = useCallback((message: string | null) => {
+    // A new object restarts the timer even when the same file is rejected again.
+    setAttachmentError(message ? { message } : null)
+  }, [])
+  const dismissAttachmentError = useCallback(() => setAttachmentError(null), [])
   // R33 — CITAÇÃO DO FIO. Por pane e SÓ em memória (decisão nomeada no
   // design): re-selecionar é barato, e a citação vive segundos entre o gesto
   // e o envio — persisti-la como o rascunho seria peso sem dor real.
@@ -833,7 +865,12 @@ export default function GuiPane({
   const pendingSlashCursorRef = useRef<number | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const composerSurfaceRef = useRef<HTMLDivElement>(null)
-  const composerFit = useGuiComposerFit(composerSurfaceRef, !readOnly)
+  // These cards and the history reader remove the composer without unmounting
+  // GuiPane. Reattach its observers when the editable surface comes back.
+  const planProposalCard = isGuiTurnActive(gui.status, gui.stream) ? null : gui.planProposal
+  const awaitingCard = Boolean(gui.question || gui.planReview || planProposalCard)
+  const composerVisible = !readOnly && !historyTarget && !awaitingCard
+  const composerFit = useGuiComposerFit(composerSurfaceRef, composerVisible)
   const paneRef = useRef<HTMLDivElement>(null)
   const {
     visibleItems,
@@ -1085,21 +1122,33 @@ export default function GuiPane({
     gui.perm,
     gui.planReview,
     gui.question,
+    gui.queued,
     gui.stream,
     gui.thinking,
     keepPinnedToEnd
   ])
 
   // textarea que cresce com o texto (Enter envia, Shift+Enter quebra linha).
-  // Teto alto e SEM barra de rolagem (ordem do dono): a caixa cresce até um
-  // terço da tela em vez de virar uma janelinha com scroll.
+  // A caixa cresce até 300px; depois, a barra visível permite percorrer todo
+  // o rascunho e mantém o texto pintado alinhado à posição do cursor.
   useLayoutEffect(() => {
     const ta = inputRef.current
-    if (!ta) return
-    ta.style.height = 'auto'
-    ta.style.height = `${Math.min(300, ta.scrollHeight)}px`
-    if (mentionOverlayRef.current) syncInputOverlayScroll(ta, mentionOverlayRef.current)
-  }, [draft])
+    if (!composerVisible || !ta) return
+    const resize = (): void => {
+      ta.style.height = 'auto'
+      ta.style.height = `${Math.min(300, ta.scrollHeight)}px`
+      if (mentionOverlayRef.current) syncInputOverlayScroll(ta, mentionOverlayRef.current)
+    }
+    resize()
+    let width = ta.clientWidth
+    const observer = new ResizeObserver(() => {
+      if (ta.clientWidth === width) return
+      width = ta.clientWidth
+      resize()
+    })
+    observer.observe(ta)
+    return () => observer.disconnect()
+  }, [draft, composerVisible])
 
   // Apos a mudanca controlada do texto, posiciona o cursor antes da pintura.
   // Assim a consulta concluida nao aparece outra vez no intervalo do DOM antigo.
@@ -1130,17 +1179,6 @@ export default function GuiPane({
   const canCompose = canComposeGuiMessage(gui.status, gui.ready)
   const canSubmit =
     canCompose && busyMenu === null && !attaching && !submitPending && gui.queued === null
-  // A PROPOSTA DE PLANO não bloqueia o CLI, então ela chega no MEIO da fala —
-  // e mostrá-la ali atropelava a resposta em curso (o dono viu o card "bugar e
-  // sumir"). Decisão dele: o agente termina de falar, e SÓ ENTÃO o card
-  // aparece embaixo da resposta — e FICA, atravessando os turnos seguintes,
-  // até ele decidir. O card pendente segue na fila o tempo todo; só a
-  // APRESENTAÇÃO espera o turno fechar.
-  const planProposalCard = isGuiTurnActive(gui.status, gui.stream) ? null : gui.planProposal
-  // Pergunta e plano SUSPENDEM o composer: é a linguagem do Claude GUI que o
-  // dono pediu — o que está na tela é a coisa a responder, não uma caixa de
-  // texto que compete com ela. Card ainda invisível não suspende nada.
-  const awaitingCard = Boolean(gui.question || gui.planReview || planProposalCard)
 
   // R33 — CITAÇÃO DO FIO: seleção + botão direito no fio viram "copiar" ou
   // chip de citação no composer ("eu falo sobre essa parte que ele falou").
@@ -1189,21 +1227,23 @@ export default function GuiPane({
   )
 
   const send = useCallback(
-    async (text: string, timing: 'now' | 'after-turn' = 'now'): Promise<boolean> => {
+    async (text: string, referenceSnapshot: GuiBrowserReference[]): Promise<boolean> => {
       const message = text.trim()
-      if ((!message && attachments.length === 0) || !canSubmit) return false
+      if ((!message && attachments.length === 0 && referenceSnapshot.length === 0) || !canSubmit) return false
       // R33 — as citações penduradas entram NA FRENTE do texto: uma verdade
       // só (a bolha mostra exatamente o que o modelo leu). Slash cru viaja
       // sem citação — comando é do binário, não conversa.
       const outgoing = message.startsWith('/') ? message : guiQuotedPrompt(quotes, message)
       pinnedRef.current = true
       setPinned(true)
-      if (timing === 'after-turn') {
+      // Keep a busy-turn message local until delivery so its X can really
+      // cancel it. Read now explicitly claims this same durable envelope.
+      if (turnOpen) {
         const queued = queueGuiMessage(paneId, outgoing, {
           model: liveModel ?? null,
           effort: liveEffort ?? null,
           permissionMode: mode
-        }, attachments)
+        }, attachments, referenceSnapshot)
         if (queued) setQuotes([])
         else handleGuiLive(paneId, {
           type: 'limit',
@@ -1236,30 +1276,11 @@ export default function GuiPane({
           })
           return false
         }
-        const revivedSent = await sendGuiMessage(paneId, outgoing, undefined, attachments, true)
+        const revivedSent = await sendGuiMessage(paneId, outgoing, undefined, attachments, true, referenceSnapshot)
         if (revivedSent) setQuotes([])
         return revivedSent
       }
-      // R31.1 — A FALA DO DONO ENTRA JÁ (queixa de 2026-08-23: "eu mando e
-      // ele lê três horas depois"). Turno aberto deixou de segurar mensagem:
-      // o claude de hoje steera o stdin na fronteira da próxima tool (sonda
-      // probe-claude-owner-midturn, 2.1.241) e o codex sempre teve turn/steer
-      // — o envio é o MESMO do turno fechado, e quem roteia é o main (pote
-      // R22 com wake no delegador, steering nos demais). Falha devolve o
-      // rascunho ao composer, como em qualquer envio.
-      // A única carga que ainda espera o fecho é o SLASH CRU (R31.2): comando
-      // é executado pelo binário, e slash steerado no meio do turno é
-      // comportamento não sondado.
-      if (turnOpen && message.startsWith('/')) {
-        return Boolean(
-          queueGuiMessage(paneId, message, {
-            model: liveModel ?? null,
-            effort: liveEffort ?? null,
-            permissionMode: mode
-          }, attachments)
-        )
-      }
-      const sent = await sendGuiMessage(paneId, outgoing, undefined, attachments)
+      const sent = await sendGuiMessage(paneId, outgoing, undefined, attachments, false, referenceSnapshot)
       if (sent) setQuotes([])
       return sent
     },
@@ -1279,28 +1300,26 @@ export default function GuiPane({
     ]
   )
 
-  // PULA A FILA (ordem do dono, 18/08: "tem mensagem que eu não quero esperar
-  // ele terminar"): o bilhete sai AGORA, dentro do turno vivo — o caminho
-  // direto de envio steera nos dois CLIs (codex turn/steer; claude steera o
-  // stdin na fronteira da próxima tool — sonda probe-claude-owner-midturn,
-  // 2.1.241, 2026-08-23), e o main não trava envio por turno. Pós-R31 a fila
-  // só guarda slash cru e envelope antigo do boot; o verbo continua para
-  // esses. O protocolo é o MESMO do dispatcher (claim → envio → ack/restore):
-  // o "enviando…", o erro com "tentar novamente" e a lease anti-disputa vêm
-  // de graça.
+  // This explicit gesture overrides the queue timing and forces reading.
+  // The queue claim excludes cancellation and duplicate dispatchers.
   const sendQueuedNow = useCallback(async () => {
-    const owner = `send-now-${globalThis.crypto.randomUUID()}`
-    await dispatchOneGuiQueuedMessage({
+    const owner = `read-now-${globalThis.crypto.randomUUID()}`
+    await forceOneGuiQueuedMessage({
       claim: () => claimGuiQueuedMessage(paneId, owner),
       // O bilhete já tem identidade durável. O eco autoritativo do main cria
       // a bolha, e o retry usa o MESMO id mesmo depois de uma resposta perdida.
-      deliver: (claimed) => guiApi.send(paneId, claimed.text, claimed.id, claimed.attachments),
+      deliver: (claimed) => guiApi.send(paneId, claimed.text, claimed.id, claimed.attachments, claimed.browserReferences),
+      force: (messageId) => guiApi.forceOwnerMessage(paneId, messageId),
+      onForceError: (error) => handleGuiLive(paneId, {
+        type: 'limit', text: ownerForceRefusalText(error)
+      }),
       ack: (claimed) => acknowledgeGuiQueuedMessage(paneId, claimed.id, owner),
       restore: (claimed, error) => restoreGuiQueuedMessage(paneId, claimed, error, owner)
     })
   }, [
     acknowledgeGuiQueuedMessage,
     claimGuiQueuedMessage,
+    handleGuiLive,
     paneId,
     restoreGuiQueuedMessage
   ])
@@ -1391,16 +1410,17 @@ export default function GuiPane({
     [fileMentions, setDraft, slashCursor]
   )
 
-  const submit = useCallback((timing: 'now' | 'after-turn' = 'now'): void => {
+  const submit = useCallback((): void => {
     const text = draft.trim()
-    if ((!text && attachments.length === 0) || !canSubmit || submitInFlightRef.current) return
+    if ((!text && attachments.length === 0 && browserReferences.length === 0) || !canSubmit || submitInFlightRef.current) return
 
     const draftSnapshot = draft
     const attachmentSnapshot = attachments.map((attachment) => ({ ...attachment }))
+    const referenceSnapshot = structuredClone(browserReferences)
     submitInFlightRef.current = true
     setSubmitPending(true)
-    void send(text, timing)
-      .then((accepted) => {
+    void send(text, referenceSnapshot)
+      .then(async (accepted) => {
         const clear = guiComposerClearPlan(
           accepted,
           latestDraftRef.current,
@@ -1412,12 +1432,15 @@ export default function GuiPane({
         // somente a fotografia realmente entregue, nunca texto novo.
         if (clear.draft) clearDraft()
         if (clear.attachments) clearAttachments()
+        // Só os IDs desta fotografia deixam o rascunho. Uma nova seleção
+        // recebida durante o ACK continua pendente para a próxima mensagem.
+        if (accepted) await consumeBrowserReferences(referenceSnapshot)
       })
       .finally(() => {
         submitInFlightRef.current = false
         setSubmitPending(false)
       })
-  }, [attachments, canSubmit, clearAttachments, clearDraft, draft, send])
+  }, [attachments, browserReferences, canSubmit, clearAttachments, clearDraft, consumeBrowserReferences, draft, send])
 
   const finishAttachments = useCallback((next: readonly GuiAttachmentDescriptor[]): string | null => {
     if (next.length === 0) return null
@@ -1462,7 +1485,7 @@ export default function GuiPane({
       if (attaching || busyMenu || submitPending) return
       setOpenMenu(null)
       setAttaching(true)
-      setAttachmentError(null)
+      reportAttachmentError(null)
       const attached: GuiAttachmentDescriptor[] = []
       const errors = [...selection.errors]
       for (const file of selection.accepted) {
@@ -1476,10 +1499,12 @@ export default function GuiPane({
       }
       const attachmentProblem = finishAttachments(attached)
       if (attachmentProblem) errors.push(attachmentProblem)
-      setAttachmentError(errors.length > 0 ? errors.join(' · ') : null)
+      reportAttachmentError(errors.length > 1
+        ? `${errors[0]} (+${errors.length - 1} outros erros)`
+        : errors[0] ?? null)
       setAttaching(false)
     },
-    [attaching, busyMenu, finishAttachments, submitPending]
+    [attaching, busyMenu, finishAttachments, reportAttachmentError, submitPending]
   )
 
   /** Arquivo ESCOLHIDO (input) ou COLADO (print): os bytes sobem pelo
@@ -1511,18 +1536,18 @@ export default function GuiPane({
     if (attaching || busyMenu || submitPending) return
     setOpenMenu(null)
     setAttaching(true)
-    setAttachmentError(null)
+    reportAttachmentError(null)
     try {
       const result = await guiApi.attachFolder(paneId)
       if (result.cancelled) return
-      if (result.ok && result.attachment) setAttachmentError(finishAttachments([result.attachment]))
-      else setAttachmentError(result.error ?? 'não deu para anexar a pasta')
+      if (result.ok && result.attachment) reportAttachmentError(finishAttachments([result.attachment]))
+      else reportAttachmentError(result.error ?? 'não deu para anexar a pasta')
     } catch {
-      setAttachmentError('não deu para escolher a pasta')
+      reportAttachmentError('não deu para escolher a pasta')
     } finally {
       setAttaching(false)
     }
-  }, [attaching, busyMenu, finishAttachments, paneId, submitPending])
+  }, [attaching, busyMenu, finishAttachments, paneId, reportAttachmentError, submitPending])
 
   /** Permissão é configuração de PROCESSO nos dois CLIs e ainda exige
    *  respawn com resume. Modelo/effort usam o caminho vivo separado abaixo. */
@@ -1788,31 +1813,12 @@ export default function GuiPane({
     ]
   )
   const activityRunning = gui.status === 'working' && gui.startedAt !== null
+  const stopInsteadOfSend = activityRunning && !draft.trim() && attachments.length === 0 && browserReferences.length === 0
   // O TIMER DE RODADA VIVO (R11) mudou de casa em 2026-09-08: mora no
-  // StageRoundStatus da cabeça do palco, colado ao estado do turno.
-  const thinkingPresentation = useMemo(
-    () =>
-      guiThinkingPresentation({
-        status: gui.status,
-        stream: gui.stream,
-        activeAssistantId: gui.activeAssistantId,
-        thinking: gui.thinking,
-        activityText: gui.activityText,
-        awaitingInteraction: Boolean(
-          gui.perm || (gui.question && gui.question.blocking !== false) || gui.planReview || gui.interactionSubmitting
-        )
-      }),
-    [
-      gui.activeAssistantId,
-      gui.activityText,
-      gui.interactionSubmitting,
-      gui.perm,
-      gui.planReview,
-      gui.question,
-      gui.status,
-      gui.stream,
-      gui.thinking
-    ]
+  // StageRoundStatus da cabeça do palco, colado ao estado do turno. O PULSO
+  // (o rabo do fio) lê o estado canônico direto — `guiAgentPulse` decide.
+  const awaitingInteraction = Boolean(
+    gui.perm || (gui.question && gui.question.blocking !== false) || gui.planReview || gui.interactionSubmitting
   )
   // MESMA fonte de verdade da lateral de entrega: ficha presente = agente ainda
   // trabalhando. A normalização varre o fio inteiro (nunca a janela visível, que
@@ -1892,8 +1898,12 @@ export default function GuiPane({
   // R25 — as duas leituras de COTA que o painel ganhou, e a nota que os menus
   // de troca passam a mostrar. Todas derivadas: nenhuma pede nada a ninguém.
   const odometer = guiOdometerPresentation(gui.convCalls, gui.convWeightTokens, gui.contextTokens)
+  const usageMeters = guiUsageMetersPresentation(gui.usage)
   const seatQuotaPanel = guiSeatQuotaPresentation(seatQuota, Date.now())
   const switchNote = guiExpensiveSwitchNote(gui.contextTokens)
+  // R25.3b — a conversa pesada avisa no MEDIDOR (tooltip + forma + painel),
+  // nunca mais como nota no fio (ordem do dono, 2026-09-16).
+  const heavyTip = guiHeavyConversationTip(gui.contextTokens)
   // O ⚡ é INTERRUPTOR e não tem menu onde pendurar a nota da troca cara: ela
   // entra na dica dele. O botão segue clicável — advisory, nunca guarda.
   const fastBaseTip = fastOn
@@ -1903,14 +1913,11 @@ export default function GuiPane({
       : 'modo fast — gasta mais limite'
   const fastTip = switchNote ? `${fastBaseTip} · ${switchNote}` : fastBaseTip
   const queuedMessage = gui.queued
-  const queuedOptionsLabel = queuedMessage
-    ? [
-        queuedMessage.options.model ?? 'modelo padrão',
-        queuedMessage.options.effort ?? 'effort padrão',
-        PERM_MODE_LABEL[queuedMessage.options.permissionMode as GuiPermissionMode] ??
-          queuedMessage.options.permissionMode
-      ].join(' · ')
-    : undefined
+  // The main echo replaces the queued bubble without showing the same message
+  // twice while its durable ACK is still crossing the bridge.
+  const queuedMessageVisible = queuedMessage && !gui.items.some(
+    (item) => item.kind === 'user' && item.id === queuedMessage.id
+  )
 
   // A ABINHA DO PADRÃO DOS AJUDANTES (D8) só existe em chat que DELEGA. O sinal
   // é derivado dos args do MCP pelo mesmo motivo que a cerca do codex é
@@ -1951,7 +1958,7 @@ export default function GuiPane({
 
   // A injeção deixou de suprimir o vazio: o pane que nasce mudo PRECISA dizer
   // o que fazer, senão lê como chat quebrado com um `<details>` solto em cima.
-  const empty = gui.items.length === 0 && !gui.stream && !gui.perm && !awaitingCard
+  const empty = gui.items.length === 0 && !gui.queued && !gui.stream && !gui.perm && !awaitingCard
 
   /** NADA de decidir aqui: ou o dono está lendo o histórico local por cima da
    *  conversa (`historyTarget`), ou o pane inteiro é fotografia congelada.
@@ -2134,19 +2141,35 @@ export default function GuiPane({
               )
             )}
 
-            {/* Um indicador vivo por vez. Com subagente de fundo o verbo genérico
-                ("preparando a resposta") seria falso — quem trabalha é o agente
-                lá atrás —, então a linha de fundo VENCE e a de pensar cede. */}
-            {thinkingPresentation && !backgroundWork && (
-              <div className="gui-thinking" role="status">
-                <span className="gui-dots" aria-hidden="true">
-                  <i />
-                  <i />
-                  <i />
-                </span>
-                <span className="gui-thinking-label">{thinkingPresentation.label}</span>
-              </div>
+            {!inert && queuedMessage && queuedMessageVisible && (
+              <GuiQueuedMessageCard
+                paneId={paneId}
+                key={queuedMessage.id}
+                message={queuedMessage}
+                onCancel={() => discardGuiQueuedMessage(paneId, queuedMessage.id)}
+                onReadNow={() => void sendQueuedNow()}
+                readNowDisabled={!canSend}
+              />
             )}
+
+            {/* O PULSO DO AGENTE: o que ele faz AGORA, com um gesto por ação e
+                o relógio desde o último sinal público. Pai e ajudantes têm
+                atividade própria: o pulso do pai só existe enquanto o turno
+                dele está ativo, mesmo com trabalho de fundo. */}
+            <GuiAgentPulse
+              active={!inert}
+              status={gui.status}
+              turnActive={gui.turnActive}
+              stream={gui.stream}
+              activeAssistantId={gui.activeAssistantId}
+              thinking={gui.thinking}
+              contextCompacting={gui.contextCompacting}
+              activityText={gui.activityText}
+              awaitingInteraction={awaitingInteraction}
+              items={gui.items}
+              publicSilenceSince={gui.publicSilenceSince}
+              onResize={keepPinnedToEnd}
+            />
 
             {/* Enquanto houver subagente vivo o fio nunca parece terminado —
                 inclusive com o turno raiz já fechado (`continues`) ou com um
@@ -2202,9 +2225,16 @@ export default function GuiPane({
                   <button
                     className="gui-btn primary"
                     disabled={!canSubmit}
-                    onClick={() => send('aprovado — pode seguir.')}
+                    onClick={() => send('aprovado — pode seguir.', [])}
                   >
                     aprovar
+                  </button>
+                  <button
+                    className="gui-btn"
+                    disabled={!canSubmit}
+                    onClick={() => send('Não aprovo a proposta que você acabou de apresentar. Não prossiga com ela.', [])}
+                  >
+                    não aprovar
                   </button>
                   <button
                     className="gui-btn"
@@ -2327,27 +2357,6 @@ export default function GuiPane({
           perm={gui.perm}
           disabled={Boolean(gui.interactionSubmitting)}
           onChoose={(behavior) => void answerGuiPerm(projectId, paneId, behavior)}
-        />
-      )}
-
-      {!inert && queuedMessage && (
-        <GuiQueuedMessageCard
-          key={queuedMessage.id}
-          message={queuedMessage}
-          optionsLabel={queuedOptionsLabel}
-          editDisabled={Boolean(draft || attachments.length || quotes.length)}
-          onEdit={() => {
-            if (latestDraftRef.current || latestAttachmentsRef.current.length || quotes.length) return false
-            if (!discardGuiQueuedMessage(paneId, queuedMessage.id)) return false
-            setDraft(queuedMessage.text)
-            setAttachments(queuedMessage.attachments)
-            window.setTimeout(() => inputRef.current?.focus({ preventScroll: true }), 0)
-            return true
-          }}
-          onCancel={() => discardGuiQueuedMessage(paneId, queuedMessage.id)}
-          onRetry={() => retryGuiQueuedMessage(paneId, queuedMessage.id)}
-          onSendNow={() => void sendQueuedNow()}
-          sendNowDisabled={!canSend}
         />
       )}
 
@@ -2543,9 +2552,18 @@ export default function GuiPane({
                 </div>
               )}
 
+              {(attachments.length > 0 || browserReferences.length > 0) && <div className="gui-composer-attachments">
+              <GuiBrowserReferenceChips
+                paneId={paneId}
+                references={browserReferences}
+                disabled={submitPending}
+                onRemove={(id) => void removeBrowserReference(id)}
+              />
               <GuiAttachmentChips
                 attachments={attachments}
-                className="gui-composer-attachments"
+                paneId={paneId}
+                previewable={active}
+                previewAnchorRef={composerSurfaceRef}
                 onRemove={
                   submitPending
                     ? undefined
@@ -2555,6 +2573,7 @@ export default function GuiPane({
                         )
                 }
               />
+              </div>}
 
               <div className="gui-menu-host gui-composer-attach">
                 <input
@@ -2663,7 +2682,9 @@ export default function GuiPane({
                   usage={contextPanel}
                   label={contextUsage.label}
                   odometer={odometer}
+                  usageMeters={usageMeters}
                   seat={seatQuotaPanel}
+                  heavy={heavyTip}
                   open={openMenu === 'context'}
                   onOpenChange={(nextOpen) => setOpenMenu(nextOpen ? 'context' : null)}
                 />
@@ -2813,54 +2834,39 @@ export default function GuiPane({
                   baixa — contorno tingido, nunca um botão vermelho cheio
                   piscando para quem só está lendo a resposta. */}
               <button
-                className={`gui-sq gui-send${activityRunning ? ' stop' : ''}`}
+                className={`gui-sq gui-send${stopInsteadOfSend ? ' stop' : ''}`}
                 type="button"
                 disabled={
-                  activityRunning
+                  stopInsteadOfSend
                     ? false
-                    : (!draft.trim() && attachments.length === 0) || !canSubmit
+                    : (!draft.trim() && attachments.length === 0 && browserReferences.length === 0) || !canSubmit
                 }
                 data-tip={
-                  activityRunning
+                  stopInsteadOfSend
                     ? 'Interromper resposta · Esc'
                     : opening
                       ? 'Aguarde a conversa abrir'
                       : turnOpen
                         ? gui.queued
                           ? 'Já existe uma mensagem na fila'
-                          : draft.trim().startsWith('/')
-                            ? 'Colocar comando na fila · Enter'
-                            : 'Enviar agora · Enter'
+                          : 'Enviar mensagem · Enter'
                         : 'Enviar · Enter'
                 }
                 aria-label={
-                  activityRunning
+                  stopInsteadOfSend
                     ? 'Interromper resposta'
-                    : turnOpen
-                      ? draft.trim().startsWith('/')
-                        ? 'Colocar comando na fila'
-                        : 'Enviar mensagem agora'
-                      : 'Enviar mensagem'
+                    : 'Enviar mensagem'
                 }
-                aria-keyshortcuts={activityRunning ? 'Escape' : undefined}
-                onClick={activityRunning ? () => void interruptGuiPane(paneId) : () => submit()}
+                aria-keyshortcuts={stopInsteadOfSend ? 'Escape' : undefined}
+                onClick={stopInsteadOfSend ? () => void interruptGuiPane(paneId) : () => submit()}
               >
-                {activityRunning ? <StopGlyph /> : <SendGlyph />}
+                {stopInsteadOfSend ? <StopGlyph /> : <SendGlyph />}
               </button>
               {attachmentError && (
-                <div className="gui-attach-error" role="alert">
-                  {attachmentError}
-                </div>
+                <GuiComposerNotice notice={attachmentError} anchorRef={composerSurfaceRef} onDismiss={dismissAttachmentError} />
               )}
+              {browserReferenceError && <div className="gui-attach-error" role="status">{browserReferenceError}</div>}
             </div>
-            {turnOpen && Boolean(draft.trim() || attachments.length) && (
-              <GuiComposerDeliveryActions
-                disabled={!canSubmit}
-                showSendNow={activityRunning && !draft.trim().startsWith('/')}
-                onSendNow={() => submit()}
-                onSendLater={() => submit('after-turn')}
-              />
-            )}
           </div>
         </div>
       )}

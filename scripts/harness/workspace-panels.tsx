@@ -21,7 +21,7 @@ function Harness() {
         <div style={{ margin: 12, padding: 14, border: '1px solid var(--line-strong)', borderRadius: 8 }}>Escreva uma mensagem…</div>
       </div>
       <WorkspacePanels controller={controller} boardRef={boardRef} projectId="synthetic-panel-layout"
-        enabled visible legacyEnabled={false} available={availableWorkspacePanels(false, true)} onCovered={setCovered}>
+        enabled visible legacyEnabled={false} available={availableWorkspacePanels('dev', true)} onCovered={setCovered}>
         <div className="delivery-rail dock">
           {WORKSPACE_PANELS.map(({ id, title }) => <DockSection key={id} id={id} title={title}>
             {id === 'browser' ? <div className="dock-browser">

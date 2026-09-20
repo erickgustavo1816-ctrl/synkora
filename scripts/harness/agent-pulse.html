@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<title>harness · o pulso do agente (andamento no fio)</title>
+<link rel="stylesheet" href="/global.css" />
+<style>
+  /* o global.css é de APP (html/body sem scroll); o harness é página e rola */
+  html, body { height: auto !important; min-height: 100%; overflow: auto !important; }
+  body { margin: 0; padding: 18px 22px 40px; background: var(--paper); color: var(--ink); font-family: var(--mono); display: grid; gap: 22px; justify-content: start; }
+  .h-label { font: 11px var(--mono); color: var(--ink-2); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 7px; max-width: 740px; }
+  .h-label b { color: var(--ink); }
+  .h-stage { width: 740px; display: flex; border: 1.5px solid var(--line-strong); border-radius: 10px; background: var(--paper); overflow: hidden; }
+  .h-stage.narrow { width: 400px; }
+  .h-stage .gui-pane { width: 100%; }
+  .gui-thread { display: flex; flex-direction: column; gap: 12px; padding: 16px 18px 18px; }
+  .gui-stage { position: relative; }
+  /* a galeria dos gestos: um chip por ação, para comparar os movimentos lado a lado */
+  .h-gallery { width: 740px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px 14px; padding: 12px 14px; border: 1.5px solid var(--line-strong); border-radius: 10px; }
+  .h-gallery .gui-pulse { padding: 5px 8px; }
+  .h-gallery .h-what { font-size: 10px; color: var(--ink-3); padding: 2px 0 0 8px; }
+
+  /* ================= O PULSO DO AGENTE (proposta) =================
+     UMA linha, da MESMA família das linhas de ferramenta (11.5px, raio 6,
+     fundo fill-2). O GESTO à esquerda é o vocabulário de movimento do fio:
+     cada ação tem o seu — a forma do movimento diz o que está acontecendo
+     antes de o olho ler a palavra. O VERBO diz o que acontece AGORA; o alvo
+     é o arquivo/página; o rastro (— leu …) é o passado imediato, apagado.
+     O relógio à direita é o tempo desde o último sinal público do agente:
+     número tabular, não dança. O silêncio muda a FORMA antes da cor:
+     moldura tracejada ao 1º minuto; aos 3 minutos a moldura e o relógio
+     vestem --err e nasce a linha de receita (o que o dono pode fazer). */
+  .gui-pulse {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+    padding: 6px 10px;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    background: var(--gui-fill-2);
+    color: var(--ink-2);
+    font-size: 11.5px;
+    line-height: 1.4;
+  }
+  .gui-pulse-line {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+  .gui-pulse-verb { flex: none; color: var(--ink); font-weight: 700; }
+  .gui-pulse-sep { flex: none; color: var(--ink-3); }
+  .gui-pulse-target {
+    flex: 0 1 auto; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    color: var(--ink-2);
+  }
+  .gui-pulse-trail {
+    flex: 0 1 auto; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    color: var(--ink-3);
+  }
+  .gui-pulse-clock {
+    flex: none; margin-left: auto; padding-left: 8px;
+    font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap;
+    color: var(--ink-3);
+  }
+  /* silêncio ≥ 1 min: a moldura aparece (forma), o relógio ganha peso */
+  .gui-pulse.quiet { border-style: dashed; border-color: var(--gui-line-strong); }
+  .gui-pulse.quiet .gui-pulse-clock { color: var(--ink-2); }
+  /* silêncio ≥ 3 min: a mesma forma, agora em --err (AA sobre papel) + receita */
+  .gui-pulse.stalled { border-style: dashed; border-color: color-mix(in srgb, var(--err) 55%, transparent); }
+  .gui-pulse.stalled .gui-pulse-clock { color: var(--err); }
+  .gui-pulse-hint { padding-left: 26px; font-size: 11px; line-height: 1.45; color: var(--ink-2); overflow-wrap: anywhere; }
+  .gui-pulse-hint kbd { font: inherit; color: var(--ink); }
+
+  /* ---------- OS GESTOS: um por ação, 18×12px, só transform/opacity ----------
+     A cor do movimento é o acento (como as bolinhas de sempre). Em repouso
+     (reduced-motion) cada gesto vira o seu glifo/traço parado — o FATO fica. */
+  .gui-pulse-glyph {
+    flex: none; position: relative;
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 18px; height: 12px;
+    color: var(--accent); font-size: 12px; line-height: 1;
+  }
+  .gui-pulse-glyph i { display: block; font-style: normal; }
+
+  /* pensando — as três bolinhas de sempre (o vocabulário que já existe) */
+  .gui-pulse-glyph[data-action="thinking"] { gap: 3px; }
+  .gui-pulse-glyph[data-action="thinking"] i { width: 4px; height: 4px; border-radius: 50%; background: currentColor; animation: gui-dot 1.05s ease-in-out infinite; }
+  .gui-pulse-glyph[data-action="thinking"] i:nth-child(2) { animation-delay: .16s; }
+  .gui-pulse-glyph[data-action="thinking"] i:nth-child(3) { animation-delay: .32s; }
+
+  /* lendo — três linhas de texto que ACENDEM de cima para baixo (o olho descendo a página) */
+  .gui-pulse-glyph[data-action="reading"] { flex-direction: column; align-items: flex-start; gap: 2px; padding-left: 3px; }
+  .gui-pulse-glyph[data-action="reading"] i { width: 11px; height: 1.5px; border-radius: 1px; background: currentColor; opacity: .3; animation: pulse-read 1.2s ease-in-out infinite; }
+  .gui-pulse-glyph[data-action="reading"] i:nth-child(2) { animation-delay: .2s; }
+  .gui-pulse-glyph[data-action="reading"] i:nth-child(3) { animation-delay: .4s; width: 7px; }
+  @keyframes pulse-read { 0%, 70%, 100% { opacity: .3 } 25% { opacity: 1 } }
+
+  /* editando / escrevendo — as linhas são ESCRITAS: crescem da esquerda, uma depois da outra */
+  .gui-pulse-glyph[data-action="editing"] { flex-direction: column; align-items: flex-start; gap: 2px; padding-left: 3px; }
+  .gui-pulse-glyph[data-action="editing"] i { width: 11px; height: 1.5px; border-radius: 1px; background: currentColor; transform-origin: left center; animation: pulse-write 1.6s ease-out infinite; }
+  .gui-pulse-glyph[data-action="editing"] i:nth-child(2) { animation-delay: .3s; }
+  .gui-pulse-glyph[data-action="editing"] i:nth-child(3) { animation-delay: .6s; width: 7px; }
+  @keyframes pulse-write { 0% { transform: scaleX(0); opacity: .5 } 45%, 80% { transform: scaleX(1); opacity: 1 } 100% { transform: scaleX(1); opacity: .15 } }
+
+  /* rodando um comando — o arco gira (o terminal trabalhando) */
+  .gui-pulse-glyph[data-action="running"] i { width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid color-mix(in srgb, currentColor 28%, transparent); border-top-color: currentColor; animation: pulse-spin .9s linear infinite; }
+  @keyframes pulse-spin { to { transform: rotate(360deg) } }
+
+  /* buscando — a lupa VARRE de um lado ao outro */
+  .gui-pulse-glyph[data-action="searching"] i::before { content: '⌕'; }
+  .gui-pulse-glyph[data-action="searching"] i { animation: pulse-sweep 1.3s ease-in-out infinite alternate; }
+  @keyframes pulse-sweep { from { transform: translateX(-2.5px) } to { transform: translateX(2.5px) } }
+
+  /* respondendo — o cursor de texto pisca (alguém digitando) */
+  .gui-pulse-glyph[data-action="responding"] i { width: 2px; height: 11px; background: currentColor; animation: pulse-blink 1s step-end infinite; }
+  @keyframes pulse-blink { 0%, 100% { opacity: 1 } 50% { opacity: 0 } }
+
+  /* compactando contexto — dois colchetes APERTAM o que está entre eles */
+  .gui-pulse-glyph[data-action="compacting"] { gap: 7px; }
+  .gui-pulse-glyph[data-action="compacting"] i { width: 2px; height: 10px; background: currentColor; animation: pulse-squeeze-l 1.3s ease-in-out infinite; }
+  .gui-pulse-glyph[data-action="compacting"] i:nth-child(2) { animation-name: pulse-squeeze-r; }
+  @keyframes pulse-squeeze-l { 0%, 100% { transform: translateX(0) } 50% { transform: translateX(2.5px) } }
+  @keyframes pulse-squeeze-r { 0%, 100% { transform: translateX(0) } 50% { transform: translateX(-2.5px) } }
+
+  /* página (browser) — a seta dá o passo para fora, para cima e à direita */
+  .gui-pulse-glyph[data-action="browsing"] i::before { content: '⇗'; }
+  .gui-pulse-glyph[data-action="browsing"] i { animation: pulse-step 1.2s ease-in-out infinite; }
+  @keyframes pulse-step { 0%, 100% { transform: translate(0, 0); opacity: .7 } 50% { transform: translate(1.5px, -1.5px); opacity: 1 } }
+
+  /* skill / ajudantes — o glifo RESPIRA */
+  .gui-pulse-glyph[data-action="skill"] i::before { content: '❖'; }
+  .gui-pulse-glyph[data-action="helpers"] i::before { content: '✦'; }
+  .gui-pulse-glyph[data-action="skill"] i, .gui-pulse-glyph[data-action="helpers"] i { animation: pulse-breathe 1.4s ease-in-out infinite; }
+  @keyframes pulse-breathe { 0%, 100% { transform: scale(.85); opacity: .55 } 50% { transform: scale(1.1); opacity: 1 } }
+
+  /* integrando — o ⇪ sobe */
+  .gui-pulse-glyph[data-action="integrating"] i::before { content: '⇪'; }
+  .gui-pulse-glyph[data-action="integrating"] i { animation: pulse-rise 1.1s ease-in-out infinite; }
+  @keyframes pulse-rise { 0%, 100% { transform: translateY(1.5px); opacity: .55 } 50% { transform: translateY(-1.5px); opacity: 1 } }
+
+  /* esperando uma ferramenta genérica — o ◌ pisca (o mesmo sinal da linha da ferramenta) */
+  .gui-pulse-glyph[data-action="waiting"] i::before { content: '◌'; }
+  .gui-pulse-glyph[data-action="waiting"] i { animation: pulse-blink 1s step-end infinite; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .gui-pulse-glyph i { animation: none !important; opacity: 1 !important; transform: none !important; }
+  }
+</style>
+</head>
+<body>
+
+<section>
+  <div class="h-label"><b>0 · os gestos</b> · um movimento por ação — a forma do movimento diz o que está acontecendo</div>
+  <div class="h-gallery">
+    <div><div class="gui-pulse"><div class="gui-pulse-line"><span class="gui-pulse-glyph" data-action="thinking" aria-hidden="true"><i></i><i></i><i></i></span><span class="gui-pulse-verb">pensando</span></div></div><div class="h-what">as bolinhas de sempre</div></div>
+    <div><div class="gui-pulse"><div class="gui-pulse-line"><span class="gui-pulse-glyph" data-action="reading" aria-hidden="true"><i></i><i></i><i></i></span><span class="gui-pulse-verb">lendo</span></div></div><div class="h-what">linhas acendem de cima p/ baixo</div></div>
+    <div><div class="gui-pulse"><div class="gui-pulse-line"><span class="gui-pulse-glyph" data-action="editing" aria-hidden="true"><i></i><i></i><i></i></span><span class="gui-pulse-verb">editando</span></div></div><div class="h-what">as linhas se escrevem</div></div>
+    <div><div class="gui-pulse"><div class="gui-pulse-line"><span class="gui-pulse-glyph" data-action="running" aria-hidden="true"><i></i></span><span class="gui-pulse-verb">rodando um comando</span></div></div><div class="h-what">o arco gira</div></div>
+    <div><div class="gui-pulse"><div class="gui-pulse-line"><span class="gui-pulse-glyph" data-action="searching" aria-hidden="true"><i></i></span><span class="gui-pulse-verb">buscando</span></div></div><div class="h-what">a lupa varre</div></div>
+    <div><div class="gui-pulse"><div class="gui-pulse-line"><span class="gui-pulse-glyph" data-action="responding" aria-hidden="true"><i></i></span><span class="gui-pulse-verb">respondendo</span></div></div><div class="h-what">cursor de texto pisca</div></div>
+    <div><div class="gui-pulse"><div class="gui-pulse-line"><span class="gui-pulse-glyph" data-action="compacting" aria-hidden="true"><i></i><i></i></span><span class="gui-pulse-verb">compactando</span></div></div><div class="h-what">colchetes apertam</div></div>
+    <div><div class="gui-pulse"><div class="gui-pulse-line"><span class="gui-pulse-glyph" data-action="browsing" aria-hidden="true"><i></i></span><span class="gui-pulse-verb">abrindo a página</span></div></div><div class="h-what">a seta dá o passo</div></div>
+    <div><div class="gui-pulse"><div class="gui-pulse-line"><span class="gui-pulse-glyph" data-action="skill" aria-hidden="true"><i></i></span><span class="gui-pulse-verb">consultando skill</span></div></div><div class="h-what">❖ respira</div></div>
+    <div><div class="gui-pulse"><div class="gui-pulse-line"><span class="gui-pulse-glyph" data-action="helpers" aria-hidden="true"><i></i></span><span class="gui-pulse-verb">ajudantes</span></div></div><div class="h-what">✦ respira</div></div>
+    <div><div class="gui-pulse"><div class="gui-pulse-line"><span class="gui-pulse-glyph" data-action="integrating" aria-hidden="true"><i></i></span><span class="gui-pulse-verb">integrando</span></div></div><div class="h-what">o ⇪ sobe</div></div>
+    <div><div class="gui-pulse"><div class="gui-pulse-line"><span class="gui-pulse-glyph" data-action="waiting" aria-hidden="true"><i></i></span><span class="gui-pulse-verb">esperando</span></div></div><div class="h-what">◌ pisca (ferramenta genérica)</div></div>
+  </div>
+</section>
+
+<section>
+  <div class="h-label"><b>1 · ferramenta em curso</b> · gesto + verbo + alvo · relógio = tempo desde o último sinal do agente</div>
+  <div class="h-stage"><div class="gui-pane"><div class="gui-stage"><div class="gui-log"><div class="gui-thread">
+    <div class="gui-msg dev"><div class="gui-msg-text">Vou abrir o print que você mandou e conferir o que mudou na seção de entregas.</div></div>
+    <div class="gui-tool"><span class="gui-tool-icon run" aria-hidden="true">◌</span><b class="gui-tool-name">Read</b><span class="gui-tool-sep">·</span><span class="gui-tool-summary">C:\Users\Erick\AppData\Roaming\synkora\attachments\image-1.png</span></div>
+    <div class="gui-pulse" role="status" aria-label="Andamento do agente">
+      <div class="gui-pulse-line">
+        <span class="gui-pulse-glyph" data-action="reading" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span class="gui-pulse-verb">lendo</span>
+        <span class="gui-pulse-sep" aria-hidden="true">·</span>
+        <span class="gui-pulse-target">attachments/image-1.png</span>
+        <span class="gui-pulse-clock" aria-hidden="true">há 3 s</span>
+      </div>
+    </div>
+  </div></div></div></div></div>
+</section>
+
+<section>
+  <div class="h-label"><b>2 · pensando depois de uma ferramenta</b> · o rastro "— leu …" é o passado imediato, apagado</div>
+  <div class="h-stage"><div class="gui-pane"><div class="gui-stage"><div class="gui-log"><div class="gui-thread">
+    <div class="gui-msg dev"><div class="gui-msg-text">Vou abrir o print que você mandou e conferir o que mudou na seção de entregas.</div></div>
+    <div class="gui-tool"><span class="gui-tool-icon" aria-hidden="true">▤</span><b class="gui-tool-name">Read</b><span class="gui-tool-sep">·</span><span class="gui-tool-summary">C:\Users\Erick\AppData\Roaming\synkora\attachments\image-1.png</span><span class="gui-tool-out ok" role="status">✓</span></div>
+    <div class="gui-pulse" role="status" aria-label="Andamento do agente">
+      <div class="gui-pulse-line">
+        <span class="gui-pulse-glyph" data-action="thinking" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span class="gui-pulse-verb">pensando</span>
+        <span class="gui-pulse-trail">— leu attachments/image-1.png</span>
+        <span class="gui-pulse-clock" aria-hidden="true">há 12 s</span>
+      </div>
+    </div>
+  </div></div></div></div></div>
+</section>
+
+<section>
+  <div class="h-label"><b>3 · comando longo</b> · o comando em si fica na linha dele (nunca é repetido aqui)</div>
+  <div class="h-stage"><div class="gui-pane"><div class="gui-stage"><div class="gui-log"><div class="gui-thread">
+    <div class="gui-msg dev"><div class="gui-msg-text">Rodando o gate raiz antes de subir; ele leva uns minutos.</div></div>
+    <div class="gui-command"><span class="gui-command-chevron empty" aria-hidden="true">›</span><span class="gui-command-dollar" aria-hidden="true">$</span><span class="gui-command-text">npm run test:gui-system</span><span class="gui-command-status running" role="status">rodando</span></div>
+    <div class="gui-pulse" role="status" aria-label="Andamento do agente">
+      <div class="gui-pulse-line">
+        <span class="gui-pulse-glyph" data-action="running" aria-hidden="true"><i></i></span>
+        <span class="gui-pulse-verb">rodando um comando</span>
+        <span class="gui-pulse-clock" aria-hidden="true">há 48 s</span>
+      </div>
+    </div>
+  </div></div></div></div></div>
+</section>
+
+<section>
+  <div class="h-label"><b>4 · sem sinal há 1 min</b> · a forma muda primeiro: moldura tracejada; o relógio vira a notícia</div>
+  <div class="h-stage"><div class="gui-pane"><div class="gui-stage"><div class="gui-log"><div class="gui-thread">
+    <div class="gui-msg dev"><div class="gui-msg-text">Rodando o gate raiz antes de subir; ele leva uns minutos.</div></div>
+    <div class="gui-command"><span class="gui-command-chevron" aria-hidden="true">›</span><span class="gui-command-dollar" aria-hidden="true">$</span><span class="gui-command-text">npm run test:gui-system</span><span class="gui-command-status ok" role="status">concluído</span><span class="gui-command-lines">212 linhas</span></div>
+    <div class="gui-pulse quiet" role="status" aria-label="Andamento do agente">
+      <div class="gui-pulse-line">
+        <span class="gui-pulse-glyph" data-action="thinking" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span class="gui-pulse-verb">pensando</span>
+        <span class="gui-pulse-trail">— rodou um comando</span>
+        <span class="gui-pulse-clock" aria-hidden="true">sem sinal há 1:04</span>
+      </div>
+    </div>
+  </div></div></div></div></div>
+</section>
+
+<section>
+  <div class="h-label"><b>5 · sem sinal há 3 min</b> · mesma forma em --err + a receita do que você pode fazer</div>
+  <div class="h-stage"><div class="gui-pane"><div class="gui-stage"><div class="gui-log"><div class="gui-thread">
+    <div class="gui-msg dev"><div class="gui-msg-text">Rodando o gate raiz antes de subir; ele leva uns minutos.</div></div>
+    <div class="gui-command"><span class="gui-command-chevron" aria-hidden="true">›</span><span class="gui-command-dollar" aria-hidden="true">$</span><span class="gui-command-text">npm run test:gui-system</span><span class="gui-command-status ok" role="status">concluído</span><span class="gui-command-lines">212 linhas</span></div>
+    <div class="gui-pulse stalled" role="status" aria-label="Andamento do agente">
+      <div class="gui-pulse-line">
+        <span class="gui-pulse-glyph" data-action="thinking" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span class="gui-pulse-verb">pensando</span>
+        <span class="gui-pulse-trail">— rodou um comando</span>
+        <span class="gui-pulse-clock" aria-hidden="true">sem sinal há 3:20</span>
+      </div>
+      <div class="gui-pulse-hint">pode ser uma chamada longa · <kbd>■</kbd> interrompe o turno · o que você escrever entra na conversa dele agora</div>
+    </div>
+  </div></div></div></div></div>
+</section>
+
+<section>
+  <div class="h-label"><b>6 · falha na última ferramenta</b> · o rastro conta o desfecho; a linha da ferramenta já carrega o vermelho</div>
+  <div class="h-stage"><div class="gui-pane"><div class="gui-stage"><div class="gui-log"><div class="gui-thread">
+    <div class="gui-command err"><span class="gui-command-chevron" aria-hidden="true">›</span><span class="gui-command-dollar" aria-hidden="true">$</span><span class="gui-command-text">npm run typecheck</span><span class="gui-command-status err" role="status">falhou</span><span class="gui-command-lines">9 linhas</span></div>
+    <div class="gui-pulse" role="status" aria-label="Andamento do agente">
+      <div class="gui-pulse-line">
+        <span class="gui-pulse-glyph" data-action="thinking" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span class="gui-pulse-verb">pensando</span>
+        <span class="gui-pulse-trail">— o comando falhou</span>
+        <span class="gui-pulse-clock" aria-hidden="true">há 6 s</span>
+      </div>
+    </div>
+  </div></div></div></div></div>
+</section>
+
+<section>
+  <div class="h-label"><b>7 · respondendo / compactando</b> · sem relógio: o texto (ou a compactação) já é o sinal</div>
+  <div class="h-stage"><div class="gui-pane"><div class="gui-stage"><div class="gui-log"><div class="gui-thread">
+    <div class="gui-pulse" role="status" aria-label="Andamento do agente">
+      <div class="gui-pulse-line">
+        <span class="gui-pulse-glyph" data-action="responding" aria-hidden="true"><i></i></span>
+        <span class="gui-pulse-verb">respondendo</span>
+      </div>
+    </div>
+    <div class="gui-pulse" role="status" aria-label="Andamento do agente">
+      <div class="gui-pulse-line">
+        <span class="gui-pulse-glyph" data-action="compacting" aria-hidden="true"><i></i><i></i></span>
+        <span class="gui-pulse-verb">compactando contexto</span>
+      </div>
+    </div>
+  </div></div></div></div></div>
+</section>
+
+<section>
+  <div class="h-label"><b>8 · pane estreito (400px)</b> · o alvo encurta, o relógio fica; a receita quebra linha</div>
+  <div class="h-stage narrow"><div class="gui-pane"><div class="gui-stage"><div class="gui-log"><div class="gui-thread">
+    <div class="gui-tool"><span class="gui-tool-icon run" aria-hidden="true">◌</span><b class="gui-tool-name">Edit</b><span class="gui-tool-sep">·</span><span class="gui-tool-summary">src/renderer/src/components/GuiPane.tsx</span></div>
+    <div class="gui-pulse stalled" role="status" aria-label="Andamento do agente">
+      <div class="gui-pulse-line">
+        <span class="gui-pulse-glyph" data-action="editing" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span class="gui-pulse-verb">editando</span>
+        <span class="gui-pulse-sep" aria-hidden="true">·</span>
+        <span class="gui-pulse-target">components/GuiPane.tsx</span>
+        <span class="gui-pulse-clock" aria-hidden="true">sem sinal há 3:02</span>
+      </div>
+      <div class="gui-pulse-hint">pode ser uma chamada longa · <kbd>■</kbd> interrompe o turno · o que você escrever entra na conversa dele agora</div>
+    </div>
+  </div></div></div></div></div>
+</section>
+
+</body>
+</html>

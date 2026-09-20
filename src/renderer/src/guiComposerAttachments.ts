@@ -1,6 +1,12 @@
-export const GUI_COMPOSER_ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024
+// Mirrors main/guiAttachments.ts and the durable composer/queue validators.
+export const GUI_COMPOSER_ATTACHMENT_MAX_BYTES = 50 * 1024 * 1024
 export const GUI_COMPOSER_ATTACHMENT_MAX_FILES = 20
 export const GUI_COMPOSER_ATTACHMENT_MAX_TOTAL_BYTES = 50 * 1024 * 1024
+
+function attachmentNoticeName(name: string): string {
+  if (!name) return 'arquivo'
+  return name.length > 34 ? `${name.slice(0, 20)}…${name.slice(-10)}` : name
+}
 
 export function guiAttachmentSizeProblem(
   name: string,
@@ -9,7 +15,7 @@ export function guiAttachmentSizeProblem(
 ): string | null {
   if (!Number.isFinite(size) || size < 0) return `${name || 'arquivo'} tem tamanho inválido`
   if (size <= maxBytes) return null
-  return `${name || 'arquivo'} excede o limite de 10 MB`
+  return `${attachmentNoticeName(name)}\nO limite é de ${maxBytes / (1024 * 1024)} MB por arquivo.`
 }
 
 export function planGuiAttachmentBatch<T extends { name: string; size: number }>(

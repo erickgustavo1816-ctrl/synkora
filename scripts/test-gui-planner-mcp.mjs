@@ -80,11 +80,13 @@ const HELPER_TOOLS = Object.freeze([
  *  harness como o dev, porque o método do planejamento (ADR-0011) sai do mesmo
  *  cardápio. A lista canônica vive em `test:gui-delegate-mcp`. */
 const SKILL_TOOLS = Object.freeze(['skill_discard', 'skill_pull', 'skill_search'])
+const CONTEXT_READ = ['context_read', 'context_search', 'context_status']
+const CONTEXT_WRITE = [...CONTEXT_READ, 'context_record']
 
 /** O que o pane de PLANEJAMENTO enxerga hoje, inteiro: planos + ajudantes +
  *  código + skills — e NADA de integração, release ou browser. */
 const PLANNER_TOOLS = Object.freeze(
-  [...PLAN_TOOLS, ...HELPER_TOOLS, ...LSP_TOOLS, ...SKILL_TOOLS].sort()
+  ['commentary', ...PLAN_TOOLS, ...HELPER_TOOLS, ...LSP_TOOLS, ...SKILL_TOOLS, ...CONTEXT_WRITE].sort()
 )
 
 /** Hub REAL com as dependências mínimas que ele exige (o registro de
@@ -317,17 +319,18 @@ test('R14: o AJUDANTE recebe o kit de CÓDIGO e nenhuma linha do kit de planos',
   })
   const tools = await toolNames(url, 'token-ajudante', 'ajudante')
   // BROWSER EMBUTIDO (2026-08-29): o ajudante também verifica a própria tela —
-  // o QA delegado é o caso real do design. A lista canônica das onze vive em
+  // o QA delegado é o caso real do design. A lista canônica das doze vive em
   // `test:gui-delegate-mcp`; esta suíte tinha ficado para trás (achado de
   // 2026-08-30, na rodada que deu delegação ao planejador).
   const browserTools = tools.filter((tool) => tool.startsWith('browser_'))
-  assert.equal(browserTools.length, 11, 'o ajudante perdeu o kit do browser')
+  assert.equal(browserTools.length, 12, 'o ajudante perdeu o kit do browser')
+  assert.equal(tools.filter(tool => tool.startsWith('mobile_')).length, 6, 'o ajudante perdeu o kit Mobile')
   // SKILLS 3.0 (2026-09-08): o ajudante também PUXA skill — o briefing dele já
   // lista o que a missão puxou, e uma fatia que precisa de outro playbook não
   // pode depender de o delegador adivinhar.
   assert.deepEqual(
-    tools.filter((tool) => !tool.startsWith('browser_')),
-    [...LSP_TOOLS, ...SKILL_TOOLS].sort()
+    tools.filter((tool) => !tool.startsWith('browser_') && !tool.startsWith('mobile_')),
+    [...LSP_TOOLS, ...SKILL_TOOLS, ...CONTEXT_READ].sort()
   )
   // A cerca do ajudante mudou de NATUREZA (era ausência de token, virou
   // catálogo) mas não de tamanho: plano continua fora do alcance dele.

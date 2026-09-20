@@ -469,9 +469,21 @@ function finite(value: number): number {
   return Number.isFinite(value) ? value : 0
 }
 
-/** DOM → retângulo do motor: inteiro (meio pixel vira borda tremendo na view
- *  nativa) e nunca negativo. */
-export function browserRect(box: DomBox): BrowserRect {
+/** Native views must fit INSIDE fractional DOM edges. Rounding position and
+ *  size separately lets the view cover a border at some resize widths.
+ *  Overlay detection retains its existing nearest-pixel rounding. */
+export function browserRect(box: DomBox, rounding: 'nearest' | 'inward' = 'nearest'): BrowserRect {
+  if (rounding === 'inward') {
+    const left = finite(box.left)
+    const top = finite(box.top)
+    const x = Math.ceil(left)
+    const y = Math.ceil(top)
+    return {
+      x, y,
+      width: Math.max(0, Math.floor(left + Math.max(0, finite(box.width))) - x),
+      height: Math.max(0, Math.floor(top + Math.max(0, finite(box.height))) - y)
+    }
+  }
   const x = Math.round(finite(box.left))
   const y = Math.round(finite(box.top))
   return {

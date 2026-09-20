@@ -59,17 +59,12 @@
  * permite a suíte `test:browser-driver` provar refs, epoch, teto e lote com
  * dublês, sem subir janela nenhuma.
  */
-import {
-  buildProbeExpression,
-  formatProbeReport,
-  type BrowserProbeParams,
-  type BrowserProbeRaw
-} from './browserProbe'
+import { type BrowserProbeParams } from './browserProbe'
+import { sanitizeGuiArtifactPreviewText } from './guiFileBrowserUrl'
 import {
   buildPageExpression,
   describeTarget,
   isPageFailure,
-  readFooter,
   type PageActKind,
   type PageReadResult,
   type PageResolveResult,
@@ -77,11 +72,27 @@ import {
   type PageWaitResult
 } from './browserPageScript'
 import {
-  runBrowserActions,
+  runBrowserActionsResult,
   type BrowserAction,
   type BrowserActionContext,
+  type BrowserActionExecutionOptions,
+  type BrowserActionsResult,
   type BrowserInputCapabilities
 } from './browserActions'
+import {
+  BrowserObservationHistory, boundBrowserText, browserReadParams, browserResponseBudget,
+  BROWSER_READ_CEILING_CHARS, type BrowserReadOptions, type BrowserObservationResult
+} from './browserObservation'
+import {
+  browserConsoleSince, browserProbeResult, browserWaitResult,
+  type BrowserConsoleEntry, type BrowserConsoleResult, type BrowserProbeResult,
+  type BrowserWaitOptions, type BrowserWaitResult
+} from './browserObservationRuntime'
+export { BROWSER_READ_DEFAULT_MAX_CHARS, BROWSER_READ_CEILING_CHARS, BROWSER_RESPONSE_DEFAULT_MAX_CHARS } from './browserObservation'
+export type { BrowserReadOptions, BrowserObservationResult } from './browserObservation'
+export { BROWSER_WAIT_DEFAULT_MS, BROWSER_WAIT_MAX_MS } from './browserObservationRuntime'
+export type { BrowserWaitOptions, BrowserWaitResult, BrowserProbeResult, BrowserConsoleResult } from './browserObservationRuntime'
+export type { BrowserActionsResult, BrowserActionExecutionOptions } from './browserActions'
 
 // ————————————————————————— contratos estruturais —————————————————————————
 
@@ -122,12 +133,6 @@ export type BrowserDriverLog = (entry: {
 
 // ————————————————————————————— tetos da casa —————————————————————————————
 
-/** Teto default do `browser_read`. O agente vê o corte e a receita. */
-export const BROWSER_READ_DEFAULT_MAX_CHARS = 8_000
-/** Teto do teto: acima disso a leitura vira a bomba de token que a pesquisa
- *  mediu no playwright-mcp (50-540 KB por snapshot, contexto estourado em 2-3
- *  navegações). */
-export const BROWSER_READ_CEILING_CHARS = 32_000
 /** `browser_find` devolve poucos refs de propósito — é o atalho barato. */
 export const BROWSER_FIND_MAX_HITS = 20
 /** Profundidade default da árvore. */
@@ -149,9 +154,6 @@ export const BROWSER_NETWORK_RING = 300
 export const BROWSER_NETWORK_BODY_MAX_CHARS = 8_000
 /** Teto do resultado serializado do `browser_eval`. */
 export const BROWSER_EVAL_MAX_CHARS = 4_000
-/** Espera default/máxima do `browser_wait`. */
-export const BROWSER_WAIT_DEFAULT_MS = 5_000
-export const BROWSER_WAIT_MAX_MS = 30_000
 
 /**
  * A RECEITA do ref velho. Uma frase, um lugar: ela viaja verbatim para o
@@ -161,14 +163,6 @@ export const BROWSER_STALE_REF_RECIPE =
   'a página mudou — chame browser_read de novo para renumerar os refs desta página'
 
 // ————————————————————————————— tipos públicos —————————————————————————————
-
-export interface BrowserReadOptions {
-  filter?: 'interactive' | 'all'
-  depth?: number
-  scope?: string
-  maxChars?: number
-}
-
 
 /**
  * O que `browser_viewport` aceita. A LARGURA (preset/width) NÃO é aplicada aqui:
@@ -181,26 +175,11 @@ export interface BrowserViewportOptions {
   colorScheme?: 'light' | 'dark'
 }
 
-export interface BrowserWaitOptions {
-  text?: string
-  selector?: string
-  networkIdle?: boolean
-  ms?: number
-  timeoutMs?: number
-}
-
 /** O que o `browser_shot` precisa saber sobre o frescor do quadro (lei 2). */
 export interface BrowserFreshness {
   frames: number
   ms: number
   pulsing: boolean
-}
-
-interface ConsoleEntry {
-  level: string
-  text: string
-  source?: string
-  ts: number
 }
 
 interface NetworkEntry {
@@ -250,7 +229,9 @@ export class BrowserDriverSession {
   private listening = false
   private attaching: Promise<void> | undefined
   private epochValue = 1
-  private consoleRing: ConsoleEntry[] = []
+  private consoleRing: BrowserConsoleEntry[] = []
+  private consoleRevision = 0
+  private readonly observations = new BrowserObservationHistory()
   private networkRing: NetworkEntry[] = []
   private networkSeq = 0
   private inFlight = new Set<string>()
@@ -265,7 +246,7 @@ export class BrowserDriverSession {
 
   constructor(page: BrowserPageLike, log: BrowserDriverLog = () => undefined) {
     this.page = page
-    this.log = log
+    this.log = (entry) => log({ ...entry, ...(entry.err ? { err: sanitizeGuiArtifactPreviewText(entry.err) } : {}) })
   }
 
   get epoch(): number {
@@ -442,8 +423,8 @@ export class BrowserDriverSession {
     }
   }
 
-  private pushConsole(entry: ConsoleEntry): void {
-    this.consoleRing.push(entry)
+  private pushConsole(entry: Omit<BrowserConsoleEntry, 'seq'>): void {
+    this.consoleRing.push({ ...entry, text: sanitizeGuiArtifactPreviewText(entry.text), seq: ++this.consoleRevision })
     if (this.consoleRing.length > BROWSER_CONSOLE_RING) this.consoleRing.shift()
   }
 
@@ -482,26 +463,29 @@ export class BrowserDriverSession {
   // ————————————————————————————— leitura —————————————————————————————
 
   async read(options: BrowserReadOptions = {}): Promise<string> {
-    const maxChars = Math.min(
-      Math.max(options.maxChars ?? BROWSER_READ_DEFAULT_MAX_CHARS, 500),
-      BROWSER_READ_CEILING_CHARS
-    )
-    const result = await this.runPage<PageReadResult>({
-      mode: 'read',
-      filter: options.filter ?? 'all',
-      depth: Math.min(Math.max(options.depth ?? BROWSER_READ_DEFAULT_DEPTH, 1), 40),
-      scope: options.scope ?? '',
-      maxChars
-    })
-    if (isPageFailure(result)) {
-      if (result.scopeMiss) {
-        return `${result.error}. Receita: chame browser_read sem \`scope\` para ver a página inteira e descobrir o seletor certo.`
+    return (await this.observe(options)).text
+  }
+
+  async observe(options: BrowserReadOptions = {}): Promise<BrowserObservationResult> {
+    try {
+      const result = await this.runPage<PageReadResult>(browserReadParams(options))
+      if (isPageFailure(result)) {
+        const text = result.scopeMiss
+          ? `${result.error}. Receita: chame browser_read sem \`scope\` para ver a página inteira e descobrir o seletor certo.`
+          : `não consegui ler a página: ${result.error}`
+        return { ok: false, mode: 'fresh', error: sanitizeGuiArtifactPreviewText(result.error), text: boundBrowserText(text, browserResponseBudget(options)) }
       }
-      return `não consegui ler a página: ${result.error}`
+      if (result.epoch !== this.epochValue) {
+        const error = 'a página navegou durante a leitura. Receita: chame browser_read novamente.'
+        return { ok: false, mode: 'fresh', error, text: error }
+      }
+      const diagnostics = this.consoleSince(0, { onlyErrors: true, maxChars: 350 })
+      return this.observations.describe(result, options, this.consoleRevision,
+        diagnostics.errors || !diagnostics.complete ? diagnostics.text : '')
+    } catch (failure) {
+      const error = boundBrowserText(String(failure), 800)
+      return { ok: false, mode: 'fresh', error, text: boundBrowserText(`não consegui ler a página: ${error}. Receita: chame browser_read novamente.`, browserResponseBudget(options)) }
     }
-    const header = `${result.title || '(sem título)'} · ${result.url}`
-    const body = result.text || '(nenhum elemento visível casou com o filtro)'
-    return `${header}\n\n${body}\n\n${readFooter(result, maxChars, BROWSER_READ_CEILING_CHARS)}`
   }
 
   async find(query: string, role?: string): Promise<string> {
@@ -515,12 +499,12 @@ export class BrowserDriverSession {
       filter: 'all',
       maxChars: BROWSER_READ_CEILING_CHARS
     })
-    if (isPageFailure(result)) return `não consegui procurar na página: ${result.error}`
+    if (isPageFailure(result)) return sanitizeGuiArtifactPreviewText(`não consegui procurar na página: ${result.error}`)
     if (!result.text) {
-      return `nenhum elemento casou com "${query}"${role ? ` no papel ${role}` : ''}. Receita: chame browser_read (filter:"interactive") para ver o que existe na tela agora.`
+      return sanitizeGuiArtifactPreviewText(`nenhum elemento casou com "${query}"${role ? ` no papel ${role}` : ''}. Receita: chame browser_read (filter:"interactive") para ver o que existe na tela agora.`)
     }
     const cut = result.truncated ? `\n(mostrando os primeiros ${BROWSER_FIND_MAX_HITS} — refine a busca)` : ''
-    return `${result.text}${cut}\n— refs válidos no epoch ${result.epoch} · ${result.url} —`
+    return sanitizeGuiArtifactPreviewText(`${result.text}${cut}\n— refs válidos no epoch ${result.epoch} · ${result.url} —`)
   }
 
   // ————————————————————————————— ações —————————————————————————————
@@ -532,7 +516,23 @@ export class BrowserDriverSession {
    * ele volta SEMPRE, inclusive quando o lote parou no meio.
    */
   async act(actions: BrowserAction[], readOptions: BrowserReadOptions = {}): Promise<string> {
-    return runBrowserActions(this.actionContext(readOptions), actions)
+    return (await this.actResult(actions, readOptions)).text
+  }
+
+  async actResult(actions: BrowserAction[], readOptions: BrowserReadOptions = {}, execution: BrowserActionExecutionOptions = {}): Promise<BrowserActionsResult> {
+    try {
+      await this.ensureAttached()
+      // A newly attached/reparented tab needs a composed frame before CDP's
+      // pointer hit testing catches up with the DOM geometry.
+      await this.settle()
+      const result = await runBrowserActionsResult(this.actionContext(readOptions), actions, {
+        ...execution, responseMaxChars: browserResponseBudget(readOptions)
+      })
+      return { ...result, ...(result.error ? { error: sanitizeGuiArtifactPreviewText(result.error) } : {}) }
+    } catch (failure) {
+      const error = sanitizeGuiArtifactPreviewText(`não consegui iniciar as ações: ${String(failure)}. Receita: chame browser_read para verificar a aba.`)
+      return { ok: false, completed: 0, total: actions.length, error, text: boundBrowserText(error, browserResponseBudget(readOptions)) }
+    }
   }
 
   private actionContext(readOptions: BrowserReadOptions): BrowserActionContext {
@@ -540,7 +540,11 @@ export class BrowserDriverSession {
       send: (method, params) => this.send(method, params),
       resolve: (step, act) => this.resolve(step, act),
       settle: () => this.settle(),
-      read: () => this.read(readOptions),
+      read: async (responseMaxChars) => {
+        const result = await this.observe({ ...readOptions, responseMaxChars })
+        if (!result.ok) throw new Error(result.error ?? result.text)
+        return result.text
+      },
       capabilities: this.input,
       log: (entry) => this.log(entry)
     }
@@ -601,22 +605,17 @@ export class BrowserDriverSession {
   // ————————————————————————————— inspeção —————————————————————————————
 
   async probe(params: BrowserProbeParams): Promise<string> {
-    await this.ensureAttached()
-    const expression = buildProbeExpression({ ...params, epoch: this.epochValue })
-    const raw = (await this.send('Runtime.evaluate', {
-      expression,
-      returnByValue: true,
-      awaitPromise: false
-    })) as { result?: { value?: unknown }; exceptionDetails?: { text?: string } }
-    if (raw.exceptionDetails) {
-      return `não consegui inspecionar: ${raw.exceptionDetails.text ?? 'erro na página'}`
+    return (await this.probeResult(params)).text
+  }
+
+  async probeResult(params: BrowserProbeParams): Promise<BrowserProbeResult> {
+    try {
+      await this.ensureAttached()
+      return await browserProbeResult((method, input) => this.send(method, input), params, this.epochValue, BROWSER_STALE_REF_RECIPE)
+    } catch (failure) {
+      const error = boundBrowserText(String(failure), 800)
+      return { ok: false, error, text: `não consegui inspecionar: ${error}` }
     }
-    const value = raw.result?.value as BrowserProbeRaw | undefined
-    if (!value) return 'não consegui inspecionar: a página não devolveu resultado'
-    if (!value.ok) {
-      return value.stale ? `${value.error} — ${BROWSER_STALE_REF_RECIPE}` : `não consegui inspecionar: ${value.error}`
-    }
-    return formatProbeReport(value)
   }
 
   async evaluate(expression: string): Promise<string> {
@@ -633,7 +632,7 @@ export class BrowserDriverSession {
     if (raw.exceptionDetails) {
       const message =
         raw.exceptionDetails.exception?.description ?? raw.exceptionDetails.text ?? 'erro'
-      return `a página lançou: ${String(message).slice(0, BROWSER_EVAL_MAX_CHARS)}`
+      return `a página lançou: ${sanitizeGuiArtifactPreviewText(String(message)).slice(0, BROWSER_EVAL_MAX_CHARS)}`
     }
     const value = raw.result?.value
     let printed: string
@@ -646,50 +645,35 @@ export class BrowserDriverSession {
         printed = String(value)
       }
     }
+    printed = sanitizeGuiArtifactPreviewText(printed)
     return printed.length > BROWSER_EVAL_MAX_CHARS
       ? `${printed.slice(0, BROWSER_EVAL_MAX_CHARS)}\n[CORTADO em ${BROWSER_EVAL_MAX_CHARS} caracteres — devolva menos: escolha campos em vez do objeto inteiro]`
       : printed
   }
 
   async wait(options: BrowserWaitOptions): Promise<string> {
-    const timeout = Math.min(options.timeoutMs ?? BROWSER_WAIT_DEFAULT_MS, BROWSER_WAIT_MAX_MS)
-    const started = Date.now()
-    if (options.ms !== undefined) {
-      const ms = Math.min(Math.max(options.ms, 0), BROWSER_WAIT_MAX_MS)
-      await new Promise((resolve) => setTimeout(resolve, ms))
-      return `esperei ${ms}ms.`
+    return (await this.waitResult(options)).text
+  }
+
+  async waitResult(options: BrowserWaitOptions): Promise<BrowserWaitResult> {
+    try { await this.ensureAttached() } catch (failure) {
+      const error = sanitizeGuiArtifactPreviewText(`não consegui iniciar a espera: ${String(failure)}. Receita: chame browser_read.`)
+      return { ok: false, error, text: error }
     }
-    if (options.networkIdle && !this.networkDomain) {
-      // Sem o domínio Network o contador de requisições em voo é sempre ZERO —
-      // responder "rede ociosa" aqui seria uma MENTIRA com cara de sucesso.
-      return 'não posso esperar a rede: o domínio Network do CDP não subiu nesta aba. Receita: espere por `selector` ou `text` (o que a página desenha quando a resposta chega) — é uma condição melhor que ociosidade de rede, porque prova que o dado virou tela.'
-    }
-    while (Date.now() - started < timeout) {
-      if (options.networkIdle) {
-        if (this.inFlight.size === 0 && Date.now() - this.lastNetworkActivity > 500) {
-          return `rede ociosa depois de ${Date.now() - started}ms (nenhuma requisição em voo há 500ms).`
-        }
-      } else {
-        const result = await this.runPage<PageWaitResult>({
-          mode: 'wait',
-          ...(options.selector ? { selector: options.selector } : {}),
-          ...(options.text ? { text: options.text } : {})
-        })
-        if (!isPageFailure(result) && result.hit) {
-          return `apareceu depois de ${Date.now() - started}ms.`
-        }
-      }
-      await new Promise((resolve) => setTimeout(resolve, 120))
-    }
-    const what = options.networkIdle
-      ? `a rede não ficou ociosa (${this.inFlight.size} requisição(ões) em voo)`
-      : options.selector
-        ? `o seletor "${options.selector}" não apareceu`
-        : `o texto "${options.text ?? ''}" não apareceu`
-    return `ESPERA ESGOTADA em ${timeout}ms: ${what}. Receita: chame browser_read para ver o que a página REALMENTE mostra agora, browser_console para ver se ela quebrou, ou repita com timeoutMs maior (teto ${BROWSER_WAIT_MAX_MS}).`
+    return browserWaitResult({
+      runPage: (params) => this.runPage<PageWaitResult>(params),
+      networkAvailable: () => this.networkDomain, inFlight: () => this.inFlight.size,
+      lastNetworkActivity: () => this.lastNetworkActivity
+    }, options)
   }
 
   // ————————————————————————— console, rede, viewport —————————————————————
+
+  consoleCheckpoint(): number { return this.consoleRevision }
+
+  consoleSince(checkpoint: number, options: { onlyErrors?: boolean; maxChars?: number } = {}): BrowserConsoleResult {
+    return browserConsoleSince(this.consoleRing, this.consoleRevision, checkpoint, this.logDomain, options)
+  }
 
   consoleText(options: { onlyErrors?: boolean; pattern?: string; limit?: number }): string {
     const limit = Math.min(Math.max(options.limit ?? 50, 1), BROWSER_CONSOLE_RING)
@@ -747,7 +731,7 @@ export class BrowserDriverSession {
           const status = n.failure ? `FALHOU(${n.failure})` : (n.status ?? '—')
           const ms = n.endedAt ? `${n.endedAt - n.startedAt}ms` : 'em voo'
           const size = n.bytes !== undefined ? `, ${n.bytes}B` : ''
-          return `#${n.id} ${n.method} ${status} ${ms}${size} ${n.url.slice(0, 140)}`
+          return sanitizeGuiArtifactPreviewText(`#${n.id} ${n.method} ${status} ${ms}${size} ${sanitizeGuiArtifactPreviewText(n.url).slice(0, 140)}`)
         })
         .join('\n') +
       '\n— o corpo de uma resposta sai em browser_network com `requestId` (o #id acima) —'
@@ -758,26 +742,27 @@ export class BrowserDriverSession {
     if (!this.networkDomain) return this.networkText({})
     const known = this.networkRing.find((n) => n.id === requestId)
     if (!known) {
-      return `não conheço a requisição #${requestId}. Receita: chame browser_network sem \`requestId\` para ver o índice e copiar o id de lá.`
+      return sanitizeGuiArtifactPreviewText(`não conheço a requisição #${requestId}. Receita: chame browser_network sem \`requestId\` para ver o índice e copiar o id de lá.`)
     }
+    const url = sanitizeGuiArtifactPreviewText(known.url)
     try {
       const raw = (await this.send('Network.getResponseBody', { requestId })) as {
         body?: string
         base64Encoded?: boolean
       }
       if (raw.base64Encoded) {
-        return `#${requestId} ${known.url}\n(corpo binário de ${raw.body?.length ?? 0} bytes em base64 — não vale como texto; use browser_shot se o que importa é o pixel)`
+        return `#${requestId} ${url}\n(corpo binário de ${raw.body?.length ?? 0} bytes em base64 — não vale como texto; use browser_shot se o que importa é o pixel)`
       }
-      const body = raw.body ?? ''
-      return `#${requestId} ${known.method} ${known.status ?? '—'} ${known.url}\n\n${
+      const body = sanitizeGuiArtifactPreviewText(raw.body ?? '')
+      return `#${requestId} ${known.method} ${known.status ?? '—'} ${url}\n\n${
         body.length > BROWSER_NETWORK_BODY_MAX_CHARS
           ? `${body.slice(0, BROWSER_NETWORK_BODY_MAX_CHARS)}\n[CORTADO em ${BROWSER_NETWORK_BODY_MAX_CHARS} caracteres]`
           : body
       }`
     } catch (error) {
-      return `o corpo de #${requestId} não está mais no buffer do Chromium (${
+      return sanitizeGuiArtifactPreviewText(`o corpo de #${requestId} não está mais no buffer do Chromium (${
         error instanceof Error ? error.message : String(error)
-      }). Receita: refaça a requisição (browser_open recarrega a página) e peça o corpo logo em seguida.`
+      }). Receita: refaça a requisição (browser_open recarrega a página) e peça o corpo logo em seguida.`)
     }
   }
 
@@ -846,17 +831,32 @@ export class BrowserDriverSession {
       ...(target.selector ? { selector: target.selector } : {})
     })
     if (isPageFailure(result)) {
-      return { error: result.stale ? `${result.error} — ${BROWSER_STALE_REF_RECIPE}` : result.error }
+      return { error: sanitizeGuiArtifactPreviewText(result.stale ? `${result.error} — ${BROWSER_STALE_REF_RECIPE}` : result.error) }
     }
     return {
       rect: { x: result.box.x, y: result.box.y, width: result.box.w, height: result.box.h },
-      label: `${result.role}${result.name ? ` "${result.name}"` : ''} (${result.box.w}x${result.box.h})`
+      label: sanitizeGuiArtifactPreviewText(`${result.role}${result.name ? ` "${result.name}"` : ''} (${result.box.w}x${result.box.h})`)
     }
   }
 
   /** O que a página é AGORA, sem custo de árvore — para o cabeçalho do open. */
   async readyState(): Promise<string> {
     return this.evaluate('document.readyState')
+  }
+
+  /** Fixed structural read used to wait for actual layout width before input. */
+  async viewportSize(): Promise<{ width: number; height: number }> {
+    await this.ensureAttached()
+    const raw = await this.send('Runtime.evaluate', {
+      expression: '({width:window.innerWidth,height:window.innerHeight})', returnByValue: true, awaitPromise: false
+    }) as { result?: { value?: { width?: unknown; height?: unknown } }; exceptionDetails?: unknown }
+    const width = raw.result?.value?.width
+    const height = raw.result?.value?.height
+    if (raw.exceptionDetails || typeof width !== 'number' || typeof height !== 'number' ||
+      !Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+      throw new Error('a página não informou dimensões válidas. Receita: chame browser_read antes de agir.')
+    }
+    return { width, height }
   }
 
   /** O epoch avança à mão quando o main recarrega/navega sem passar pelo CDP. */

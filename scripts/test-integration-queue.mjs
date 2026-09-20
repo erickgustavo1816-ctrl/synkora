@@ -591,9 +591,56 @@ const {
   missionDeliveryFrom
 } = requireCompiled(join(COMPILED, 'missions.js'))
 const worktreeApi = requireCompiled(join(COMPILED, 'worktree.js'))
+const { BacklogStore } = requireCompiled(join(COMPILED, 'backlog.js'))
+
+test('completed mission summaries are projected into version history and repaired idempotently', (t) => {
+  const projectId = randomUUID()
+  const missions = new MissionStore()
+  const file = join(userData, `summary-backlog-${projectId}.json`)
+  const backlog = new BacklogStore(file)
+  const version = backlog.createVersion(projectId, { name: '1.0.0' })
+  const mission = missions.create(projectId, { title: 'Busca corrigida', direct: true, versionId: version.id })
+  const summary = 'A busca voltou a encontrar os itens pelo nome. Os resultados aparecem sem repetir a pesquisa.'
+  const pushes = []
+  const engine = createMissionEngine({ missions, backlog, syncBoard: () => {}, hub: { publish: () => {} } }, {
+    emitBacklogChanged: id => pushes.push(id)
+  })
+  missions.update(mission.id, { summary, status: 'concluida' })
+  assert.equal(engine.reconcileConcludedMission(projectId, mission.id, 'Concluída.').ok, true)
+  const first = new BacklogStore(file).getVersion(version.id).deliveries[0]
+  assert.equal(first.summary, summary)
+  assert.equal(engine.reconcileConcludedMission(projectId, mission.id, 'Concluída.').ok, true)
+  assert.equal(backlog.getVersion(version.id).deliveries.length, 1)
+  assert.equal(pushes.length, 1, 'unchanged reconciliation stays quiet')
+  const revised = 'A busca encontra os itens pelo nome completo ou por parte dele. Os resultados aparecem sem repetir a pesquisa.'
+  missions.update(mission.id, { summary: revised })
+  assert.equal(engine.reconcileConcludedMission(projectId, mission.id, 'Concluída.').ok, true)
+  const repaired = new BacklogStore(file).getVersion(version.id).deliveries[0]
+  assert.equal(repaired.summary, revised)
+  assert.equal(repaired.id, first.id)
+  assert.equal(repaired.at, first.at)
+  assert.deepEqual(pushes, [projectId, projectId], 'summary repair refreshes the version immediately')
+  assert.equal(engine.reconcileConcludedMission('other-project', mission.id, 'Concluída.').ok, false)
+})
+
+test('release pendente sobrevive à leitura depois de reiniciar sem pane vivo', (t) => {
+  const projectId = randomUUID()
+  const original = new MissionStore()
+  const release = original.create(projectId, { title: 'Synthetic release', missionType: 'release',
+    versionId: 'synthetic-version', direct: true })
+  const reopened = new MissionStore()
+  const { store: queue } = temporaryStore(t)
+  const ctx = {
+    missions: reopened, backlog: { getVersion: () => ({ status: 'lancada' }) }, integrationQueue: queue,
+    blackbox: { record: () => {} }, pushAll: () => {}, scheduleProgressSnapshot: () => {}
+  }
+  const engine = createMissionEngine(ctx, { paneAlive: () => false })
+  assert.equal(engine.missionsWithIntegration(projectId).find((m) => m.id === release.id)?.status, 'ativa')
+  assert.equal(new MissionStore().get(release.id)?.status, 'ativa', 'a leitura não grava conclusão no disco')
+})
 
 /** Motor real + repositório real + missão com worktree isolado e uma entrega. */
-function mergeHarness(t) {
+async function mergeHarness(t) {
   const projectId = randomUUID()
   const projectPath = mkdtempSync(join(tmpdir(), 'synkora-r16-repo-'))
   gitCli(projectPath, ['init'])
@@ -651,7 +698,7 @@ function mergeHarness(t) {
     goal: 'Guardar os tickets por universo',
     direct: true
   })
-  const withWorktree = engine.ensureMissionWorktree(mission.id)
+  const withWorktree = await engine.ensureMissionWorktree(mission.id)
   assert.ok(withWorktree?.worktree && withWorktree.branch, 'a missão precisa de worktree isolado')
   gitCli(withWorktree.worktree, ['config', 'user.name', 'Synkora Test'])
   gitCli(withWorktree.worktree, ['config', 'user.email', 'synkora-test@example.invalid'])
@@ -691,7 +738,10 @@ function mergeHarness(t) {
 }
 
 test('R16: o merge real GRAVA a entrega da missão — lida antes de o worktree sumir', async (t) => {
-  const harness = mergeHarness(t)
+  const harness = await mergeHarness(t)
+  const sourceHead = gitCli(harness.worktree, ['rev-parse', 'HEAD']).trim()
+  const summary = 'As missões aguardam sua vez na fila. Cada entrega mantém a posição até a integração terminar.'
+  harness.missions.update(harness.missionId, { summary })
   const outcome = await harness.engine.runMissionIntegration(harness.projectId, harness.missionId)
   assert.match(outcome, /INTEGRADA/u, outcome)
 
@@ -704,6 +754,7 @@ test('R16: o merge real GRAVA a entrega da missão — lida antes de o worktree 
   assert.equal(stored.worktree, undefined)
   assert.equal(existsSync(harness.worktree), false, 'o worktree tem de morrer no merge')
   assert.ok(stored.delivery, 'a missão concluiu SEM entrega registrada')
+  assert.equal(stored.delivery.sourceHead, sourceHead, 'a origem deve continuar verificável depois da limpeza')
   assert.deepEqual(stored.delivery.commits, ['feat(queue): o ticket nasce com a fotografia'])
   assert.deepEqual(stored.delivery.files, ['fila.ts'])
   assert.equal(stored.delivery.truncated, undefined, 'nada foi cortado nesta entrega')
@@ -721,6 +772,7 @@ test('R16: o merge real GRAVA a entrega da missão — lida antes de o worktree 
 
   // e o disco é a autoridade: outra instância do store lê a mesma entrega
   assert.deepEqual(new MissionStore().get(harness.missionId).delivery, stored.delivery)
+  assert.equal(new MissionStore().get(harness.missionId).summary, summary)
 
   const captured = harness.audited.find((event) => event.event === 'mission-delivery-captured')
   assert.ok(captured, 'captura boa tem de virar evento de caixa-preta')
@@ -730,7 +782,7 @@ test('R16: o merge real GRAVA a entrega da missão — lida antes de o worktree 
 })
 
 test('R16: falha na captura NÃO segura a conclusão — a missão integra sem entrega', async (t) => {
-  const harness = mergeHarness(t)
+  const harness = await mergeHarness(t)
   failingGitOps.add('missionCommits')
   failingGitOps.add('missionWorkspaceSummary')
 
@@ -846,6 +898,7 @@ const SYNC_GIT_BURST = [
   'gitLocalBranchExists',
   'createVersionWorktree',
   'ensureSynkoraGitExcludes',
+  'ensureWorktreeEnvironment',
   'resolveMissionWorkspace',
   'missionWorkspacePath'
 ]
@@ -857,7 +910,8 @@ test('R17: o caminho do ⇪ não tem NENHUM git síncrono no fonte', () => {
     completeMissionMergeInner: engineBody('completeMissionMergeInner'),
     resolveMissionIntegrationTarget: engineBody('resolveMissionIntegrationTarget'),
     writeMissionIntegrationIntent: engineBody('writeMissionIntegrationIntent'),
-    ensureMissionWorktreeOffThread: engineBody('ensureMissionWorktreeOffThread')
+    ensureMissionWorktreeOffThread: engineBody('ensureMissionWorktreeOffThread'),
+    ensureMissionWorktree: engineBody('ensureMissionWorktree')
   }
   for (const [name, body] of Object.entries(path)) {
     for (const fn of SYNC_GIT_BURST) {
@@ -868,8 +922,7 @@ test('R17: o caminho do ⇪ não tem NENHUM git síncrono no fonte', () => {
       )
     }
   }
-  // O ⇪ também não entra no ensureMissionWorktree SÍNCRONO: o dele é o espelho
-  // assíncrono (que, esse sim, delega ao completo no caso raro).
+  // Integration uses the same serialized preparation as creation and reopening.
   for (const name of ['startMissionIntegration', 'runHeadIntegration']) {
     assert.doesNotMatch(path[name], directCall('ensureMissionWorktree'), name)
     assert.match(path[name], /ensureMissionWorktreeOffThread\(/u, name)
@@ -884,27 +937,20 @@ test('R17: o caminho do ⇪ não tem NENHUM git síncrono no fonte', () => {
   assert.match(path.writeMissionIntegrationIntent, /gitOff\('gitHead'/u)
 })
 
-test('R17: o atalho do ⇪ pergunta o MESMO, na MESMA ordem — e o raro volta ao caminho inteiro', () => {
-  const sync = engineBody('ensureMissionWorktree')
+test('mission preparation has one complete worker path for creation, reopen and integration', () => {
+  const preparation = engineBody('ensureMissionWorktree')
   const off = engineBody('ensureMissionWorktreeOffThread')
-  // A ordem de abertura do espelho SÍNCRONO é a autoridade: repo com commit →
-  // excludes → worktree esperado. Cada resposta decide a pergunta seguinte.
-  const opening = [...sync.matchAll(/(?<![\w'])(hasGitCommit|ensureSynkoraGitExcludes|isExpectedWorktree)\(/gu)]
-    .map((match) => match[1])
-    .slice(0, 3)
-  const transported = [...off.matchAll(/gitOff\('([A-Za-z]+)'/gu)].map((match) => match[1])
-  assert.deepEqual(
-    transported,
-    opening,
-    'o espelho assíncrono precisa fazer as MESMAS perguntas, na MESMA ordem — mudar a sequência muda a decisão, não só o thread'
-  )
-  // E o que NÃO é o estado saudável (git init, promoção de registro legado,
-  // criação/reparo de worktree) continua num dono da verdade só.
-  assert.match(off, /return ensureMissionWorktree\(missionId\)/u)
+  for (const operation of ['hasGitCommit', 'initGitRepo', 'ensureSynkoraGitExcludes', 'isExpectedWorktree',
+    'ensureWorktreeEnvironment', 'createVersionWorktree', 'createMissionWorktree']) {
+    assert.match(preparation, new RegExp(`gitOff\\(\\s*'${operation}'`, 'u'))
+    assert.doesNotMatch(preparation, directCall(operation))
+  }
+  assert.match(off, /ensureMissionWorktree\(missionId\)/u)
+  assert.match(engineBody('createMissionImpl'), /await ensureMissionWorktreeOffThread\(mission.id\)/u)
 })
 
 test('R17: o ⇪ do dono manda a rajada inteira para o gitWorker, na ordem do lacre', async (t) => {
-  const harness = mergeHarness(t)
+  const harness = await mergeHarness(t)
   const msg = await harness.engine.startMissionIntegration(harness.missionId, 'user')
   assert.match(msg, /fila de integração/u, msg)
   // ORDEM E CONTEÚDO: a sequência abaixo é o lacre do ⇪ lido em fotografia —
@@ -914,6 +960,7 @@ test('R17: o ⇪ do dono manda a rajada inteira para o gitWorker, na ordem do la
     'hasGitCommit', //             ensureMissionWorktree: o repo tem commit?
     'ensureSynkoraGitExcludes', // ensureMissionWorktree: .synkora invisível
     'isExpectedWorktree', //       ensureMissionWorktree: o worktree é o desta missão
+    'ensureWorktreeEnvironment', // configuração local depois da prova de isolamento
     'hasGitCommit', //             projeto git? (sem git não há merge)
     'resolveMissionWorkspace', //  o worktree isolado, provado
     'isWorktreeClean', //          a árvore da entrega está limpa
@@ -923,15 +970,16 @@ test('R17: o ⇪ do dono manda a rajada inteira para o gitWorker, na ordem do la
 })
 
 test('R17: o integration_run também não spawna git no main — do começo ao merge', async (t) => {
-  const harness = mergeHarness(t)
+  const harness = await mergeHarness(t)
   const outcome = await harness.engine.runMissionIntegration(harness.projectId, harness.missionId)
   assert.match(outcome, /INTEGRADA/u, outcome)
   // O run repete as MESMAS conferências do ⇪ (a fila é serial: entre o clique e
   // a vez dela o mundo pode ter mudado) e só então mescla.
-  assert.deepEqual(gitOffCalls.slice(0, 9), [
+  assert.deepEqual(gitOffCalls.slice(0, 10), [
     'hasGitCommit',
     'ensureSynkoraGitExcludes',
     'isExpectedWorktree',
+    'ensureWorktreeEnvironment',
     'resolveMissionWorkspace',
     'hasGitCommit',
     'isWorktreeClean',
@@ -941,7 +989,7 @@ test('R17: o integration_run também não spawna git no main — do começo ao m
   ])
   // E o fecho do merge — fotografia pré-merge, ponto seguro de recuperação e
   // captura da entrega — segue o mesmo caminho, sempre ANTES do merge real.
-  const tail = gitOffCalls.slice(9)
+  const tail = gitOffCalls.slice(10)
   assert.deepEqual(tail, [
     'resolveMissionWorkspace', // completeMissionMerge: workspace de novo
     'hasGitCommit',
@@ -956,6 +1004,7 @@ test('R17: o integration_run também não spawna git no main — do começo ao m
     'currentBranch',
     'missionCommits', //          R16: a entrega é lida antes de o worktree sumir
     'missionWorkspaceSummary',
+    'gitHead', //                 origem durável para as consultas de contexto
     'mergeTaskWorktree',
     // R18.2: e o FECHO, que até aqui era o último git SÍNCRONO do caminho —
     // limpeza dos arquivos da missão e remoção do marcador de integração.
@@ -981,7 +1030,7 @@ test('R17: o integration_run também não spawna git no main — do começo ao m
 test('R18: o integration_status manda a fotografia dele para o gitWorker, na ordem', async (t) => {
   // O harness já deixa o ticket na fila — exatamente o que o ⇪ do dono deixa —
   // e zera o `gitOffCalls` antes disso: o que sobra aqui é SÓ a consulta.
-  const harness = mergeHarness(t)
+  const harness = await mergeHarness(t)
 
   const status = await harness.engine.missionIntegrationStatus(
     harness.projectId,
@@ -1009,11 +1058,12 @@ test('R18: o integration_status manda a fotografia dele para o gitWorker, na ord
   )
 })
 
-test('R18: status, fecho e criação não têm git SÍNCRONO no fonte — e o BOOT continua tendo', () => {
+test('R18: status, fecho e recuperação pelo botão não têm git SÍNCRONO no fonte', () => {
   const bodies = {
     missionIntegrationStatus: engineBody('missionIntegrationStatus'),
     cleanupMissionFilesOffThread: engineBody('cleanupMissionFilesOffThread'),
-    clearMissionIntegrationIntentOffThread: engineBody('clearMissionIntegrationIntentOffThread')
+    clearMissionIntegrationIntentOffThread: engineBody('clearMissionIntegrationIntentOffThread'),
+    recoverMissionIntegrationIntents: engineBody('recoverMissionIntegrationIntents')
   }
   for (const [name, body] of Object.entries(bodies)) {
     for (const fn of SYNC_GIT_BURST) {
@@ -1032,11 +1082,10 @@ test('R18: status, fecho e criação não têm git SÍNCRONO no fonte — e o BO
   assert.match(closing, /await clearMissionIntegrationIntentOffThread\(/u)
   // (O twin no CRIAR missão — R18.4 — foi revertido no review: sem ganho de
   // main thread medido; ver r18-agent-report.md, nota honesta nº 2.)
-  // E o BOOT segue síncrono, palavra por palavra: boot não é clique.
+  // Recovery also serves the owner's retry button, so its Git cannot block UI.
   const boot = engineBody('recoverMissionIntegrationIntents')
-  assert.match(boot, directCall('clearMissionIntegrationIntent'), 'a reconciliação de boot')
-  assert.match(boot, directCall('cleanupMissionFiles'), 'a reconciliação de boot')
-  assert.doesNotMatch(boot, /OffThread\(/u, 'boot não é clique: a reconciliação segue síncrona')
+  assert.match(boot, /await clearMissionIntegrationIntentOffThread\(/u)
+  assert.match(boot, /await cleanupMissionFilesOffThread\(/u)
 })
 
 /** A sequência de OPERAÇÕES de um corpo, com o `gitOff('x', …)` achatado no
@@ -1048,23 +1097,23 @@ function operationSequence(body, names) {
   return [...body.matchAll(pattern)].map((match) => match[1] ?? match[2])
 }
 
-test('R18: os espelhos do FECHO fazem o MESMO que os originais do BOOT, na mesma ordem', () => {
+test('R18: fecho e recuperação compartilham a limpeza depois de configurar excludes', () => {
   const clearOps = ['ensureSynkoraGitExcludes', 'unlinkSync', 'missionIntegrationIntentPath']
   assert.deepEqual(
     operationSequence(engineBody('clearMissionIntegrationIntentOffThread'), clearOps),
-    operationSequence(engineBody('clearMissionIntegrationIntent'), clearOps),
-    'o espelho do marcador precisa fazer as MESMAS ações, na MESMA ordem que o original do boot'
+    ['ensureSynkoraGitExcludes', 'unlinkSync', 'missionIntegrationIntentPath'],
+    'o marcador só sai depois de configurar excludes'
   )
   const cleanupOps = ['ensureSynkoraGitExcludes', 'cleanupMissionFilesAfterExcludes']
   assert.deepEqual(
     operationSequence(engineBody('cleanupMissionFilesOffThread'), cleanupOps),
-    operationSequence(engineBody('cleanupMissionFiles'), cleanupOps),
-    'o espelho da limpeza precisa perguntar o MESMO, na MESMA ordem que o original do boot'
+    ['ensureSynkoraGitExcludes', 'cleanupMissionFilesAfterExcludes'],
+    'a limpeza só começa depois de configurar excludes'
   )
   // E o corpo de ARQUIVOS é função COMPARTILHADA: o que some da missão tem um
   // dono da verdade só, senão os dois lados divergem no primeiro conserto.
   assert.match(engineBody('cleanupMissionFilesAfterExcludes'), /unlinkSync\(/u)
-  for (const name of ['cleanupMissionFiles', 'cleanupMissionFilesOffThread']) {
+  for (const name of ['cleanupMissionFilesOffThread']) {
     assert.doesNotMatch(
       engineBody(name),
       /readdirSync\(/u,
@@ -1079,8 +1128,8 @@ const indexSource = readFileSync(
 ).replace(/\r\n/gu, '\n')
 
 test('R18: o isolamento da versão tem UM dono da verdade — predicado e probe da mesma pureza', () => {
-  // Os dois pontos ASSÍNCRONOS do motor perguntam pelo probe…
-  for (const name of ['resolveMissionIntegrationTarget', 'completeMissionMergeInner']) {
+  // All asynchronous paths, including recovery, use the worker probe.
+  for (const name of ['resolveMissionIntegrationTarget', 'completeMissionMergeInner', 'recoverMissionIntegrationIntents']) {
     const body = engineBody(name)
     assert.doesNotMatch(
       body,
@@ -1089,9 +1138,9 @@ test('R18: o isolamento da versão tem UM dono da verdade — predicado e probe 
     )
     assert.match(body, /await versionIsolationProbe\(/u, name)
   }
-  // …e o PREDICADO fica onde o narrowing é necessário (caminho síncrono e boot).
-  assert.match(engineBody('ensureMissionWorktree'), directCall('versionIsolationIsValid'))
-  assert.match(engineBody('recoverMissionIntegrationIntents'), directCall('versionIsolationIsValid'))
+  // First checkout and recovery now use the same asynchronous probe too.
+  assert.match(engineBody('ensureMissionWorktree'), /await versionIsolationProbe\(/u)
+  assert.doesNotMatch(engineBody('ensureMissionWorktree'), directCall('versionIsolationIsValid'))
 
   // No index: a metade PURA é UMA função, e os dois lados nascem dela.
   const probe = bodyOf(indexSource, 'versionIsolationProbe')
@@ -1115,7 +1164,7 @@ test('R18: o isolamento da versão tem UM dono da verdade — predicado e probe 
 })
 
 test('R18: o FECHO do merge (limpeza + marcador) também roda no gitWorker', async (t) => {
-  const harness = mergeHarness(t)
+  const harness = await mergeHarness(t)
   const outcome = await harness.engine.runMissionIntegration(harness.projectId, harness.missionId)
   assert.match(outcome, /INTEGRADA/u, outcome)
 

@@ -68,12 +68,14 @@ import type {} from '../hub'
 import type {} from '../seats'
 import type { MainContext } from '../mainContext'
 import type { MissionEngine } from '../missionEngine'
+import { needsMissionFinalization } from '../missionFinalization'
 import type { MaestroEngine } from '../maestroEngine'
 
 /** Dependências do closure do index ainda não migradas (mesmo padrão dos
  * outros ipc/*). Os dois engines viajam inteiros; o lado maestro do
  * paneSpec (budget de resume + método de planejamento) vem do maestroEngine. */
 export interface MissionsIpcExtras {
+  projectContextBriefing?(projectId: string, missionId: string): string
   engine: MissionEngine
   maestroEngine: Pick<
     MaestroEngine,
@@ -87,7 +89,7 @@ export interface MissionsIpcExtras {
    *  resume gravado e a vaga livre do ajudante. */
   guiSessions: GuiSessionRegistry
   /** 2.0: encerra dev/reviewer/ajudantes GUI da missão (fonte única no index). */
-  killMissionGuiPanes(missionId: string): void
+  killMissionGuiPanes(missionId: string): void | Promise<void>
 }
 
 /** Resposta do `missions:guiSpec` (contrato da onda B, §interface partilhada). */
@@ -180,6 +182,12 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
     killMissionGuiPanes
   } = extras
   const { maestroResumeOverBudget, skipMaestroResume } = extras.maestroEngine
+  // Seat/archive updates retain their synchronous receipt; deletion below awaits cleanup.
+  const closeGuiPanesInBackground = (missionId: string): void => {
+    void Promise.resolve(killMissionGuiPanes(missionId)).catch(() => {
+      blackbox.record({ cat: 'app', event: 'mission-process-cleanup-failed', actor: 'harness', ids: { missionId } })
+    })
+  }
   const {
     missionsWithIntegration,
     createMissionImpl,
@@ -249,15 +257,16 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
    * uma branch que ninguém jamais mesclaria. Ela roda na RAIZ do projeto, que
    * é onde plano/ mora e onde o produto inteiro pode ser lido.
    */
-  function proveMissionWorkspace(
+  async function proveMissionWorkspace(
     missionId: string
-  ):
+  ): Promise<
     | { ok: true; mission: Mission; project: Project; cwd: string; workspace: GuiMissionWorkspace }
-    | { ok: false; error: string } {
+    | { ok: false; error: string }> {
     const mission = missions.get(missionId)
     if (!mission) return { ok: false, error: 'missão não encontrada' }
     const project = projects.get(mission.projectId)
     if (!project) return { ok: false, error: 'projeto não encontrado' }
+    const projectPath = project.path
     if (!existsSync(project.path))
       return { ok: false, error: 'a pasta do projeto não existe mais — relocalize o universo' }
     if (mission.status === 'concluida' || mission.status === 'arquivada')
@@ -269,28 +278,54 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
     // RELEASE (R27): a conversa opera na PASTA DO PROJETO — a prod que a
     // subida altera. Morar no worktree da versão era o autoconflito terminal
     // da estreia (2026-08-20): o chat segurava, no Windows, o diretório que o
-    // próprio release precisa apagar na limpeza. As recusas de versão sem
-    // branch/worktree ficam — sem elas não há o que subir.
+    // próprio release precisa apagar na limpeza. Antes da subida a versão
+    // precisa ter isolamento; depois dela, o worktree foi removido de propósito
+    // e a mesma conversa continua na raiz até a validação e o encerramento.
     if (missionTypeOf(mission) === 'release') {
       const version = mission.versionId ? backlog.getVersion(mission.versionId) : undefined
       if (!version || version.projectId !== mission.projectId)
         return { ok: false, error: 'a versão desta missão de release não existe mais' }
-      if (!version.worktree)
+      if (version.status !== 'lancada' && !version.worktree)
         return {
           ok: false,
           error: 'a versão ainda não tem worktree próprio — crie uma missão nela primeiro'
         }
       return { ok: true, mission, project, cwd: project.path, workspace: 'project-root' }
     }
-    const withWorktree = ensureMissionWorktree(missionId) ?? mission
-    const cwd = missionWorkspacePath(project.path, withWorktree)
-    if (!cwd)
-      return {
-        ok: false,
-        error:
-          'não consegui provar o worktree isolado desta missão; nada foi aberto na branch principal'
+    // A partial removal may have erased .git. Reopening the repair chat
+    // must never recreate the source or hold its directory open again.
+    if (needsMissionFinalization(ctx.integrationQueue.getByMission(missionId)))
+      return { ok: true, mission, project, cwd: project.path, workspace: 'project-root' }
+    const unavailable = {
+      ok: false as const,
+      error: 'não consegui preparar o ambiente isolado desta missão — use tentar de novo; se persistir, confira o Git e o acesso à pasta do projeto'
+    }
+    try {
+      const withWorktree = await ensureMissionWorktree(missionId)
+      if (!withWorktree) return unavailable
+      const prepared = { ...withWorktree }
+      const cwd = await missionWorkspacePath(projectPath, prepared)
+      if (!cwd) return unavailable
+      const current = missions.get(missionId)
+      // Selection can change while Git runs. Never open a pane with a proof
+      // from before archiving, relocating or retargeting this mission.
+      if (!current || projects.get(mission.projectId)?.path !== projectPath ||
+        current.projectId !== prepared.projectId || current.status !== prepared.status ||
+        current.versionId !== prepared.versionId || current.branch !== prepared.branch ||
+        current.worktree !== prepared.worktree || current.missionType !== prepared.missionType ||
+        current.status === 'concluida' || current.status === 'arquivada' || current.status === 'integrando') {
+        return { ok: false, error: 'a missão mudou durante a preparação — reabra a missão para continuar' }
       }
-    return { ok: true, mission: withWorktree, project, cwd, workspace: 'worktree' }
+      if (mission.branch !== current.branch || mission.worktree !== current.worktree) {
+        emitMissionsChanged(current.projectId)
+        emitBacklogChanged(current.projectId)
+      }
+      return { ok: true, mission: current, project, cwd, workspace: 'worktree' }
+    } catch {
+      blackbox.record({ cat: 'git', event: 'mission-workspace-unavailable', actor: 'harness',
+        ids: { projectId: mission.projectId, missionId } })
+      return unavailable
+    }
   }
 
   /**
@@ -468,8 +503,8 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
    * fecha esses panes antes do merge/release. Terminal esquecido aberto não
    * pode travar a integração da missão.
    */
-  ipcMain.handle('missions:shellSpec', (_e, missionId: string): MissionShellSpecResult => {
-    const proved = proveMissionWorkspace(missionId)
+  ipcMain.handle('missions:shellSpec', async (_e, missionId: string): Promise<MissionShellSpecResult> => {
+    const proved = await proveMissionWorkspace(missionId)
     if (!proved.ok) return { ok: false, error: proved.error }
     const { mission, cwd } = proved
     const paneId = randomUUID()
@@ -531,10 +566,10 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
         return { ok: false, error: `modo de permissão desconhecido: ${String(permissionMode)}` }
       // Mesmo escalonador do paneSpec (F6.10): reabrir a missão pode pedir
       // dev + reviewer + ajudantes na mesma batida, e 4 CLIs no mesmo segundo
-      // era a rajada que travava o main. Único await do handler — todo o resto
-      // abaixo é síncrono, então não há janela para o estado envelhecer.
+      // era a rajada que travava o main. Workspace preparation also yields;
+      // proveMissionWorkspace rechecks mission identity before opening a pane.
       await staggerPaneSpawn()
-      const proved = proveMissionWorkspace(missionId)
+      const proved = await proveMissionWorkspace(missionId)
       if (!proved.ok) return { ok: false, error: proved.error }
       // `mission` já vem com o worktree provado quando é missão de dev; na de
       // planejamento vem como está, porque worktree ela não tem.
@@ -614,13 +649,11 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
             : 'gui-delegator'
       )
 
-      // R16: só o DEV de uma missão de dev recebe o bloco das dependências — é
-      // ele quem vai estudar o produto antes de implementar (o reviewer julga o
-      // diff, o ajudante recebe uma fatia pronta). Sem plano, sem dependência ou
-      // com a dependida ainda em pé, o campo nem existe e o briefing é o de
-      // sempre, byte a byte.
+      // The context catalog replaces automatic delivery lists with a short
+      // orientation and source queries. Older hosts without it keep the R16
+      // dependency briefing for the development pane.
       const dependencyDeliveries =
-        route.missionType === 'dev' && role === 'dev'
+        !extras.projectContextBriefing && route.missionType === 'dev' && role === 'dev'
           ? dependencyDeliveriesOf(mission)
           : undefined
 
@@ -636,7 +669,7 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
         // escolha do dono — não na que a missão nasceu.
         model: rememberedGuiExecutorValue(rememberedExecutor, seat.cli, 'model', mission.model),
         effort: rememberedGuiExecutorValue(rememberedExecutor, seat.cli, 'effort', mission.effort),
-        systemPrompt: route.systemPrompt,
+        systemPrompt: [route.systemPrompt, extras.projectContextBriefing?.(mission.projectId, mission.id)].filter(Boolean).join('\n\n'),
         resumeSessionId,
         permissionMode: effectiveMode,
         ...(mcp ? { mcp } : {}),
@@ -782,7 +815,7 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
       } else {
         for (const paneId of panesWithoutMigratedHistory) guiSessions.forgetSession(paneId)
       }
-      killMissionGuiPanes(missionId)
+      closeGuiPanesInBackground(missionId)
       const resetAfterFailedMigration = panesWithoutMigratedHistory.length
       blackbox.record({
         cat: 'user',
@@ -871,7 +904,7 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
       // 2.0: as conversas GUI da missão nasceram com o config dir da conta
       // ANTIGA — trocar a conta sem encerrá-las deixaria chats órfãos falando
       // por um seat que a missão não usa mais. Reabrir dá o resume de sempre.
-      killMissionGuiPanes(missionId)
+      closeGuiPanesInBackground(missionId)
       const cwd = mission.worktree ?? projects.get(projectId)?.path
       const migrated = Boolean(
         prevSeat &&
@@ -980,7 +1013,7 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
           unregisterPane(paneId)
           // 2.0: dev/reviewer/ajudantes da missão encerram junto (a conversa
           // fica gravada; concluída abre congelada, arquivada reabre no resume).
-          killMissionGuiPanes(id)
+          closeGuiPanesInBackground(id)
         }
         // SKILLS 3.0 (ADR-0010): a skill que o agente puxou é EFÊMERA — ela morre
         // com o worktree. O PLANEJAMENTO não tem worktree (o chat dele mora na
@@ -1061,11 +1094,12 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
 
   // Excluir missão: só ARQUIVADA (fluxo: arquivar → excluir). Leva junto as
   // tarefas dela e limpa worktree/branch — a exclusão é deliberada.
-  ipcMain.handle('missions:remove', (e, missionId: string) => {
+  ipcMain.handle('missions:remove', async (e, missionId: string) => {
     const mission = missions.get(missionId)
     if (!mission || mission.status !== 'arquivada') return false
     const project = projects.get(mission.projectId)
     if (!project) return false
+    const removal = { projectId: mission.projectId, rootPath: project.path, worktree: mission.worktree, branch: mission.branch }
     try {
       ensureSynkoraGitExcludes(project.path)
     } catch (error) {
@@ -1090,7 +1124,12 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
     )
     ptys.kill(orchPaneId(mission.projectId, missionId))
     // 2.0: nenhum chat pode ficar com cwd dentro do worktree que vai sumir.
-    killMissionGuiPanes(missionId)
+    await killMissionGuiPanes(missionId)
+    // Cleanup yields while a device/server exits. A reactivated or relocated mission no longer authorizes this deletion.
+    const current = missions.get(missionId)
+    if (!current || current.status !== 'arquivada' || current.projectId !== removal.projectId ||
+      current.worktree !== removal.worktree || current.branch !== removal.branch ||
+      projects.get(removal.projectId)?.path !== removal.rootPath || integrationQueue.getByMission(missionId)?.state === 'merging') return false
     if (mission.branch && mission.worktree) {
       removeWorktreeAndBranch(project.path, mission.worktree, mission.branch)
     }

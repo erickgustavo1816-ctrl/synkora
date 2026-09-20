@@ -211,7 +211,7 @@ export function createPaneLifecycle(ctx: MainContext, extras: PaneLifecycleExtra
         actor: 'harness',
         reason: previews.failed > 0
           ? 'alguns previews do worktree não confirmaram encerramento; a prova de limpeza continua obrigatória'
-          : 'previews Astro do worktree encerrados antes da remoção',
+          : 'previews do worktree encerrados antes da remoção',
         detail: { worktree: basename(pathPrefix), stopped: previews.stopped, failed: previews.failed }
       })
     }

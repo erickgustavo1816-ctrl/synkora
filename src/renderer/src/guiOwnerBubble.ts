@@ -24,7 +24,7 @@
 
 /** Espelho declarado de `owner-message-state` (o dono do union é o main:
  *  `src/main/guiSessions.ts`). Ordem = ordem do tempo. */
-export type GuiOwnerDeliveryState = 'unread' | 'stopping' | 'read' | 'delivered' | 'answered'
+export type GuiOwnerDeliveryState = 'unread' | 'stopping' | 'read' | 'delivered' | 'answered' | 'cancelled'
 
 /** O que fica gravado no item `user` do fio (ver `GuiItem` em `store.ts`). */
 export interface GuiOwnerDelivery {
@@ -60,6 +60,7 @@ export interface GuiOwnerStamp {
  *  steer (D2'), `delivered` é o pote entregue como turno novo (R39). Quem
  *  chegar primeiro fica; o segundo é no-op. */
 const RANK: Record<GuiOwnerDeliveryState, number> = {
+  cancelled: 5,
   unread: 1,
   stopping: 2,
   read: 3,
@@ -69,6 +70,7 @@ const RANK: Record<GuiOwnerDeliveryState, number> = {
 
 function isDeliveryState(value: unknown): value is GuiOwnerDeliveryState {
   return (
+    value === 'cancelled' ||
     value === 'unread' ||
     value === 'stopping' ||
     value === 'read' ||
@@ -115,6 +117,10 @@ export function ownerDeliveryStamp(
   now: number
 ): GuiOwnerStamp | null {
   if (!delivery || !isDeliveryState(delivery.state)) return null
+  // Cancelada = a bolha SAI do fio (`applyGuiOwnerMessageState` a remove; a
+  // bolha ainda montada se esconde sozinha). Não há o que carimbar — ordem do
+  // dono, 2026-09-16: "parecer que cancelou sem afetar nada".
+  if (delivery.state === 'cancelled') return null
   // A fala já está no CLI e espera a fronteira: nada de relógio (não aconteceu
   // nada ainda para carimbar hora) e nada de pulso — ESPERAR NÃO É MOVIMENTO.
   // O que se mexe aqui é o dono, se ele quiser: o botão é a saída sancionada.
@@ -180,6 +186,8 @@ export function nextOwnerDelivery(
   at: number
 ): GuiOwnerDelivery | null {
   if (!isDeliveryState(state)) return null
+  if (current?.state === 'cancelled') return null
+  if (state === 'cancelled' && current && current.state !== 'unread') return null
   const previous = current && isDeliveryState(current.state) ? RANK[current.state] : 0
   if (RANK[state] <= previous) return null
   return { state, at }
@@ -205,14 +213,18 @@ export function applyGuiOwnerMessageState<T extends GuiOwnerBubbleItem>(
   at: number
 ): T[] {
   let changed = false
-  const next = items.map((item) => {
-    if (item.kind !== 'user' || item.id !== id) return item
+  const next = items.flatMap((item): T[] => {
+    if (item.kind !== 'user' || item.id !== id) return [item]
     const delivery = nextOwnerDelivery(item.delivery, state, at)
-    if (!delivery) return item
+    if (!delivery) return [item]
     changed = true
+    // CANCELADA SOME (ordem do dono, 2026-09-16): a fala retirada não deixa
+    // rastro no fio — nem carimbo, nem bolha. Só a `unread` chega aqui (a
+    // régua acima recusa cancelar o que já foi lido).
+    if (delivery.state === 'cancelled') return []
     // O spread de um genérico volta como interseção; o item continua sendo o
     // mesmo tipo do fio, só com a entrega preenchida.
-    return { ...item, delivery } as T
+    return [{ ...item, delivery } as T]
   })
   return changed ? next : items
 }

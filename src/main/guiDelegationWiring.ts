@@ -29,6 +29,7 @@
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { CLAUDE_NATIVE_AGENT_FENCE } from './guiDelegateMcp'
+import { GUI_MOBILE_ORDER } from './guiMissionContracts'
 import {
   armGuiHelperLspMcp,
   disarmGuiHelperLspMcp,
@@ -186,6 +187,7 @@ export function guiHelperPersonaFor(
 ): string {
   const lines = [GUI_HELPER_PERSONA]
   if (lspArmed) lines.push(GUI_HELPER_LSP_PERSONA_LINE)
+  if (lspArmed) lines.push(`\n${GUI_MOBILE_ORDER}`)
   if (port !== undefined) lines.push(GUI_HELPER_PORT_PERSONA_LINE(port))
   // Bloco (várias linhas), não linha: entra separado por parágrafo, como o resto
   // dos blocos de contrato — colado no rodapé ele leria como parte da porta.
@@ -1681,7 +1683,10 @@ export function buildGuiDelegationApi(deps: GuiDelegationApiDeps): {
       // O CORREIO É COLHIDO DEPOIS DA ESPERA, de propósito: o long-poll segue
       // esperando o ajudante PEDIDO (contrato intacto) e quem encerrou no meio
       // do caminho é contado na volta — a cegueira do 5º teste morre aqui.
-      const body = guiHelperResultText(await deps.engine.result(helperId, waitSeconds))
+      // Guidance may arrive after tool-start but before this waiter exists.
+      // Keep the pending receipt as the durable wake signal in that race.
+      const wait = ownerMail.has(id.paneId) ? 0 : waitSeconds
+      const body = guiHelperResultText(await deps.engine.result(helperId, wait))
       return withInbox(id.paneId, body, helperId)
     },
 

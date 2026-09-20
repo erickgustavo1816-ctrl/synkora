@@ -39,7 +39,7 @@
  * injetadas (`loadView`/`trustedUrl`), porque quem é dono delas é o `index.ts`.
  */
 import { BrowserWindow, screen, shell } from 'electron'
-import type { WebContentsView } from 'electron'
+import { attachBrowserSurface, detachBrowserSurface } from './browserBackgroundSurface'
 import type { BlackboxEventInput } from './blackbox'
 import type { BrowserPopoutHandle, BrowserPopoutHost } from './browserPaneHost'
 import { loadJsonStore, persistJsonStore } from './jsonStore'
@@ -289,12 +289,12 @@ export function createBrowserPopoutWindows(deps: BrowserPopoutDeps): BrowserPopo
       // UM PASSO (sonda §P1): sem `removeChildView` antes. As duas formas
       // empataram em custo (4,2 × 4,1 ms), mas só esta não tem instante nenhum
       // com a view fora de árvore — e é ali que a captura pendura 5-8 s.
-      entry.win.contentView.addChildView(view as unknown as WebContentsView)
+      attachBrowserSurface(entry.win, view)
     },
     detach(view) {
       if (entry.win.isDestroyed()) return
       try {
-        entry.win.contentView.removeChildView(view as unknown as WebContentsView)
+        detachBrowserSurface(entry.win, view)
       } catch {
         // janela no meio do teardown — o close do webContents basta
       }

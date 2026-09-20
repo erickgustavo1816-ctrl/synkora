@@ -4,7 +4,7 @@ const GUI_COMPOSER_ATTACHMENTS_PREFIX = 'synkora.guiAttachments.'
 const GUI_COMPOSER_ATTACHMENTS_VERSION = 2
 // Espelhos do contrato do composer: este módulo precisa continuar puro para a
 // persistência sobreviver mesmo quando o resto do renderer ainda não montou.
-const GUI_COMPOSER_ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024
+const GUI_COMPOSER_ATTACHMENT_MAX_BYTES = 50 * 1024 * 1024
 const GUI_COMPOSER_ATTACHMENT_MAX_FILES = 20
 const GUI_COMPOSER_ATTACHMENT_MAX_TOTAL_BYTES = 50 * 1024 * 1024
 

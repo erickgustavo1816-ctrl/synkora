@@ -11,6 +11,7 @@
 import { randomUUID } from 'node:crypto'
 // @ts-expect-error Node strip-types exige a extensão; o bundler também a aceita.
 import { loadJsonStore, persistJsonStore } from './jsonStore.ts'
+import type { ReleaseChangeRecord } from '../shared/releaseChanges'
 
 /** O push da R28, como aconteceu de fato. `attempted:false` = projeto sem
  *  remoto (a linha nem existia no desfecho). */
@@ -37,6 +38,10 @@ export interface ReleaseRecord {
   at: string
   actor: string
   mergeDetail: string
+  /** Principal observed by the release mechanics; legacy records may omit it. */
+  branch?: string
+  /** Joined from releaseChangesStore for the history surfaces. */
+  changes?: ReleaseChangeRecord[]
   push: ReleaseRecordPush
   bump?: ReleaseRecordBump
   /** R29 — o produto declara pipeline de caixa (scripts.release)? */

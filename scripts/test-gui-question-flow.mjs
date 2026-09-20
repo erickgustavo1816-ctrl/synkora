@@ -23,6 +23,28 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true
 const question = { id: 'choice', question: 'Qual caminho?', header: 'Caminho',
   options: [{ label: 'A' }, { label: 'B' }], allowCustom: false }
 
+test('compactação aparece durante o trabalho, sobrevive ao replay e limpa no término', () => {
+  const events = [{ type: 'turn-started' }, { type: 'thinking', text: 'synthetic private reasoning' },
+    { type: 'context-compaction', active: true }]
+  const presentation = state => guiThinkingPresentation({ ...state, awaitingInteraction: false })
+  const state = events.reduce(applyGuiEvent, { ...EMPTY_GUI_PANE })
+  assert.equal(presentation(state)?.label, 'Compactando contexto…')
+  assert.equal(presentation(events.reduce(applyGuiEvent, { ...EMPTY_GUI_PANE }))?.label, 'Compactando contexto…')
+  assert.equal(presentation(applyGuiEvent(state, { type: 'command-completed', isError: false, continues: false }))?.label,
+    'Compactando contexto…', 'aceite do comando não encerra a compactação')
+  assert.notEqual(presentation(applyGuiEvent(state, { type: 'context-compaction', active: false }))?.label, 'Compactando contexto…')
+  for (const event of [
+    { type: 'result', isError: false }, { type: 'result', isError: true, errorText: 'synthetic failure' },
+    { type: 'result', isError: false, interrupted: true }, { type: 'closed', code: 0 },
+    { type: 'fatal', text: 'synthetic failure' }, { type: 'session-restarted', ready: true, resumed: true },
+    { type: 'conversation-cleared' }, { type: 'turn-started' }
+  ]) {
+    const next = applyGuiEvent(state, event)
+    assert.equal(next.contextCompacting, false, event.type)
+    assert.notEqual(presentation(next)?.label, 'Compactando contexto…', event.type)
+  }
+})
+
 test('pergunta bloqueante espera o dono; pergunta opcional mantém stream e trabalho', () => {
   for (const blocking of [true, false]) {
     let state = applyGuiEvent({ ...EMPTY_GUI_PANE }, { type: 'delta', text: 'texto sintético' })
@@ -55,6 +77,45 @@ test('comando antigo ainda pendente não esconde a atividade após outra ferrame
 function button(card, label) {
   return card.root.findAllByType('button').find(b => b.children.includes(label))
 }
+
+test('aprovação estruturada responde sim ou não com um clique e conserva a pergunta', async () => {
+  for (const label of ['Aprovar', 'Não aprovar']) {
+    let card
+    const answers = []
+    const approval = { id: 'scope', header: 'Aprovação', question: 'Aprova alterar a tela de projetos?',
+      options: [{ label: 'Aprovar' }, { label: 'Não aprovar' }], allowCustom: true }
+    await act(async () => { card = create(React.createElement(Card, { questions: [approval],
+      onAnswer: answer => { answers.push({ ...answer }) }, onSkip() {} })) })
+    try {
+      assert.equal(answers.length, 0, 'mostrar a pergunta nunca aprova')
+      const choice = card.root.findAllByType('button').find(b => b.props['aria-label'] === label)
+      assert.ok(choice, 'a opção deve ser um botão de resposta direta')
+      await act(async () => choice.props.onClick())
+      assert.deepEqual(answers, [{ scope: label }])
+      assert.equal(button(card, 'responder'), undefined, 'não exige um segundo clique')
+    } finally { await act(async () => card.unmount()) }
+  }
+})
+
+test('aprovação permite ajuste livre e respeita envio pendente', async () => {
+  let card
+  const answers = []
+  const approval = { ...question, allowCustom: true }
+  const props = { questions: [approval], onAnswer: answer => { answers.push({ ...answer }) }, onSkip() {} }
+  await act(async () => { card = create(React.createElement(Card, props)) })
+  try {
+    await act(async () => button(card, 'outra resposta…').props.onClick())
+    const input = card.root.findByProps({ className: 'gq-custom' })
+    await act(async () => input.props.onChange({ target: { value: 'Pode seguir somente na tela de projetos.' } }))
+    await act(async () => button(card, 'responder').props.onClick())
+    assert.deepEqual(answers, [{ choice: 'Pode seguir somente na tela de projetos.' }])
+    await act(async () => card.update(React.createElement(Card, { ...props, disabled: true })))
+    assert.ok(card.root.findAllByType('button').every(b => b.props.disabled))
+    const choice = card.root.findAllByType('button').find(b => b.props['aria-label'] === 'B')
+    await act(async () => choice.props.onClick())
+    assert.equal(answers.length, 1)
+  } finally { await act(async () => card.unmount()) }
+})
 
 test('cartão devolve IDs distintos para perguntas iguais e texto livre sem opções', async () => {
   let card, answer

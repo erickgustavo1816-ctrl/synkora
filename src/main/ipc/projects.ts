@@ -45,7 +45,7 @@ export interface ProjectsIpcExtras {
    *  resume gravado para este pane. */
   guiSessions: GuiSessionRegistry
   /** 2.0: encerra o chat de PLANEJAMENTO do projeto (fonte única no index). */
-  killProjectGuiPanes(projectId: string): void
+  killProjectGuiPanes(projectId: string): void | Promise<void>
 }
 
 /** Resposta do `projects:planningGuiSpec` (2.0, onda C). */
@@ -149,11 +149,13 @@ export function registerProjectsIpc(ctx: MainContext, extras: ProjectsIpcExtras)
     return gitWarning ? { ...project, gitWarning } : project
   })
 
-  ipcMain.handle('projects:remove', (_e, id: string) => {
+  ipcMain.handle('projects:remove', async (_e, id: string) => {
+    const previousPath = projects.get(id)?.path
     // 2.0: o chat de planejamento tem cwd na RAIZ do projeto que está saindo
     // do app — deixá-lo vivo seria um CLI conversando por um universo que não
     // existe mais (e segurando a pasta no Windows).
-    killProjectGuiPanes(id)
+    await killProjectGuiPanes(id)
+    if (projects.get(id)?.path !== previousPath) return
     // Na exclusão (diferente da relocação), missões órfãs também não podem
     // continuar gravando de volta um histórico cujo projeto já saiu do app.
     guiSessions.killWhere((paneId) => guiSessions.remembered(paneId)?.projectId === id)
@@ -229,7 +231,8 @@ export function registerProjectsIpc(ctx: MainContext, extras: ProjectsIpcExtras)
     // os panes. A conversa fica gravada: reabrir dá o resume de sempre.
     // (Os chats de MISSÃO rodam no worktree em userData, que não se moveu —
     // mesma razão pela qual os orquestradores ficam intocados.)
-    killProjectGuiPanes(id)
+    await killProjectGuiPanes(id)
+    if (projects.get(id)?.path !== oldPath) return { ok: false, error: 'o caminho do projeto mudou durante o encerramento; confira a pasta e repita' }
     for (const pane of hub.panesOf(id)) {
       if (ptys.has(pane.paneId)) ptys.kill(pane.paneId)
       ctx.pushAll('panes:closeById', id, pane.paneId)

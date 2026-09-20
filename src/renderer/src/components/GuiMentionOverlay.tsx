@@ -33,8 +33,10 @@ const GuiMentionOverlay = forwardRef<HTMLDivElement, Props>(function GuiMentionO
           renderiza, e é nela que o caret mora depois de um Shift+Enter no fim.
           Sem isto o conteúdo pintado fica uma linha mais curto, o espelho de
           scroll trava no teto menor e o texto pintado desliza uma linha. O
-          espaço de largura zero materializa a linha sem ocupar nenhum pixel. */}
-      {'\u200b'}
+          espaço de largura zero materializa essa linha. Fora desse caso,
+          acrescentá-lo após espaços perto da borda cria uma linha artificial
+          e desloca o texto pintado em relação ao cursor do textarea. */}
+      {text.endsWith('\n') ? '\u200b' : null}
     </div>
   )
 })

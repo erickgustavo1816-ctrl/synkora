@@ -9,6 +9,7 @@ import { MISSION_STATUS_LABEL as STATUS_LABEL } from '../missionPresentation'
 import {
   agentHasTheBall,
   agentIsResolving,
+  canRetryIntegrationFinalization,
   integrationQueueNote,
   integrationShortLine,
   integrationStateWord,
@@ -610,15 +611,15 @@ export default function MissionDeliveryRail({
               {integration && (
                 <button
                   className="btn tiny dr-btn dock-primary"
-                  disabled={integration.state !== 'sync_required'}
-                  data-tip={integration.lastError ?? queueLabel}
+                  disabled={integration.state !== 'sync_required' && !canRetryIntegrationFinalization(integration)}
+                  data-tip={canRetryIntegrationFinalization(integration) ? 'Conferir o merge e retomar a finalização, sem integrar novamente' : integration.lastError ?? queueLabel}
                   onClick={onIntegrate}
                 >
                   {/* Cabeça da fila NÃO diz mais "⇪ fila #1" (rodada 9): ali a
                       bola já é do AGENTE, e o dono acompanha no fio. */}
                   {integration.state === 'blocked'
                     ? integration.owner === 'orchestrator'
-                      ? '⚠ reparo pendente'
+                      ? '↻ Retomar finalização'
                       : '⚠ decisão pendente'
                     : integration.state === 'sync_required'
                       ? '↻ retomar fila'

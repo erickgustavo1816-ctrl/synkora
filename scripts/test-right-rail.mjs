@@ -868,6 +868,8 @@ test('a fila fala do AGENTE: cabeça com erro é conflito em resolução, nunca 
   assert.equal(integrationStateWord(merging), 'integrando')
   assert.match(integrationStateWord(waiting), /fila/u)
   assert.match(integrationStateWord(repair), /reparo/u)
+  assert.match(integrationQueueNote(repair), /agente/u)
+  assert.doesNotMatch(integrationQueueNote(repair), /use Retomar/u)
 
   // A linha curta do mapa carrega a ordem quando ela é a notícia.
   assert.equal(integrationShortLine(waiting), 'fila #2/3')
@@ -1072,8 +1074,10 @@ test('RIGHTDOCK B — o release veste a moldura: dock-head + a subida + última 
   const rail = await source('src/renderer/src/components/ReleaseRail.tsx')
   assert.match(rail, /dock-head/u, 'a moldura diz onde o dono está')
   assert.match(rail, /DockSection/u, 'as seções são o primitivo da casa')
-  assert.match(rail, /title="a subida"/u)
-  assert.match(rail, /title="última subida"/u)
+  // 2026-09-09 (ordem do dono: "deixa tudo igual"): as duas seções viraram UMA
+  // janela do workspace, "Release" — a subida em cima, a última subida embaixo.
+  assert.match(rail, /<DockSection id="release" title="release">/u)
+  assert.match(rail, /release-rail-label">última subida</u)
   assert.match(rail, /release_run/u, 'a nota continua nomeando a RECEITA da subida')
   assert.match(rail, /releasePortraitLine/u, 'a linha compacta vem do módulo puro')
   // A metade main chega SÓ no restart: sem a ponte, a seção degrada com a
@@ -1110,7 +1114,8 @@ test('conflito avisa UMA vez, na língua do dono — a receita técnica mora na 
   assert.doesNotMatch(code, /dr-conflict/u, 'o aviso técnico duplicado voltou à entrega')
   // …mas NÃO virou beco: o detalhe continua a um hover, na dica do próprio ⇪
   // (e o AGENTE segue recebendo a receita pelo canal dele, não pela tela).
-  assert.match(code, /data-tip=\{integration\.lastError \?\? queueLabel\}/u)
+  // The repair action has its own tip; normal conflict details still use lastError.
+  assert.match(code, /data-tip=\{canRetryIntegrationFinalization\(integration\) \? '[^']+' : integration\.lastError \?\? queueLabel\}/u)
   // A nota da fila — o aviso que FICA — continua de pé.
   assert.match(code, /className="dr-queue"/u)
 
@@ -1601,13 +1606,18 @@ test('subida encerrada não oferece descarte — ela já saiu da coluna sozinha'
   }
 })
 
-test('o trilho do release oferece o descarte com confirmação em dois passos', async () => {
-  const code = withoutComments(await source('src/renderer/src/components/ReleaseRail.tsx'))
+test('a cabeça do palco oferece o descarte da subida com confirmação em dois passos', async () => {
+  // 2026-09-09: a alavanca saiu do trilho e foi para a MESMA fileira em que a
+  // missão tem ⇪/terminal/revisar/arquivar (ReleaseHeaderActions).
+  const code = withoutComments(await source('src/renderer/src/workspace/ReleaseHeaderActions.tsx'))
   assert.match(code, /releaseDiscardOffer/u, 'a régua vem do módulo puro, não do JSX')
   assert.match(code, /onDiscard/u)
   // nunca window.confirm (quebra o foco no Windows) e nunca um clique só
   assert.doesNotMatch(code, /window\.confirm/u)
-  assert.match(code, /confirmar/iu)
+  assert.match(code, /descartar\?/u)
+  assert.match(code, /setArmed\(true\)/u)
+  const rail = withoutComments(await source('src/renderer/src/components/ReleaseRail.tsx'))
+  assert.doesNotMatch(rail, /onDiscard/u, 'o trilho só desenha')
 })
 
 // ————— O RODAPÉ DO PLANEJAMENTO (reprovação do dono, 2026-08-27) —————

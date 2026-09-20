@@ -59,6 +59,10 @@ import {
   writeGuiAttachmentExclusive
 } from '../guiAttachmentStorage'
 import { GuiAttachmentCapabilityStore } from '../guiAttachmentCapabilities'
+import { GuiBrowserReferenceStore } from '../guiBrowserReferences'
+import { createBrowserReferenceRevealer } from '../browserReferenceReveal'
+import type { BrowserPaneManager } from '../browserPaneContracts'
+import type { GuiBrowserReferencesResult } from '../guiBrowserReferenceTypes'
 import { renderGuiAttachmentPreview } from '../guiAttachmentMedia'
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
@@ -70,10 +74,13 @@ import type { GuiHelperOwnerDismissResult } from '../guiHelperSessions'
 import type { GuiAlertPayload, GuiNoticeKind } from '../guiNotices'
 import {
   GuiFileResolver,
+  GUI_BROWSER_FILE_MIME,
   prepareGuiFileOpen,
   type GuiFileOpenResult,
   type GuiFileResolveReason
 } from '../guiFileResolver'
+import { GuiArtifactPreviewServer } from '../guiFileBrowserPreview'
+import { createGuiFileBrowserOpener } from '../guiFileBrowserOpen'
 import {
   guiInlineImageData,
   guiInlineImageRefusal,
@@ -103,6 +110,7 @@ export interface GuiHelperLifecycle {
 }
 
 export interface GuiIpcExtras {
+  browser?: BrowserPaneManager
   /** F3-c4: host OU view de panes — o canvas é quem monta o pane GUI. */
   assertAppRendererSender(event: IpcMainInvokeEvent | IpcMainEvent): void
   /** Aguarda uma eventual troca do executável global antes de criar a sessão. */
@@ -199,7 +207,7 @@ function writeAttachment(
     name = `clip-${Date.now()}.png`
   } else {
     const base64 = stripDataUrlPrefix(payload.bytesBase64)
-    // Pré-cheque SEM alocar: base64 de 10MB já são ~13MB de string, e decodar
+    // Pré-cheque SEM alocar: base64 de 50MB já são ~67MB de string, e decodar
     // para depois recusar seria pagar a memória que o teto existe para evitar.
     const declared = base64ByteLength(base64)
     if (declared > GUI_ATTACHMENT_MAX_BYTES) {
@@ -330,6 +338,14 @@ export function registerGuiIpc(ctx: MainContext, extras: GuiIpcExtras): GuiSessi
   const attachmentCapabilities = new GuiAttachmentCapabilityStore(
     join(dirname(extras.storeFile), 'gui-attachment-capabilities.json')
   )
+  const browserReferences = new GuiBrowserReferenceStore(
+    join(dirname(extras.storeFile), 'gui-browser-references.json')
+  )
+  const revealBrowserReference = extras.browser && createBrowserReferenceRevealer({
+    references: browserReferences,
+    identity: paneId => ctx.hub.identityByPane(paneId),
+    browser: extras.browser
+  })
   // O DISCO DO POTE DO DONO (R22.4): a fala que chegou no meio do turno e ainda
   // não foi entregue sobrevive ao fechamento do app — a MESMA régua da frota
   // (gui-helpers.json). O pote de produção nasce no import (quando `userData`
@@ -373,6 +389,15 @@ export function registerGuiIpc(ctx: MainContext, extras: GuiIpcExtras): GuiSessi
     systemPromptFile: extras.systemPromptFile,
     storeFile: extras.storeFile,
     attachmentCapabilities,
+    browserReferences,
+    isPaneActive: paneId => visibility.isActive(paneId),
+    browserReferenceIdentity: paneId => {
+      const identity = ctx.hub.identityByPane(paneId)
+      return identity?.missionId
+        ? { missionId: identity.missionId, projectId: identity.projectId }
+        : undefined
+    },
+    onBrowserReferencesChanged: payload => ctx.pushAll('gui:browser-references-changed', payload),
     record: (event, ids, detail) =>
       blackbox.record({ cat: 'pane', event, actor: 'harness', ids, detail }),
     // O sink vivo publica UM alerta canônico. Replay nunca entra aqui, e só o
@@ -433,6 +458,18 @@ export function registerGuiIpc(ctx: MainContext, extras: GuiIpcExtras): GuiSessi
   // Índice curto por cwd para basename/sufixo. A raiz nunca vem do renderer;
   // cada chamada abaixo a reencontra no registro vivo da conversa.
   const fileResolver = new GuiFileResolver()
+  const artifactPreviews = new GuiArtifactPreviewServer({ resolver: fileResolver, entryMime: GUI_BROWSER_FILE_MIME })
+  const openFileBrowser = createGuiFileBrowserOpener({
+    browser: extras.browser,
+    previews: artifactPreviews,
+    identity: paneId => {
+      const cwd = registry.cwdOf(paneId)
+      const projectId = registry.projectOf(paneId)
+      const mission = projectId ? guiMissionOf(ctx, projectId, paneId) : undefined
+      return cwd && projectId && mission?.projectId === projectId
+        ? { cwd, projectId, missionId: mission.id } : undefined
+    }
+  })
 
   ipcMain.on('gui:visibility', (event, paneId: unknown, active: unknown) => {
     extras.assertAppRendererSender(event)
@@ -613,7 +650,7 @@ export function registerGuiIpc(ctx: MainContext, extras: GuiIpcExtras): GuiSessi
 
   ipcMain.handle(
     'gui:send',
-    (e, paneId: string, text: string, messageId: string, attachments?: unknown): GuiResult => {
+    (e, paneId: string, text: string, messageId: string, attachments?: unknown, browserReferences?: unknown): GuiResult => {
       extras.assertAppRendererSender(e)
       const problem = guiPromptProblem(text, 'mensagem', true)
       if (problem) return { ok: false, error: problem }
@@ -621,9 +658,26 @@ export function registerGuiIpc(ctx: MainContext, extras: GuiIpcExtras): GuiSessi
       if (idProblem) return { ok: false, error: idProblem }
       // O Registry conhece o cwd deste pane e revalida cada descritor antes de
       // montar a referência que realmente chega ao CLI.
-      return registry.send(paneId, text, messageId, attachments)
+      return registry.send(paneId, text, messageId, attachments, undefined, browserReferences)
     }
   )
+
+  ipcMain.handle('gui:browser-references-list', (e, paneId: string): GuiBrowserReferencesResult => {
+    extras.assertAppRendererSender(e)
+    return registry.browserReferencesList(paneId)
+  })
+  ipcMain.handle('gui:browser-reference-reveal', (e, paneId: string, id: unknown) => {
+    extras.assertAppRendererSender(e)
+    return revealBrowserReference?.(paneId, id) ?? { ok: false, error: 'Reabra o Synkora para localizar referências na página.' }
+  })
+  ipcMain.handle('gui:browser-references-remove', (e, paneId: string, id: unknown): GuiBrowserReferencesResult => {
+    extras.assertAppRendererSender(e)
+    return registry.removeBrowserReference(paneId, id)
+  })
+  ipcMain.handle('gui:browser-references-consume', (e, paneId: string, ids: unknown): GuiBrowserReferencesResult => {
+    extras.assertAppRendererSender(e)
+    return registry.consumeBrowserReferences(paneId, ids)
+  })
 
   ipcMain.handle(
     'gui:deliverQueued',
@@ -786,6 +840,15 @@ export function registerGuiIpc(ctx: MainContext, extras: GuiIpcExtras): GuiSessi
     }
   )
 
+  ipcMain.handle('gui:cancelOwnerMessage', async (e, paneId: unknown, messageId: unknown): Promise<GuiResult> => {
+    extras.assertAppRendererSender(e)
+    if (typeof paneId !== 'string' || !paneId || paneId.length > 256 ||
+      typeof messageId !== 'string' || !messageId || messageId.length > 256) {
+      return { ok: false, error: 'conversa ou mensagem sem identificador válido' }
+    }
+    return registry.cancelOwnerMessage(paneId, messageId)
+  })
+
   ipcMain.handle('gui:kill', (e, paneId: string): GuiResult => {
     extras.assertAppRendererSender(e)
     return registry.kill(paneId)
@@ -816,12 +879,13 @@ export function registerGuiIpc(ctx: MainContext, extras: GuiIpcExtras): GuiSessi
 
   ipcMain.handle(
     'gui:fileOpen',
-    (
+    async (
       e,
       paneId: unknown,
       reference: unknown,
-      selectedPath?: unknown
-    ): GuiFileOpenResult => {
+      selectedPath?: unknown,
+      mode?: unknown
+    ): Promise<GuiFileOpenResult> => {
       extras.assertAppRendererSender(e)
       if (typeof paneId !== 'string' || !paneId || paneId.length > 256) {
         return { ok: false, reason: 'invalid', error: 'pane sem identificador válido' }
@@ -831,6 +895,9 @@ export function registerGuiIpc(ctx: MainContext, extras: GuiIpcExtras): GuiSessi
       }
       if (selectedPath !== undefined && typeof selectedPath !== 'string') {
         return { ok: false, reason: 'invalid', error: 'escolha de arquivo inválida' }
+      }
+      if (mode !== undefined && mode !== 'auto' && mode !== 'preview' && mode !== 'browser') {
+        return { ok: false, reason: 'invalid', error: 'modo de abertura inválido' }
       }
 
       const cwd = registry.cwdOf(paneId)
@@ -856,7 +923,7 @@ export function registerGuiIpc(ctx: MainContext, extras: GuiIpcExtras): GuiSessi
         return resolved
       }
 
-      const prepared = prepareGuiFileOpen(resolved.file)
+      const prepared = prepareGuiFileOpen(resolved.file, mode ?? 'auto')
       if (!prepared.ok) {
         blackbox.record({
           cat: 'pane',
@@ -866,6 +933,14 @@ export function registerGuiIpc(ctx: MainContext, extras: GuiIpcExtras): GuiSessi
           detail: { reason: prepared.reason }
         })
         return prepared
+      }
+      if (prepared.action === 'browser') {
+        const opened = await openFileBrowser(paneId, prepared.file)
+        blackbox.record({
+          cat: 'pane', event: opened.ok ? 'gui-file-browser-opened' : 'gui-file-open-refused',
+          actor: 'user', ids: { paneId }, detail: { action: 'browser', ok: opened.ok }
+        })
+        return opened
       }
       if (prepared.action === 'preview') {
         blackbox.record({
@@ -1198,7 +1273,7 @@ export function registerGuiIpc(ctx: MainContext, extras: GuiIpcExtras): GuiSessi
 
       let outcome: GuiAttachmentActionResult
       if (action === 'open') {
-        const problem = guiAttachmentOpenProblem(attachment.name, attachment.mime)
+        const problem = guiAttachmentOpenProblem(attachment.name, attachment.mime, attachment.bytes)
         if (problem) return { ok: false, error: problem }
         try {
           const error = await shell.openPath(attachment.path)

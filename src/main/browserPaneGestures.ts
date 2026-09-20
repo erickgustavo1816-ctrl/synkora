@@ -42,6 +42,7 @@ import type { BrowserGestureResult } from './browserPane'
 // A régua do endereço (módulo puro, sem Electron): a MESMA porta por onde o
 // alvo do agente passa no motor. Importada, nunca copiada.
 import { normalizeBrowserTarget, normalizeBrowserUrl } from './browserPaneUrl'
+import { toggleBrowserDevtools } from './browserDevtoolsFocus'
 
 // ————————————————————————————————————————————————————————————————
 // A fatia do registro que um gesto enxerga
@@ -98,6 +99,8 @@ export interface BrowserGestureContext<M extends BrowserGestureMission, T extend
   /** Última aba fechada = o browser da missão acabou (a régua é do motor). */
   closeMission(missionId: string): void
   changed(missionId: string): void
+  /** Returns false only when the injected headless host has no native windows. */
+  toggleDevtools?(tab: T): boolean
 }
 
 export interface BrowserGestureMachine {
@@ -214,10 +217,7 @@ export function createBrowserGestureMachine<M extends BrowserGestureMission, T e
       if (!mission) return false
       const tab = tabId ? ctx.findTab(mission, tabId) : ctx.activeTab(mission)
       if (!tab) return false
-      if (tab.wc.isDevToolsOpened()) tab.wc.closeDevTools()
-      // Modo DESTACADO: devtools acoplado roubaria metade do painel do dock e,
-      // pior, mexeria na geometria de que a captura depende.
-      else tab.wc.openDevTools({ mode: 'detach' })
+      if (!ctx.toggleDevtools?.(tab)) toggleBrowserDevtools(tab.wc)
       return true
     }
   }

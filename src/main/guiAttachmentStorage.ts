@@ -21,6 +21,7 @@ import {
   GUI_ATTACHMENT_MAX_BYTES,
   GUI_ATTACHMENT_MAX_FILES,
   GUI_ATTACHMENT_MAX_TOTAL_BYTES,
+  attachmentTooLargeError,
   guiAttachmentMediaType,
   guiAttachmentDescriptorProblem,
   uniqueAttachmentPath,
@@ -322,7 +323,7 @@ export function validateGuiAttachmentReferences(
       }
       const size = statSync(physical).size
       if (!Number.isSafeInteger(size) || size < 0 || size > GUI_ATTACHMENT_MAX_BYTES) {
-        return { ok: false, error: 'anexo excede o limite de 10 MB' }
+        return { ok: false, error: attachmentTooLargeError(size) }
       }
       if (size !== authorization.size || size !== descriptor.size) {
         return { ok: false, error: 'o anexo mudou desde que foi autorizado' }

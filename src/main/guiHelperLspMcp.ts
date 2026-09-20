@@ -27,8 +27,10 @@ import { existsSync, unlinkSync } from 'node:fs'
 import { claudeMcpArgs, writeClaudeMcpConfig } from './mcpServer'
 import { GUI_PLANNER_TOKEN_ENV, guiPlannerCodexArgs } from './guiPlannerMcp'
 import { BROWSER_TOOL_NAMES } from './guiBrowserTools'
+import { MOBILE_TOOL_NAMES } from './guiMobileTools'
 import { LSP_TOOL_NAMES } from './guiLspTools'
 import { SKILL_TOOL_NAMES } from './guiSkillKit'
+import { CONTEXT_READ_TOOL_NAMES } from './projectContextKit'
 import type { GuiHelperCli } from './guiHelperSessions'
 import type { Hub } from './hub'
 
@@ -54,6 +56,7 @@ export const GUI_HELPER_LSP_TOOLS: readonly string[] = LSP_TOOL_NAMES
  * Ou seja: sem esta lista, o primeiro `lsp_diagnostics` MATA o ajudante.
  */
 export const GUI_HELPER_LSP_CLAUDE_ALLOWED_TOOLS: readonly string[] = [
+  ...CONTEXT_READ_TOOL_NAMES,
   // O BROWSER DA CASA (build de 2026-08-29): o catálogo do papel `ajudante`
   // serve as browser_* (QA delegado é o caso real), então a pré-sanção as
   // cobre pela MESMA fonte que o mcpServer registra — sem elas aqui, o
@@ -61,6 +64,7 @@ export const GUI_HELPER_LSP_CLAUDE_ALLOWED_TOOLS: readonly string[] = [
   // a lição exata deste cabeçalho.
   ...GUI_HELPER_LSP_TOOLS,
   ...BROWSER_TOOL_NAMES,
+  ...MOBILE_TOOL_NAMES,
   // SKILLS 3.0 (2026-09-08): o catálogo do papel `ajudante` serve as `skill_*`
   // (o briefing dele já lista o harness da missão, mas uma fatia pode precisar de
   // um playbook que ninguém previu). Derivadas da MESMA fonte, pela lição deste

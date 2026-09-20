@@ -1,4 +1,5 @@
 import { execFileSync } from 'child_process'
+import { freshMacPath, resetMacPathCache } from './macPath'
 
 // No Windows, processos herdam o PATH de quando o pai nasceu. Se o usuário
 // instala um CLI (ex.: Codex) com o app aberto, o novo diretório só existe no
@@ -24,6 +25,7 @@ function expandEnvVars(value: string): string {
 let cached: string | null = null
 
 export function freshWindowsPath(): string {
+  if (process.platform === 'darwin') return freshMacPath()
   if (process.platform !== 'win32') return process.env['PATH'] ?? ''
   if (cached) return cached
 
@@ -52,4 +54,5 @@ export function freshWindowsPath(): string {
 /** Invalida o cache (ex.: usuário clicou em "recarregar PATH"). */
 export function resetPathCache(): void {
   cached = null
+  resetMacPathCache()
 }

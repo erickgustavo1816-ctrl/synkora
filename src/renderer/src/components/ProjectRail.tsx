@@ -1,17 +1,21 @@
 import { useState } from 'react'
-import { useStore } from '../store'
+import { useStore, type Mission } from '../store'
+import { projectMissionActivity, projectMissionActivityLabel } from '../projectMissionActivity'
+import { useProjectMissionActivity } from '../useProjectMissionActivity'
 import { hueOf, initialsOf } from '../util'
 import SynkoraMark from './SynkoraMark'
 import NewUniverseModal from './NewUniverseModal'
 import GuiPanelErrorBoundary from './GuiPanelErrorBoundary'
+import './ProjectRail.css'
 
 // Referência estável para seletores (regra do projeto: nunca `?? []` inline).
 const NO_PANES: never[] = []
+const NO_MISSIONS: Mission[] = []
 
 function RailItem({ projectId }: { projectId: string }): React.JSX.Element | null {
   const project = useStore((s) => s.projects.find((p) => p.id === projectId))
   const active = useStore((s) => s.appPage === 'workspace' && s.openProjectId === projectId)
-  const running = useStore((s) => (s.panesByProject[projectId] ?? NO_PANES).length)
+  const activity = useStore(s => projectMissionActivity(projectId, s.missionsByProject[projectId] ?? NO_MISSIONS, s.guiPanes))
   // Atenção do projeto visível de QUALQUER lugar (pedido do usuário,
   // 2026-08-06): um pane pedindo permissão faz o avatar pulsar até o dono ir
   // lá resolver. O canal ask_user saiu na purga F6 — a pergunta do agente na
@@ -24,14 +28,16 @@ function RailItem({ projectId }: { projectId: string }): React.JSX.Element | nul
 
   if (!project) return null
   const missing = project.missing === true
+  const activityLabel = projectMissionActivityLabel(activity)
   return (
     <button
       className={`rail-item${active ? ' active' : ''}${missing ? ' missing' : ''}${attention && !missing ? ' attn' : ''}`}
       style={{ ['--card-hue' as string]: hueOf(project.name) }}
+      aria-label={`${project.name} — ${missing ? 'pasta não encontrada' : activityLabel}`}
       data-tip={
         missing
           ? `${project.name}\npasta não encontrada — corrija na Home (📁 alterar pasta)`
-          : `${project.name}${attention ? '\n❓ um agente está esperando você aqui' : ''}${running > 0 ? ` · ${running} pane(s) rodando` : ''}\nclique direito: definir foto`
+          : `${project.name}\n${activityLabel}${attention ? '\n❓ um agente está esperando você aqui' : ''}\nclique direito: definir foto`
       }
       // pasta morta: abrir o universo só geraria panes quebrados — vai para a
       // Home, onde o card oferece a relocação
@@ -46,9 +52,9 @@ function RailItem({ projectId }: { projectId: string }): React.JSX.Element | nul
       ) : (
         <span className="rail-initials">{initialsOf(project.name)}</span>
       )}
-      {attention && !missing && <span className="rail-ask-dot" data-tip="Um agente precisa de você" />}
-      {running > 0 && !missing && !attention && (
-        <span className="rail-run-dot" data-tip="Sessões rodando" />
+      {attention && !missing && !activity && <span className="rail-ask-dot" data-tip="Um agente precisa de você" />}
+      {activity && !missing && (
+        <span className="rail-mission-dot" data-activity={activity} data-tip={activityLabel} aria-hidden="true" />
       )}
       {missing && <span className="rail-warn-dot" data-tip="Pasta não encontrada" />}
     </button>
@@ -58,10 +64,11 @@ function RailItem({ projectId }: { projectId: string }): React.JSX.Element | nul
 /**
  * Rail lateral estilo Discord: Home no topo e um avatar por universo.
  * Trocar de projeto NUNCA derruba nada — os universos ficam montados em
- * segundo plano; o dot verde mostra onde há sessões vivas.
+ * segundo plano; o ponto mostra atividade de missões, não a contagem de panes.
  */
 export default function ProjectRail(): React.JSX.Element {
   const projects = useStore((s) => s.projects)
+  useProjectMissionActivity(projects)
   const openProjectId = useStore((s) => s.openProjectId)
   const appPage = useStore((s) => s.appPage)
   const openProject = useStore((s) => s.openProject)

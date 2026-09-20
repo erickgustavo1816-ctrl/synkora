@@ -35,23 +35,12 @@
 import { app } from 'electron'
 import { join, resolve } from 'path'
 import {
-  alignWorktreeFromSnapshot,
-  createMissionWorktree,
-  createVersionWorktree,
-  currentBranch,
-  ensureSynkoraGitExcludes,
   gitCommitReached,
   gitHead,
-  gitLocalBranchExists,
   hasGitCommit,
-  initGitRepo,
-  isExpectedWorktree,
   isWorktreeClean,
-  missionCommits,
-  missionWorkspaceSummary,
   missionWorktreeDescriptor,
   removeWorktreeAndBranch,
-  resolveMissionWorkspace,
   type MissionCommit,
   type MissionWorkspaceSummary,
   type VersionBaseSyncResult
@@ -77,6 +66,14 @@ import { type IntegrationQueueTicketView } from './integrationQueue'
 import { gitOff } from './gitAsync'
 import { reapVisualsUnder } from './reapVisualsUnder'
 import { retryWorktreeRelease } from './worktreeRelease'
+import type { IntegrationReplyPhase } from './guiIntegrationReply'
+import {
+  needsMissionFinalization,
+  MISSION_FINALIZATION_DONE_NOTE,
+  MISSION_FINALIZATION_RECIPE,
+  MISSION_FOLDER_HELD_NOTE,
+  missionFinalizationStimulus
+} from './missionFinalization'
 import {
   existsSync,
   mkdirSync,
@@ -107,12 +104,8 @@ export interface MissionEngineExtras {
    * dentro do gitWorker. Os dois nascem da MESMA metade pura no index
    * (`versionIsolationIsNarrow`): não existe segunda verdade escrita à mão.
    *
-   * O predicado (`version is …`) FICA porque type predicate não sobrevive a
-   * `async` e os chamadores síncronos legítimos (ipc/backlog, o
-   * `ensureMissionWorktree` completo, a reconciliação de BOOT) dependem do
-   * narrowing dele. Quem já está em caminho assíncrono usa ESTE e não perde
-   * nada: nos dois usos do motor o `branch`/`worktree` estreitado não era
-   * consumido depois da checagem.
+   * The synchronous predicate remains available to other domains. Mission
+   * preparation, integration and recovery all use this worker probe.
    */
   versionIsolationProbe(projectPath: string, version: Version): Promise<boolean>
   /** Domínio backlog. */
@@ -131,13 +124,17 @@ export interface MissionEngineExtras {
    *  false = sem sessão viva; a reabertura do chat re-deriva do ticket. */
   announceToGuiPane(paneId: string, text: string): boolean
   /** 2.0: encerra dev/reviewer/ajudantes GUI da missão (o worktree some). */
-  killMissionGuiPanes(missionId: string, keepPaneId?: string): void
+  killMissionGuiPanes(missionId: string, keepPaneId?: string): void | Promise<void>
   /** Merge comprovado: entrega ao dev antes de liberar o cwd e finalizar a fila. */
   afterIntegrationReply?(
     missionId: string,
     text: string,
-    finish: () => Promise<string>
+    finish: () => Promise<string>,
+    recoveryCwd?: () => string | undefined,
+    phase?: IntegrationReplyPhase
   ): void
+  /** Main-owned cwd: a recovery chat must not hold the source being removed. */
+  paneCwd?(paneId: string): string | undefined
   /**
    * R38 — ESTE CHAT ESTÁ VIVO? (o registro de sessões GUI responde; `false`
    * também quando o registro ainda nem existe, que é o estado do BOOT).
@@ -173,7 +170,6 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
   const hub = ctx.hub
   const {
     orchKey,
-    versionIsolationIsValid,
     versionIsolationProbe,
     emitBacklogChanged,
     sweepProjectFiles,
@@ -181,8 +177,7 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     deliverToGuiPane,
     noteInGuiPane,
     announceToGuiPane,
-    killMissionGuiPanes,
-    paneAlive
+    killMissionGuiPanes
   } = extras
 
   /** Missão 2.0: sem orquestrador e sem plano — o ⇪ tem caminho direto. */
@@ -218,45 +213,9 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
   function missionsWithIntegration(projectId: string): Array<
     Mission & { integration?: ReturnType<typeof integrationQueueView> }
   > {
-    // R27F2 Onda 4 — reconciliação VIVA no caminho de leitura: nenhum fecho
-    // depende de UM push entregue (doutrina da casa). Missão de RELEASE ainda
-    // ativa com a versão JÁ lançada é registro atrasado — conclui AQUI, com
-    // recibo na caixa-preta, e a lista sai curada. Converge: curou, a
-    // condição some; nada curado, silêncio (sem loop de push).
-    //
-    // R38 (2026-08-29) — A REDE PESCA ÓRFÃO, NUNCA UM CHAT VIVO. A rede fica
-    // (lei da casa: registro atrasado não pode ficar eternamente "rodando"),
-    // mas ela parou de roubar a conversa do dono: com a subida pousada, o
-    // agente do release CONTINUA trabalhando na pasta do projeto (a caixa é o
-    // caso real) e só ELE fecha, pelo release_done. Concluir aqui, com o pane
-    // vivo, fazia o card sumir no meio da entrega — foi assim que o instalador
-    // que o dono pediu deixou de existir. Sem pane, não há ninguém para fechar:
-    // aí a rede é a única saída e ela pesca.
-    let healed = 0
-    for (const mission of missions.list(projectId)) {
-      if (
-        missionTypeOf(mission) !== 'release' ||
-        (mission.status !== 'ativa' && mission.status !== 'integrando') ||
-        !mission.versionId
-      )
-        continue
-      const version = backlog.getVersion(mission.versionId)
-      if (version?.status !== 'lancada') continue
-      // O chat do release mora no endereço de DEV da missão (o roteador manda
-      // `release` pelo papel dev — guiMissionContracts.routeGuiMissionPane).
-      if (paneAlive(missionDevPaneId(mission.id))) continue
-      missions.update(mission.id, { status: 'concluida' })
-      healed++
-      blackbox.record({
-        cat: 'recovery',
-        event: 'release-record-healed',
-        actor: 'harness',
-        ids: { projectId, missionId: mission.id },
-        reason:
-          'versão já lançada e conversa de release ÓRFÃ (sem chat vivo) — registro concluído na leitura (reconciliação viva)'
-      })
-    }
-    if (healed > 0) emitMissionsChanged(projectId)
+    // A closed process is not a completed release. Corrections/publication can
+    // remain pending across restarts; only release_done closes the conversation.
+    // Reading the board must preserve that durable state, even without a live pane.
     const byMission = new Map(
       integrationQueue
         .listPending(projectId)
@@ -272,26 +231,6 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
    * Projeto sem Git ainda pode operar diretamente. Em projeto Git, porém, uma
    * missão só tem workspace quando branch e worktree formam o isolamento exato
    * que foi persistido; nunca usamos a pasta principal como fallback.
-   */
-  function missionWorkspacePath(projectPath: string, mission: Mission): string | undefined {
-    return resolveMissionWorkspace(
-      projectPath,
-      mission.id,
-      mission.branch,
-      mission.worktree
-    )
-  }
-
-  /**
-   * ESPELHO ASSÍNCRONO de `missionWorkspacePath` (R17, 2026-08-19) — o par é
-   * declarado: MESMA pergunta, MESMA função (`resolveMissionWorkspace`), só que
-   * dentro do gitWorker. Ela sozinha vale ~6 spawns de git (hasGitCommit +
-   * isExpectedWorktree), e no caminho do ⇪ isso era main thread PARADO.
-   *
-   * O espelho síncrono FICA porque quem o chama são costuras síncronas fora
-   * desta fronteira (`proveMissionWorkspace` do ipc/missions) e a reconciliação
-   * de BOOT — boot não é clique. Quem está num caminho async usa ESTE (o
-   * `missionIntegrationStatus` do MCP entrou nessa lista na R18.1).
    */
   function missionWorkspacePathOffThread(
     projectPath: string,
@@ -309,9 +248,10 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
   /** Garante branch/worktree da missão — inicializando o GIT do projeto se
    *  preciso (sem git não há isolamento; decisão: o Synkora resolve sozinho e
    *  anuncia). Também promove missões antigas criadas sem branch. */
-  function ensureMissionWorktree(missionId: string): Mission | undefined {
-    const mission = missions.get(missionId)
-    if (!mission) return undefined
+  async function ensureMissionWorktree(missionId: string): Promise<Mission | undefined> {
+    const stored = missions.get(missionId)
+    if (!stored) return undefined
+    const mission = { ...stored }
     if (mission.status === 'concluida' || mission.status === 'arquivada') return mission
     // MISSÃO DE PLANEJAMENTO (2.0) não produz código: ela roda na RAIZ e
     // entrega escrevendo plano/. Isolamento aqui criaria uma branch que
@@ -322,8 +262,19 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     if (missionTypeOf(mission) === 'planejamento') return mission
     const project = projects.get(mission.projectId)
     if (!project) return mission
-    if (!hasGitCommit(project.path)) {
-      if (!initGitRepo(project.path)) {
+    const projectPath = project.path
+    // Git now yields to the UI. Closing, moving or retargeting a mission while
+    // checkout is pending must never revive it or attach stale metadata.
+    const stillCurrent = (): boolean => {
+      const current = missions.get(missionId)
+      return projects.get(mission.projectId)?.path === projectPath &&
+        current?.projectId === mission.projectId && current.status === mission.status &&
+        current.versionId === mission.versionId && current.branch === mission.branch &&
+        current.worktree === mission.worktree && current.missionType === mission.missionType
+    }
+    if (!(await gitOff('hasGitCommit', projectPath))) {
+      if (!stillCurrent()) return undefined
+      if (!(await gitOff('initGitRepo', projectPath))) {
         hub.publish({
           projectId: mission.projectId,
           missionId: mission.id,
@@ -342,7 +293,9 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
         quiet: true
       })
     }
-    ensureSynkoraGitExcludes(project.path)
+    if (!stillCurrent()) return undefined
+    await gitOff('ensureSynkoraGitExcludes', projectPath)
+    if (!stillCurrent()) return undefined
     const expectedBranch = `mission/${mission.id.slice(0, 8)}`
     // Branch persistida com outro nome é um conflito de identidade, não uma
     // oportunidade para criar uma segunda linha de trabalho silenciosamente.
@@ -350,21 +303,26 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     if (
       mission.branch &&
       mission.worktree &&
-      isExpectedWorktree(project.path, mission.worktree, mission.branch)
+      (await gitOff('isExpectedWorktree', projectPath, mission.worktree, mission.branch))
     ) {
-      return mission
+      if (!stillCurrent()) return undefined
+      await gitOff('ensureWorktreeEnvironment', projectPath, mission.worktree)
+      return stillCurrent() ? missions.get(missionId) : undefined
     }
     // Registro legado sem `branch`, mas com um worktree íntegro: só completa o
     // metadado; não recria nem move a fotografia existente.
     if (
       !mission.branch &&
       mission.worktree &&
-      isExpectedWorktree(project.path, mission.worktree, expectedBranch)
+      (await gitOff('isExpectedWorktree', projectPath, mission.worktree, expectedBranch))
     ) {
+      if (!stillCurrent()) return undefined
+      await gitOff('ensureWorktreeEnvironment', projectPath, mission.worktree)
+      if (!stillCurrent()) return undefined
       missions.update(mission.id, { branch: expectedBranch })
       return missions.get(mission.id)
     }
-    if (mission.branch && gitLocalBranchExists(project.path, mission.branch) !== true) {
+    if (mission.branch && (await gitOff('gitLocalBranchExists', projectPath, mission.branch)) !== true) {
       // A branch registrada sumiu. Recriá-la do HEAD atual manteria o nome e
       // perderia a origem histórica — bloqueia em vez de fabricar uma.
       return mission
@@ -372,15 +330,18 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     // Uma pasta existente que não prova a identidade esperada é preservada e
     // bloqueia o fluxo. Criar outra ao lado poderia esconder trabalho real.
     if (mission.worktree && existsSync(mission.worktree)) return mission
-    const version = mission.versionId ? backlog.getVersion(mission.versionId) : undefined
+    if (!stillCurrent()) return undefined
+    const storedVersion = mission.versionId ? backlog.getVersion(mission.versionId) : undefined
+    const version = storedVersion ? { ...storedVersion } : undefined
     if (mission.versionId && (!version || version.projectId !== mission.projectId)) return mission
     // A branch da versão nasce ANTES da primeira missão. Assim todas as
     // missões abertas na mesma onda partem exatamente do mesmo marco, mesmo
     // quando nenhuma delas integrou ainda.
     let versionBranch: string | undefined
+    let versionWorktree = version?.worktree
     if (version) {
       if (version.branch || version.worktree) {
-        if (!versionIsolationIsValid(project.path, version)) {
+        if (!(await versionIsolationProbe(projectPath, version))) {
           return mission
         }
         versionBranch = version.branch
@@ -398,25 +359,39 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
                 Boolean(candidate.worktree))
           )
         if (versionHasExecutionHistory) return mission
-        const versionWt = createVersionWorktree(
-          project.path,
+        const versionWt = await gitOff(
+          'createVersionWorktree',
+          projectPath,
           join(app.getPath('userData'), 'worktrees', mission.projectId),
           version.name,
           version.id
         )
         if (!versionWt) return mission
+        const currentVersion = backlog.getVersion(version.id)
+        if (!stillCurrent() || !currentVersion || currentVersion.status !== 'aberta' ||
+          currentVersion.branch || currentVersion.worktree) return undefined
         backlog.setVersionBranch(version.id, versionWt.branch, versionWt.dir)
         versionBranch = versionWt.branch
+        versionWorktree = versionWt.dir
       }
     }
-    const base = versionBranch ?? currentBranch(project.path)
-    const wt = createMissionWorktree(
-      project.path,
+    const base = versionBranch ?? (await gitOff('currentBranch', projectPath))
+    const versionStillCurrent = (): boolean => {
+      if (!version) return true
+      const current = backlog.getVersion(version.id)
+      return current?.projectId === mission.projectId && current.status === 'aberta' &&
+        current.branch === versionBranch && current.worktree === versionWorktree
+    }
+    if (!stillCurrent() || !versionStillCurrent()) return undefined
+    const wt = await gitOff(
+      'createMissionWorktree',
+      projectPath,
       join(app.getPath('userData'), 'worktrees', mission.projectId),
       mission.id,
       versionBranch
     )
     if (!wt) return mission
+    if (!stillCurrent() || !versionStillCurrent()) return undefined
     missions.update(mission.id, { branch: wt.branch, worktree: wt.dir, baseBranch: base })
     // sessão antiga do orquestrador (se houver) era no diretório do projeto —
     // zera para a próxima abertura nascer DENTRO do worktree da missão.
@@ -424,51 +399,26 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     return missions.get(mission.id)
   }
 
-  /**
-   * O MESMO `ensureMissionWorktree` PARA O CAMINHO DO ⇪ (R17, 2026-08-19).
-   *
-   * Medida do dono com os sensores armados: o clique em subir travava o main
-   * em rajadas (809ms no estímulo, 1546ms no meio do run) SEM que nenhum git
-   * sozinho passasse de 200ms — no Windows cada spawn de git custa ~100-180ms
-   * (imposto do Defender) e a sequência SÍNCRONA nunca deixa o event loop
-   * respirar. Só a abertura desta função são ~8 spawns (hasGitCommit +
-   * excludes + isExpectedWorktree).
-   *
-   * TRANSPORTE, NÃO LÓGICA: as perguntas e a ORDEM delas são idênticas às do
-   * espelho síncrono acima — hasGitCommit → excludes → identidade da branch →
-   * worktree esperado. A ordem é parte do lacre: cada resposta decide a
-   * pergunta seguinte, e trocar a sequência (ou paralelizar com Promise.all)
-   * mudaria a decisão, não só o thread.
-   *
-   * O QUE NÃO É O ESTADO SAUDÁVEL cai no caminho COMPLETO síncrono de sempre —
-   * projeto sem commit (git init), registro legado a promover, worktree a criar
-   * ou reparar. É o mesmo padrão do `missionWorkspaceReadout` (worktree.ts):
-   * atalho para o caso comum, caminho inteiro e INTOCADO para o raro. Isso
-   * também é o que impede um SEGUNDO dono da verdade sobre criação de branch/
-   * worktree — a decisão perigosa continua existindo em um lugar só.
-   */
-  async function ensureMissionWorktreeOffThread(missionId: string): Promise<Mission | undefined> {
+  // Joining an in-flight request avoids duplicate checkout on repeated clicks.
+  // Serializing the whole preparation per project also protects the shared
+  // version's lazy creation, including the persistence between worker calls.
+  const missionPreparations = new Map<string, Promise<Mission | undefined>>()
+  const projectPreparations = new Map<string, Promise<Mission | undefined>>()
+  function ensureMissionWorktreeOffThread(missionId: string): Promise<Mission | undefined> {
+    const pending = missionPreparations.get(missionId)
+    if (pending) return pending
     const mission = missions.get(missionId)
-    if (!mission) return undefined
-    if (mission.status === 'concluida' || mission.status === 'arquivada') return mission
-    if (missionTypeOf(mission) === 'planejamento') return mission
-    const project = projects.get(mission.projectId)
-    if (!project) return mission
-    if (await gitOff('hasGitCommit', project.path)) {
-      // Recusa do excludes (.synkora versionado) PROPAGA como sempre — o
-      // espelho síncrono também não a captura.
-      await gitOff('ensureSynkoraGitExcludes', project.path)
-      const expectedBranch = `mission/${mission.id.slice(0, 8)}`
-      if (mission.branch && mission.branch !== expectedBranch) return mission
-      if (
-        mission.branch &&
-        mission.worktree &&
-        (await gitOff('isExpectedWorktree', project.path, mission.worktree, mission.branch))
-      ) {
-        return mission
-      }
+    if (!mission) return Promise.resolve(undefined)
+    const previous = projectPreparations.get(mission.projectId) ?? Promise.resolve()
+    const preparation = previous.catch(() => undefined).then(() => ensureMissionWorktree(missionId))
+    missionPreparations.set(missionId, preparation)
+    projectPreparations.set(mission.projectId, preparation)
+    const clear = (): void => {
+      if (missionPreparations.get(missionId) === preparation) missionPreparations.delete(missionId)
+      if (projectPreparations.get(mission.projectId) === preparation) projectPreparations.delete(mission.projectId)
     }
-    return ensureMissionWorktree(missionId)
+    void preparation.then(clear, clear)
+    return preparation
   }
 
   /**
@@ -634,19 +584,16 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     // Missão de PLANEJAMENTO sai daqui sem branch por desenho (a cerca mora no
     // próprio ensureMissionWorktree) — nada a isolar quando o entregável é
     // plano/ na raiz.
-    // R18: o twin assíncrono foi TENTADO aqui e REVERTIDO no review — missão
-    // recém-nascida nunca casa o atalho do estado saudável (não tem branch),
-    // então o caminho síncrono completo rodava inteiro do mesmo jeito e o
-    // clique só ganhava ~0,2-0,4s de parede em idas ao worker sem tirar nada
-    // do main. Medição no relatório r18-agent-report.md (nota honesta nº 2).
-    ensureMissionWorktree(mission.id)
+    // The complete path now uses the worker, including first checkout and
+    // recovery. There is no synchronous fallback for a newly born mission.
+    await ensureMissionWorktreeOffThread(mission.id)
     const fresh = missions.get(mission.id) ?? mission
     const naturezaNota =
       missionTypeOf(fresh) === 'planejamento'
         ? ' (planejamento: escreve plano/ na raiz do projeto, sem branch)'
         : fresh.branch
           ? ` (branch ${fresh.branch})`
-          : ' (projeto sem git — roda direto no diretório)'
+          : ' (preparação pendente — abra a missão e use tentar de novo)'
     // quiet: quem criou foi o usuário (ou o próprio PM) — o PM não precisa
     // comentar; ele volta a falar nos MARCOS (integrada/reprovada/arquivada).
     hub.publish({
@@ -734,18 +681,18 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
         })
         return { ok: false, doneItems }
       }
-      const hadDelivery = Boolean(
-        version?.deliveries.some((delivery) => delivery.missionId === missionId)
-      )
+      const previousDelivery = version?.deliveries.find((delivery) => delivery.missionId === missionId)
+      const hadDelivery = Boolean(previousDelivery)
+      const summaryChanged = Boolean(mission.summary && previousDelivery?.summary !== mission.summary)
       // R30 — a missão de RELEASE é o registro da PRÓPRIA subida: gravá-la
       // como entrega punha "Subir X para a main" em "o que já subiu nesta
       // versão" (vazamento pego pelo dono em 2026-08-21). A régua é por TIPO,
       // a mesma das outras superfícies da R27.
       if (mission.versionId && missionTypeOf(mission) !== 'release') {
-        const delivered = backlog.addDelivery(mission.versionId, mission.id, mission.title)
+        const delivered = backlog.addDelivery(mission.versionId, mission.id, mission.title, mission.summary)
         if (!delivered) return { ok: false, doneItems }
       }
-      if (doneItems > 0 || (mission.versionId && !hadDelivery)) emitBacklogChanged(projectId)
+      if (doneItems > 0 || (mission.versionId && (!hadDelivery || summaryChanged))) emitBacklogChanged(projectId)
       syncBoard(projectId)
       return { ok: true, doneItems }
     } catch (error) {
@@ -788,27 +735,7 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     zap(join(projectPath, '.synkora', 'missions', `${short}.PLAN.md`))
   }
 
-  function cleanupMissionFiles(projectId: string, missionId: string): void {
-    const project = projects.get(projectId)
-    if (!project) return
-    try {
-      ensureSynkoraGitExcludes(project.path)
-    } catch {
-      return
-    }
-    cleanupMissionFilesAfterExcludes(project.path, missionId)
-  }
-
-  /**
-   * ESPELHO ASSÍNCRONO de `cleanupMissionFiles` (R18.2, 2026-08-19) — o par é
-   * declarado: MESMA pergunta ao git (`ensureSynkoraGitExcludes`), MESMA recusa
-   * silenciosa (excludes que lança = não mexe em arquivo nenhum) e o MESMO
-   * corpo de arquivos, que é função compartilhada acima — nunca uma cópia.
-   *
-   * O espelho síncrono FICA porque quem o chama é a reconciliação de BOOT
-   * (`recoverMissionIntegrationIntents`), síncrona por desenho: boot não é
-   * clique. Quem está no FECHO do merge (async) usa ESTE.
-   */
+  /** Normal completion and recovery share cleanup after Git excludes succeed. */
   async function cleanupMissionFilesOffThread(
     projectId: string,
     missionId: string
@@ -980,8 +907,18 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     origin: 'user-gesture' | 'queue-advance' | 'pane-open'
   ): void {
     const ticket = integrationQueue.getByMission(mission.id)
-    if (!ticket || ticket.state !== 'queued') return
+    if (!ticket || (ticket.state !== 'queued' && !needsMissionFinalization(ticket))) return
     const paneId = missionDevPaneId(mission.id)
+    if (needsMissionFinalization(ticket)) {
+      const delivered = announceToGuiPane(paneId, missionFinalizationStimulus(ticket))
+      // A nota do fecho adiado já contou ao dono que a pasta ficou presa; a
+      // reabertura (inclusive a retomada automática na raiz) só re-deriva o
+      // estímulo do agente. Só a fila ANDANDO até um reparo merece nota nova.
+      if (delivered && origin !== 'pane-open') noteInGuiPane(paneId, MISSION_FOLDER_HELD_NOTE)
+      blackbox.record({ cat: 'queue', event: 'mission-finalization-stimulus', actor: 'harness',
+        ids: { projectId: mission.projectId, missionId: mission.id, paneId }, detail: { origin, delivered } })
+      return
+    }
     const targetLabel = ticket.targetBranch ?? 'o destino da missão'
     const reopened = origin === 'pane-open'
     const noted = noteInGuiPane(
@@ -1042,7 +979,7 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     const ticket = integrationQueue
       .listPending(projectId)
       .find((candidate) => missionDevPaneId(candidate.missionId) === paneId)
-    if (!ticket || ticket.state !== 'queued') return
+    if (!ticket || (ticket.state !== 'queued' && !needsMissionFinalization(ticket))) return
     const mission = missions.get(ticket.missionId)
     if (!mission || mission.projectId !== projectId) return
     stimulateMissionIntegrator(mission, 'pane-open')
@@ -1174,6 +1111,16 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
       return reconciled.ok
         ? 'missão já integrada; backlog, versão e plano mestre foram reconciliados'
         : 'missão já integrada; a reconciliação ficou registrada para nova tentativa no próximo boot'
+    }
+    // A partial cleanup may have removed .git already. Never recreate that
+    // workspace or enqueue another merge: the owner's gesture retries only
+    // the proven, journaled finalization under the same project lock.
+    if (actor === 'user') {
+      const repair = integrationQueue.getByMission(missionId)
+      if (repair?.state === 'blocked' && repair.block?.owner === 'orchestrator' &&
+        repair.block.code === 'target_repair_pending') {
+        return retryMissionFinalization(mission.projectId, missionId, repair)
+      }
     }
     // A ÚNICA missão que existe é a 2.0: não há plano, validação humana de
     // plano nem verificação conjunta — o contrato é a conversa do dev com o
@@ -1415,8 +1362,12 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
   ): string {
     if (ticket.state === 'merging')
       return 'uma integração desta missão está acontecendo AGORA. Espere o desfecho — ele volta para você.'
+    if (needsMissionFinalization(ticket))
+      return ticket.isHead
+        ? `a finalização aguarda reparo (${ticket.block!.detail}). ${MISSION_FINALIZATION_RECIPE}`
+        : 'aguarde sua vez na fila para retomar somente a finalização; o app avisa neste chat.'
     if (ticket.state === 'blocked' && ticket.block?.owner === 'orchestrator')
-      return `o merge já está gravado no Git e o destino aguarda REPARO da máquina (${ticket.block.detail}). Não repita a integração: avise o dono para fechar o processo que segura os arquivos e reiniciar o Synkora.`
+      return 'o registro precisa de diagnóstico antes de qualquer alteração; confira o motivo e preserve a origem e o destino.'
     if (ticket.state === 'blocked' || ticket.state === 'sync_required')
       return 'este ticket ficou congelado por uma era anterior do app, em que a máquina decidia. Chame integration_run: ele reabre o ticket na MESMA posição e segue com a integração.'
     if (!ticket.isHead)
@@ -1446,8 +1397,10 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
         `a missão "${found.title}" NÃO está na fila: não há integração a rodar.`,
         'Só o ⇪ do DONO cria o ticket — você nunca se enfileira sozinho. Se a entrega está pronta, diga a ele aqui no chat e espere o clique dele.'
       ].join(' ')
+    if (needsMissionFinalization(opening))
+      return retryMissionFinalization(projectId, missionId, opening, 'agent')
     if (opening.state === 'blocked' && opening.block?.owner === 'orchestrator')
-      return `o merge desta missão JÁ está gravado no Git e o destino aguarda reparo (${opening.block.detail}). Repetir a integração aqui seria perigoso: avise o dono para fechar o processo que segura os arquivos e reiniciar o Synkora.`
+      return `o registro precisa de diagnóstico (${opening.block.detail}); preserve origem e destino e consulte integration_status.`
     if (opening.state === 'blocked' || opening.state === 'sync_required') {
       // Ticket congelado pela era em que a MÁQUINA decidia a estratégia. A
       // decisão passou a ser do agente; deixá-lo parado seria um beco sem saída.
@@ -1526,6 +1479,82 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     integrationReplies.delete(missionId)
     integrationDraining.delete(projectId)
     if (moved) advanceIntegrationQueue(projectId)
+  }
+
+  /** The callback rechecks durable state after cleanup; cancelled or changed work never wakes. */
+  function finalizationRecoveryCwd(mission: Mission, ticket: IntegrationQueueTicketView | undefined): () => string | undefined {
+    return () => {
+      if (!ticket) return undefined
+      const current = missions.get(mission.id)
+      const pending = integrationQueue.getByMission(mission.id)
+      const project = projects.get(mission.projectId)
+      return current?.status === 'ativa' && current.projectId === mission.projectId &&
+        current.seatId === mission.seatId && current.versionId === mission.versionId &&
+        current.branch === mission.branch && current.worktree === mission.worktree &&
+        pending?.id === ticket.id && pending.sourceHead === ticket.sourceHead &&
+        pending.targetDir === ticket.targetDir && pending.targetBranch === ticket.targetBranch &&
+        needsMissionFinalization(pending) && project && existsSync(project.path)
+        ? project.path : undefined
+    }
+  }
+
+  async function retryMissionFinalization(
+    projectId: string, missionId: string, ticket: IntegrationQueueTicketView, actor: 'user' | 'agent' = 'user'
+  ): Promise<string> {
+    if (integrationDraining.has(projectId)) return 'uma integração ou finalização já está em andamento; aguarde o desfecho'
+    if (!ticket.isHead) return 'aguarde a vez desta missão na fila para retomar a finalização'
+    const project = projects.get(projectId)
+    const mission = missions.get(missionId)
+    if (!project || !mission || mission.projectId !== projectId || mission.status !== 'ativa' ||
+      integrationQueue.getByMission(missionId)?.id !== ticket.id || !needsMissionFinalization(ticket))
+      return 'o estado desta missão mudou; consulte integration_status antes de agir'
+    const paneId = missionDevPaneId(missionId)
+    const paneCwd = extras.paneCwd?.(paneId)
+    const keepDev = actor === 'agent' && paneCwd !== undefined &&
+      resolve(paneCwd).toLocaleLowerCase('en-US') === resolve(project.path).toLocaleLowerCase('en-US')
+    integrationDraining.add(projectId)
+    if (actor === 'agent' && !keepDev && extras.afterIntegrationReply) {
+      const reply = 'A finalização será conferida após este retorno. Encerre o turno para liberar a pasta; o Synkora retoma este agente se restar reparo. Não execute outro merge.'
+      try {
+        extras.afterIntegrationReply(missionId, reply, finishForOwner, finalizationRecoveryCwd(mission, ticket), 'finalization')
+        return reply
+      } catch {
+        releaseIntegrationDrain(projectId, missionId)
+        return `não foi possível preparar a finalização; o registro foi preservado. ${MISSION_FINALIZATION_RECIPE}`
+      }
+    }
+    return finish()
+
+    function finalizationDone(): boolean {
+      return missions.get(missionId)?.status === 'concluida' && !integrationQueue.getByMission(missionId)
+    }
+
+    /** O fecho ADIADO escreve no fio do DONO: a receita do agente viaja pelo
+     *  estímulo quando a conversa é retomada, nunca como nota. */
+    async function finishForOwner(): Promise<string> {
+      await finish()
+      return finalizationDone() ? MISSION_FINALIZATION_DONE_NOTE : MISSION_FOLDER_HELD_NOTE
+    }
+
+    async function finish(): Promise<string> {
+      blackbox.record({ cat: 'merge', event: 'mission-finalization-retry', actor, ids: { projectId, missionId } })
+      try {
+        await recoverMissionIntegrationIntents(projectId, missionId, keepDev ? paneId : undefined)
+        const done = finalizationDone()
+        noteInGuiPane?.(paneId, done
+          ? MISSION_FINALIZATION_DONE_NOTE
+          : '↻ a finalização ainda precisa de reparo; o diagnóstico está disponível ao agente')
+        return done
+          ? 'finalização concluída; missão INTEGRADA e fila liberada, sem repetir o merge'
+          : `a finalização continua pendente: ${integrationQueue.getByMission(missionId)?.block?.detail ?? 'não foi possível confirmar a recuperação'}. Investigue o impedimento antes de tentar novamente. ${MISSION_FINALIZATION_RECIPE}`
+      } catch {
+        return `a finalização continua pendente; a tentativa parou e o marcador foi preservado. Confira os diagnósticos. ${MISSION_FINALIZATION_RECIPE}`
+      } finally {
+        emitMissionsChanged(projectId)
+        syncBoard(projectId)
+        releaseIntegrationDrain(projectId, missionId)
+      }
+    }
   }
 
   async function runHeadIntegration(
@@ -1687,10 +1716,13 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     )
     if (result.finish && extras.afterIntegrationReply) {
       const finishMerge = result.finish
+      // O MERGE pousou; a FINALIZAÇÃO é do app e roda depois do turno. O agente
+      // não anuncia "integrada" antes de a pasta ser liberada (print de
+      // 2026-09-16: "Integrada." seguido de "a limpeza ficou pendente").
       const reply = [
-        `INTEGRADA: "${mission.title}" entrou em ${target.branch}.`,
-        `Origem ${shortSha(sourceHead)} sobre o destino ${shortSha(targetHead)} · ${result.detail}`,
-        'CONTE AO DONO o desfecho em uma ou duas linhas e encerre o turno. O app então libera a pasta e finaliza a fila automaticamente; não edite nem commite mais nesta missão.'
+        `MERGE GRAVADO: "${mission.title}" entrou em ${target.branch} (origem ${shortSha(sourceHead)} sobre o destino ${shortSha(targetHead)} · ${result.detail}).`,
+        'A FINALIZAÇÃO (liberar a pasta desta missão e fechar a fila) é do app e roda assim que este turno terminar: diga ao dono em UMA linha que o merge foi gravado e que o app está finalizando, e encerre o turno SEM usar outra ferramenta. NÃO declare a missão integrada — o app anuncia no chat quando a pasta for liberada. Não edite nem commite mais nesta missão.',
+        'Se a pasta continuar presa, o app te acorda nesta mesma conversa, na raiz do projeto, com o motivo: encerre os processos que VOCÊ iniciou (servidores de teste, comandos em background) e chame integration_run para concluir.'
       ].join('\n')
       integrationReplies.add(missionId)
       // O callback pertence à fila até o fecho: devolver a tool NÃO libera a
@@ -1698,10 +1730,15 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
       extras.afterIntegrationReply(missionId, reply, async () => {
         try {
           const completion = await finishMerge()
-          const outcome = finishHeadIntegration(completion, mission!, target)
+          // `finishHeadIntegration` assenta fila e missão e devolve o texto do
+          // AGENTE; a nota aqui é do DONO — a receita do reparo viaja pelo
+          // estímulo quando a conversa é retomada, nunca pelo fio.
+          finishHeadIntegration(completion, mission!, target)
           return completion.state === 'completed'
             ? `⇪ "${mission!.title}" INTEGRADA em ${target.branch}; pasta liberada e fila atualizada.`
-            : outcome
+            : completion.state === 'repair_pending'
+              ? MISSION_FOLDER_HELD_NOTE
+              : `⇪ a finalização de "${mission!.title}" parou: ${completion.detail}`
         } catch {
           // Aqui o merge já foi comprovado. Uma exceção no fecho nunca pode
           // recolocar o ticket em queued e autorizar uma segunda mescla.
@@ -1720,7 +1757,7 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
         } finally {
           releaseIntegrationDrain(projectId, missionId)
         }
-      })
+      }, finalizationRecoveryCwd(mission, integrationQueue.getByMission(missionId)))
       return reply
     }
     return finishHeadIntegration(result, mission, target)
@@ -1752,15 +1789,14 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
       }
       missions.update(missionId, { status: 'ativa' })
       if (result.state === 'repair_pending') {
-        // Merge JÁ gravado no Git: repetir é perigoso, e isto não é decisão de
-        // estratégia — é reparo de arquivos travados no destino. É o único estado
-        // que continua sendo da máquina.
+        // Keep the approved repair ticket; the agent uses the journaled
+        // finalization path, never the merge lane.
         integrationQueue.requireTargetRepair(missionId, result.detail)
         emitMissionsChanged(projectId)
         syncBoard(projectId)
         return [
-          `o merge de "${mission.title}" JÁ FOI GRAVADO no Git, mas os arquivos do destino aguardam reparo seguro: ${result.detail}`,
-          'NÃO repita a integração. Conte ao dono: ele precisa fechar o processo que está segurando os arquivos do destino e reiniciar o Synkora, que reconcilia sozinho no boot.'
+          `o merge de "${mission.title}" JÁ FOI GRAVADO no Git, mas a finalização aguarda reparo seguro: ${result.detail}`,
+          MISSION_FINALIZATION_RECIPE
         ].join('\n')
       }
       return stopped(
@@ -1811,8 +1847,8 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
           emitMissionsChanged(projectId)
           continue
         }
-        mission = ensureMissionWorktree(mission.id) ?? mission
-        const missionSource = missionWorkspacePath(project.path, mission)
+        mission = (await ensureMissionWorktreeOffThread(mission.id)) ?? mission
+        const missionSource = await missionWorkspacePathOffThread(project.path, mission)
         if (
           !hasGitCommit(project.path) ||
           !mission.branch ||
@@ -1955,7 +1991,7 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
             kind: 'error',
             text:
               `FILA DE INTEGRAÇÃO PAUSADA em #${ticket.position}: o merge de "${mission.title}" já foi gravado, ` +
-              'mas os arquivos do destino aguardam reparo seguro. Não há conflito para o Maestro decidir e a fila não tentará integrar novamente. Feche o processo que possa estar segurando os arquivos e reinicie o Synkora.',
+              'mas a finalização aguarda reparo seguro. A fila não repetirá o merge. Preserve as pastas e reinicie o Synkora para reconciliar no boot.',
             actor: 'harness',
             urgent: true
           })
@@ -2109,26 +2145,7 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     }
   }
 
-  function clearMissionIntegrationIntent(projectPath: string, missionId: string): void {
-    try {
-      ensureSynkoraGitExcludes(projectPath)
-      unlinkSync(missionIntegrationIntentPath(projectPath, missionId))
-    } catch {
-      // nunca iniciou ou já foi reconciliada
-    }
-  }
-
-  /**
-   * ESPELHO ASSÍNCRONO de `clearMissionIntegrationIntent` (R18.2, 2026-08-19) —
-   * o par é declarado: as MESMAS duas ações, na MESMA ordem (excludes → apagar
-   * o marcador), debaixo do MESMO `try` que engole tudo (o marcador que nunca
-   * existiu não é erro). Se o excludes recusar, o unlink não acontece — igual
-   * ao original, porque os dois moram no mesmo bloco.
-   *
-   * O espelho síncrono FICA porque quem o chama é a reconciliação de BOOT
-   * (quatro chamadas em `recoverMissionIntegrationIntents`), síncrona por
-   * desenho. Quem está no FECHO do merge (async) usa ESTE.
-   */
+  /** A failed excludes update preserves the durable recovery marker. */
   async function clearMissionIntegrationIntentOffThread(
     projectPath: string,
     missionId: string
@@ -2155,10 +2172,12 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
   function missionDeliveryOf(
     mission: Pick<Mission, 'id' | 'projectId'>,
     commits: MissionCommit[] | undefined,
-    summary: MissionWorkspaceSummary | undefined
+    summary: MissionWorkspaceSummary | undefined,
+    sourceHead?: string
   ): MissionDelivery | undefined {
     const delivery = missionDeliveryFrom({
       capturedAt: new Date().toISOString(),
+      sourceHead,
       commits: (commits ?? []).map((commit) => commit.subject),
       files: (summary?.files ?? []).map((file) => file.path),
       // `ahead` é o total REAL de commits (rev-list --count), enquanto a lista
@@ -2202,35 +2221,20 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     try {
       const commits = await gitOff('missionCommits', workspace, mission.baseBranch)
       const summary = await gitOff('missionWorkspaceSummary', workspace, mission.baseBranch)
-      return missionDeliveryOf(mission, commits, summary)
+      const sourceHead = await gitOff('gitHead', workspace)
+      return missionDeliveryOf(mission, commits, summary, sourceHead)
     } catch (error) {
       return noteMissionDeliveryFailure(mission, error)
     }
   }
 
-  /** O fecho do BOOT: a reconciliação inteira é síncrona (o git dela também),
-   *  e são poucas missões com marcador pendente. Worktree já removido devolve
-   *  `undefined` sozinho — é a ausência honesta que o design previu. */
-  function captureMissionDeliveryOnBoot(
-    mission: Mission,
-    workspace: string
-  ): MissionDelivery | undefined {
-    try {
-      return missionDeliveryOf(
-        mission,
-        missionCommits(workspace, mission.baseBranch),
-        missionWorkspaceSummary(workspace, mission.baseBranch)
-      )
-    } catch (error) {
-      return noteMissionDeliveryFailure(mission, error)
-    }
-  }
-
-  function recoverMissionIntegrationIntents(projectId: string): void {
+  /** Boot and the owner's retry share the same proofs. A scoped retry never
+   * requeues a pre-merge intent, and all Git runs outside the UI thread. */
+  async function recoverMissionIntegrationIntents(projectId: string, onlyMissionId?: string, keepPaneId?: string): Promise<void> {
     const project = projects.get(projectId)
     if (!project) return
     try {
-      ensureSynkoraGitExcludes(project.path)
+      await gitOff('ensureSynkoraGitExcludes', project.path)
     } catch {
       return
     }
@@ -2243,9 +2247,10 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     }
     for (const entry of entries) {
       const missionId = entry.slice(0, -'.intent'.length)
+      if (onlyMissionId && missionId !== onlyMissionId) continue
       const mission = missions.get(missionId)
       if (!mission || mission.projectId !== projectId) {
-        clearMissionIntegrationIntent(project.path, missionId)
+        if (!onlyMissionId) await clearMissionIntegrationIntentOffThread(project.path, missionId)
         continue
       }
       if (mission.status === 'concluida') {
@@ -2255,11 +2260,30 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
           `Missão integrada: ${mission.title}.`
         )
         if (reconciled.ok) {
-          clearMissionIntegrationIntent(project.path, missionId)
+          await clearMissionIntegrationIntentOffThread(project.path, missionId)
           integrationQueue.cancel(missionId)
         }
         continue
       }
+      const openingTicket = integrationQueue.getByMission(missionId)
+      const openingVersion = mission.versionId ? backlog.getVersion(mission.versionId) : undefined
+      const versionBranch = openingVersion?.branch
+      const versionWorktree = openingVersion?.worktree
+      const stillCurrent = (): boolean => {
+        if (!onlyMissionId) return true
+        const current = missions.get(missionId)
+        const ticket = integrationQueue.getByMission(missionId)
+        const version = current?.versionId ? backlog.getVersion(current.versionId) : undefined
+        return current?.status === 'ativa' && current.projectId === mission.projectId &&
+          current.versionId === mission.versionId && current.worktree === mission.worktree &&
+          current.branch === mission.branch && ticket?.id === openingTicket?.id &&
+          ticket?.isHead === true && ticket.state === 'blocked' &&
+          ticket.sourceHead === openingTicket?.sourceHead &&
+          ticket.targetBranch === openingTicket?.targetBranch && ticket.targetDir === openingTicket?.targetDir &&
+          version?.branch === versionBranch && version?.worktree === versionWorktree &&
+          ticket.block?.owner === 'orchestrator' && ticket.block.code === 'target_repair_pending'
+      }
+      if (!stillCurrent()) continue
       let intent: MissionIntegrationIntent | undefined
       try {
         const parsed = JSON.parse(readFileSync(join(directory, entry), 'utf8')) as MissionIntegrationIntent
@@ -2289,12 +2313,18 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
         })
       }
       if (!intent) continue
+      if (onlyMissionId && (intent.sourceHead !== openingTicket?.sourceHead ||
+        (intent.queueTicketId && intent.queueTicketId !== openingTicket?.id))) {
+        integrationQueue.requireTargetRepair(missionId, 'o marcador não corresponde ao ticket desta missão; preserve as pastas para conferir o registro')
+        continue
+      }
       if (mission.status === 'ativa' || mission.status === 'integrando') {
         const version = mission.versionId ? backlog.getVersion(mission.versionId) : undefined
         const versionTarget =
           version &&
           version.projectId === mission.projectId &&
-          versionIsolationIsValid(project.path, version)
+          version.worktree &&
+          await versionIsolationProbe(project.path, version)
             ? resolve(version.worktree)
             : undefined
         const expectedTarget =
@@ -2308,21 +2338,26 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
           expectedTarget &&
           resolve(intent.targetDir).toLocaleLowerCase('en-US') ===
             expectedTarget.toLocaleLowerCase('en-US') &&
-          currentBranch(expectedTarget) === intent.targetBranch &&
-          gitCommitReached(expectedTarget, intent.targetHead) === true &&
-          gitCommitReached(expectedTarget, intent.sourceHead) === true
+          (await gitOff('currentBranch', expectedTarget)) === intent.targetBranch &&
+          (await gitOff('gitCommitReached', expectedTarget, intent.targetHead)) === true &&
+          (await gitOff('gitCommitReached', expectedTarget, intent.sourceHead)) === true
+        if (!stillCurrent()) continue
         if (!mergeProven) {
-          const sourceBeforeMerge = missionWorkspacePath(project.path, mission)
+          if (onlyMissionId) {
+            integrationQueue.requireTargetRepair(missionId, 'o Git ainda não prova o merge no destino desta missão; retomar finalização não executa um novo merge')
+            continue
+          }
+          const sourceBeforeMerge = await missionWorkspacePathOffThread(project.path, mission)
           const safelyStillBeforeMerge = Boolean(
             expectedTarget &&
               resolve(intent.targetDir).toLocaleLowerCase('en-US') ===
                 expectedTarget.toLocaleLowerCase('en-US') &&
-              currentBranch(expectedTarget) === intent.targetBranch &&
-              gitHead(expectedTarget) === intent.targetHead &&
-              isWorktreeClean(expectedTarget) === true &&
+              (await gitOff('currentBranch', expectedTarget)) === intent.targetBranch &&
+              (await gitOff('gitHead', expectedTarget)) === intent.targetHead &&
+              (await gitOff('isWorktreeClean', expectedTarget)) === true &&
               sourceBeforeMerge &&
-              gitHead(sourceBeforeMerge) === intent.sourceHead &&
-              isWorktreeClean(sourceBeforeMerge) === true
+              (await gitOff('gitHead', sourceBeforeMerge)) === intent.sourceHead &&
+              (await gitOff('isWorktreeClean', sourceBeforeMerge)) === true
           )
           if (safelyStillBeforeMerge) {
             // O app caiu depois de gravar o intent, mas antes do CAS. Remover
@@ -2341,7 +2376,7 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
             } else if (ticket && ticket.state !== 'queued' && ticket.state !== 'merging') {
               continue
             }
-            clearMissionIntegrationIntent(project.path, missionId)
+            await clearMissionIntegrationIntentOffThread(project.path, missionId)
             continue
           }
           if (integrationQueue.getByMission(missionId)) {
@@ -2361,8 +2396,8 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
           continue
         }
         if (
-          isWorktreeClean(expectedTarget) !== true &&
-          !alignWorktreeFromSnapshot(expectedTarget, intent!.targetHead)
+          (await gitOff('isWorktreeClean', expectedTarget)) !== true &&
+          !(await gitOff('alignWorktreeFromSnapshot', expectedTarget, intent.targetHead))
         ) {
           // O store pode ter restaurado `merging` como `queued` antes de ler o
           // intent. Grave o estado operacional ANTES do aviso/continue para o
@@ -2376,7 +2411,7 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
           hub.publish({
             projectId,
             kind: 'error',
-            text: `o merge da missão "${mission.title}" está provado no Git, mas os arquivos do destino ainda não puderam ser alinhados com segurança. Preservei intent, ticket e branches; feche o processo que possa estar segurando esses arquivos e reinicie o app para tentar o reparo novamente.`,
+            text: `o merge da missão "${mission.title}" está provado no Git, mas os arquivos do destino ainda não puderam ser alinhados com segurança. O registro e as pastas foram preservados para o agente investigar e retomar a finalização pelo chat.`,
             actor: 'harness',
             urgent: true
           })
@@ -2386,17 +2421,57 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
           join(app.getPath('userData'), 'worktrees', projectId),
           missionId
         )
-        // R16 — ÚLTIMA janela para ler a entrega: a linha abaixo remove
-        // worktree e branch. Se o app caiu depois da limpeza, a leitura devolve
-        // ausência e a missão conclui sem entrega registrada (a verdade).
-        const delivery = captureMissionDeliveryOnBoot(mission, cleanupSource.dir)
+        // A detached preview can survive the previous app instance. Reuse the
+        // same scoped shutdown as normal integration before touching its root.
+        if (!stillCurrent()) continue
+        try {
+          if (onlyMissionId) await killMissionGuiPanes?.(missionId, keepPaneId)
+          await closeTestServersUnder(cleanupSource.dir)
+        } catch {
+          if (integrationQueue.getByMission(missionId)) {
+            integrationQueue.requireTargetRepair(missionId, 'não foi possível concluir o encerramento dos previews da origem')
+          }
+          hub.publish({
+            projectId,
+            kind: 'error',
+            text: `o merge da missão "${mission.title}" está provado, mas o encerramento dos previews falhou. Preservei a origem e o marcador para recuperar a finalização.`,
+            actor: 'harness',
+            urgent: true
+          })
+          continue
+        }
+        // Read the delivery before the final destination proof. A missing
+        // source preserves the delivery already captured before the merge.
+        const delivery = await captureMissionDelivery(mission, cleanupSource.dir)
+        // Awaiting shutdown yields to other work. Reprove the destination
+        // before deleting the source, including edits made during that wait.
+        if (!stillCurrent()) continue
         if (
-          !removeWorktreeAndBranch(
+          (await gitOff('currentBranch', expectedTarget)) !== intent.targetBranch ||
+          (await gitOff('gitCommitReached', expectedTarget, intent.targetHead)) !== true ||
+          (await gitOff('gitCommitReached', expectedTarget, intent.sourceHead)) !== true ||
+          (await gitOff('isWorktreeClean', expectedTarget)) !== true
+        ) {
+          if (integrationQueue.getByMission(missionId)) {
+            integrationQueue.requireTargetRepair(missionId, 'o destino mudou enquanto os previews eram encerrados')
+          }
+          hub.publish({
+            projectId,
+            kind: 'error',
+            text: `o destino da missão "${mission.title}" mudou durante o encerramento dos previews. Preservei a origem e o marcador para verificar a finalização novamente.`,
+            actor: 'harness',
+            urgent: true
+          })
+          continue
+        }
+        if (!stillCurrent()) continue
+        if (
+          !(await gitOff('removeWorktreeAndBranch',
             project.path,
             cleanupSource.dir,
             cleanupSource.branch,
             intent.sourceHead
-          )
+          ))
         ) {
           if (integrationQueue.getByMission(missionId)) {
             integrationQueue.requireTargetRepair(
@@ -2407,12 +2482,13 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
           hub.publish({
             projectId,
             kind: 'error',
-            text: `o merge da missão "${mission.title}" está provado e o destino está alinhado, mas a limpeza da origem ficou pendente. Preservei intent, ticket e metadados para tentar novamente no próximo boot.`,
+            text: `o merge da missão "${mission.title}" está provado e o destino está alinhado, mas a limpeza da origem ficou pendente. O registro e as pastas foram preservados para o agente investigar e retomar a finalização pelo chat.`,
             actor: 'harness',
             urgent: true
           })
           continue
         }
+        if (!stillCurrent()) continue
         missions.update(missionId, {
           status: 'concluida',
           branch: undefined,
@@ -2422,12 +2498,12 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
         const reconciled = reconcileConcludedMission(
           projectId,
           missionId,
-          `Missão integrada e recuperada após reinício: ${mission.title}.`
+          `Missão integrada com finalização recuperada: ${mission.title}.`
         )
         if (reconciled.ok) {
           hub.purgeMissionEvents(projectId, missionId)
-          cleanupMissionFiles(projectId, missionId)
-          clearMissionIntegrationIntent(project.path, missionId)
+          await cleanupMissionFilesOffThread(projectId, missionId)
+          await clearMissionIntegrationIntentOffThread(project.path, missionId)
           integrationQueue.cancel(missionId)
         }
         emitMissionsChanged(projectId)
@@ -2604,7 +2680,7 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     // MCP. Os demais panes saem agora; a origem fica até o recibo e o fecho.
     const deferSourceCleanup = isDirectMission(mission) && Boolean(extras.afterIntegrationReply)
     ptys.kill(orchPaneId(projectId, missionId))
-    killMissionGuiPanes(missionId, deferSourceCleanup ? missionDevPaneId(missionId) : undefined)
+    await killMissionGuiPanes(missionId, deferSourceCleanup ? missionDevPaneId(missionId) : undefined)
     const res = await gitOff(
       'mergeTaskWorktree',
       project.path,
@@ -2622,7 +2698,7 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     const completionMission = mission
     const completionProject = project
     const completionSource = missionSource
-    if (res.ok && res.sourceCleanupDeferred)
+    if (deferSourceCleanup && res.committed)
       return { state: 'completed', detail: res.detail, finish: finishMerge }
     return finishMerge()
 
@@ -2630,8 +2706,8 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
       const mission = completionMission
       const project = completionProject
       const missionSource = completionSource
-      if (res.sourceCleanupDeferred) {
-        killMissionGuiPanes(missionId)
+      if (deferSourceCleanup && res.committed) {
+        await killMissionGuiPanes(missionId)
         // The agent could have started a new preview while receiving the
         // merge reply. Wait for that process too before removing its cwd.
         await closeTestServersUnder(missionSource)
@@ -2687,8 +2763,8 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
           actor: 'harness',
           ids: { projectId, missionId },
           reason: sourceRelease.released
-            ? 'a pasta da origem estava presa por um pane ainda morrendo e se soltou dentro da janela'
-            : 'a pasta da origem seguiu presa depois da janela — algum processo vivo tem cwd nela',
+            ? 'a limpeza da origem foi comprovada após nova tentativa'
+            : 'a limpeza da origem não pôde ser comprovada dentro da janela de tentativas',
           detail: { attempts: sourceRelease.attempts, waitedMs: sourceRelease.waitedMs }
         })
       const mergeOk = (res.ok && !res.sourceCleanupDeferred) || (targetSettled && cleanedAfterCommit)
@@ -2825,8 +2901,8 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     // ——— ciclo de vida de missão ———
     emitMissionsChanged,
     missionsWithIntegration,
-    missionWorkspacePath,
-    ensureMissionWorktree,
+    missionWorkspacePath: missionWorkspacePathOffThread,
+    ensureMissionWorktree: ensureMissionWorktreeOffThread,
     alignVersionBaseWithMain,
     createMissionImpl,
     ensureMissionVersion,

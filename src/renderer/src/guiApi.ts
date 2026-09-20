@@ -11,15 +11,30 @@ import type {
   GuiFileExternalOpenMode,
   GuiFileExternalOpenResult,
   GuiFileOpenResult,
+  GuiFileOpenMode,
   GuiWorkspaceFilesResult,
   GuiAttachmentPreviewPurpose,
   GuiAttachmentPreviewResult,
   GuiQueuedDeliveryInput
 } from '../../preload'
+import type { GuiBrowserReference, GuiBrowserReferenceRevealResult } from '../../shared/guiBrowserReferences'
+import type { GuiUsageMeters } from '../../shared/guiUsage'
+
+export interface GuiBrowserReferencesResult {
+  ok: boolean
+  references: GuiBrowserReference[]
+  error?: string
+}
+
+export interface GuiBrowserReferencesPayload {
+  paneId: string
+  references: GuiBrowserReference[]
+}
 
 import type { PlanDraft, PlanItemDraft, PlanItemTier, PlanKind } from './planContract'
 
-export type { GuiFileChoice, GuiFileOpenResult, GuiFilePreview } from '../../preload'
+export type { GuiFileChoice, GuiFileOpenMode, GuiFileOpenResult, GuiFilePreview } from '../../preload'
+export type { GuiUsageMeters } from '../../shared/guiUsage'
 export type { GuiFileExternalOpenMode, GuiFileExternalOpenResult } from '../../preload'
 
 /** R36 — ESPELHO DECLARADO do canal `gui:fileImageData` (o par mora em
@@ -188,8 +203,9 @@ export type GuiSessionEvent =
     }
   | { type: 'delta'; text: string }
   | { type: 'thinking'; text?: string }
+  | { type: 'context-compaction'; active: boolean }
   | { type: 'turn-started' }
-  | { type: 'turn-continuation'; continues: boolean }
+  | { type: 'turn-continuation'; continues: boolean; turnActive?: boolean }
   | {
       type: 'session-restarted'
       ready: boolean
@@ -206,6 +222,7 @@ export type GuiSessionEvent =
       id: string
       text: string
       attachments?: GuiAttachmentDescriptor[]
+      browserReferences?: GuiBrowserReference[]
       at: number
     }
   /** D6 (2026-09-02) — O RECIBO DA FALA DO DONO. Espelho declarado do union do
@@ -225,7 +242,7 @@ export type GuiSessionEvent =
   | {
       type: 'owner-message-state'
       id: string
-      state: 'unread' | 'stopping' | 'read' | 'delivered' | 'answered'
+      state: 'unread' | 'stopping' | 'read' | 'delivered' | 'answered' | 'cancelled'
       at: number
     }
   | { type: 'text'; text: string }
@@ -308,6 +325,9 @@ export type GuiSessionEvent =
        */
       convCalls?: number
       convWeightTokens?: number
+      /** Numeric-only snapshots from main/guiRequestUsage.ts; additive for
+       * old replay. Missing preserves prior state; null explicitly clears. */
+      usage?: GuiUsageMeters | null
     }
   | { type: 'command-completed'; isError: boolean; continues: boolean; errorText?: string }
   | { type: 'limit'; text: string }
@@ -322,8 +342,12 @@ export type GuiSessionEvent =
        *  ausência = desfecho comum, lido exatamente como antes. */
       interrupted?: boolean
       continues?: boolean
+      /** Parent activity, separate from helper work; mirrors maestroSession.ts. */
+      turnActive?: boolean
       errorText?: string
       resultText?: string
+      /** Internal receipt consumed by the main registry before IPC. */
+      localCommand?: 'reload-skills'
       contextTokens?: number
       contextWindow?: number
       fastModeState?: string
@@ -417,6 +441,7 @@ export function asGuiEvent(evt: unknown): GuiSessionEvent | null {
   if (!evt || typeof evt !== 'object') return null
   const record = evt as Record<string, unknown>
   const type = record['type']
+  if (type === 'context-compaction' && typeof record['active'] !== 'boolean') return null
   if (
     type === 'tool' &&
     record['parentToolUseId'] !== undefined &&
@@ -476,12 +501,13 @@ interface GuiBridge {
     paneId: string,
     text: string,
     messageId: string,
-    attachments?: GuiAttachmentDescriptor[]
+    attachments?: GuiAttachmentDescriptor[],
+    browserReferences?: GuiBrowserReference[]
   ) => Promise<{ ok: boolean; error?: string }>
   deliverQueued: (
     paneId: string,
     input: GuiQueuedDeliveryInput
-  ) => Promise<{ ok: boolean; error?: string }>
+  ) => Promise<{ ok: boolean; error?: string; retryable?: boolean }>
   permission: (
     paneId: string,
     requestId: string,
@@ -503,10 +529,12 @@ interface GuiBridge {
     approve: boolean,
     note?: string
   ) => Promise<{ ok: boolean; error?: string }>
-  interrupt: (paneId: string) => Promise<{ ok: boolean; error?: string }>
+  /** Mirrors GuiResult in main/guiSessions.ts for the stop/finish race. */
+  interrupt: (paneId: string) => Promise<{ ok: boolean; error?: string; alreadyIdle?: boolean }>
   /** R39.1 (D4') — "LER AGORA". Espelho declarado de `gui:forceOwnerMessage`
    *  (`src/preload/index.ts` + `src/main/ipc/gui.ts`). */
   forceOwnerMessage: (paneId: string, messageId: string) => Promise<{ ok: boolean; error?: string }>
+  cancelOwnerMessage: (paneId: string, messageId: string) => Promise<{ ok: boolean; error?: string }>
   kill: (paneId: string) => Promise<{ ok: boolean }>
   state: (paneId: string) => Promise<{
     events: unknown[]
@@ -518,7 +546,8 @@ interface GuiBridge {
   fileOpen: (
     paneId: string,
     reference: string,
-    selectedPath?: string
+    selectedPath?: string,
+    mode?: GuiFileOpenMode
   ) => Promise<GuiFileOpenResult>
   fileOpenExternal: (
     paneId: string,
@@ -530,6 +559,11 @@ interface GuiBridge {
   attach: (paneId: string, payload: GuiAttachPayload) => Promise<GuiAttachResult>
   attachFolder: (paneId: string) => Promise<GuiAttachResult>
   attachDropped: (paneId: string, file: File) => Promise<GuiAttachResult>
+  browserReferencesList: (paneId: string) => Promise<GuiBrowserReferencesResult>
+  revealBrowserReference: (paneId: string, id: string) => Promise<GuiBrowserReferenceRevealResult>
+  removeBrowserReference: (paneId: string, id: string) => Promise<GuiBrowserReferencesResult>
+  consumeBrowserReferences: (paneId: string, ids: string[]) => Promise<GuiBrowserReferencesResult>
+  onBrowserReferencesChanged: (cb: (payload: GuiBrowserReferencesPayload) => void) => () => void
   attachmentPreview: (
     paneId: string,
     attachment: GuiAttachmentDescriptor,
@@ -573,12 +607,13 @@ export const guiApi = {
     paneId: string,
     text: string,
     messageId: string,
-    attachments?: GuiAttachmentDescriptor[]
+    attachments?: GuiAttachmentDescriptor[],
+    browserReferences?: GuiBrowserReference[]
   ): Promise<{ ok: boolean; error?: string; deliveryUncertain?: boolean }> {
     const api = bridge()
     if (!api?.send) return { ok: false, error: NO_BRIDGE }
     try {
-      const result = await api.send(paneId, text, messageId, attachments)
+      const result = await api.send(paneId, text, messageId, attachments, browserReferences)
       if (result && typeof result.ok === 'boolean') return result
       return {
         ok: false, error: 'a sessão não confirmou o envio', deliveryUncertain: true
@@ -613,7 +648,7 @@ export const guiApi = {
   async deliverQueued(
     paneId: string,
     input: GuiQueuedDeliveryInput
-  ): Promise<{ ok: boolean; error?: string; deliveryUncertain?: boolean }> {
+  ): Promise<{ ok: boolean; error?: string; retryable?: boolean; deliveryUncertain?: boolean }> {
     const api = bridge()
     if (!api?.deliverQueued) return { ok: false, error: NO_BRIDGE, deliveryUncertain: true }
     try {
@@ -743,11 +778,11 @@ export const guiApi = {
     }
   },
 
-  async interrupt(paneId: string): Promise<{ ok: boolean; error?: string }> {
+  async interrupt(paneId: string): Promise<{ ok: boolean; error?: string; alreadyIdle?: boolean }> {
     const api = bridge()
     if (!api?.interrupt) return { ok: false, error: NO_BRIDGE }
     try {
-      return (await api.interrupt(paneId)) ?? { ok: true }
+      return (await api.interrupt(paneId)) ?? { ok: false, error: 'a sessão não confirmou a interrupção' }
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) }
     }
@@ -771,6 +806,73 @@ export const guiApi = {
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) }
     }
+  },
+
+  async cancelOwnerMessage(paneId: string, messageId: string): Promise<{ ok: boolean; error?: string }> {
+    const api = bridge()
+    if (!api?.cancelOwnerMessage) return { ok: false, error: NO_BRIDGE }
+    try {
+      return (await api.cancelOwnerMessage(paneId, messageId)) ?? { ok: false, error: 'o cancelamento não foi confirmado' }
+    } catch {
+      return { ok: false, error: 'o cancelamento não foi confirmado; a mensagem foi preservada' }
+    }
+  },
+
+  browserReferencesAvailable(): boolean {
+    return typeof bridge()?.browserReferencesList === 'function'
+  },
+
+  async browserReferencesList(paneId: string): Promise<GuiBrowserReferencesResult> {
+    const api = bridge()
+    if (!api?.browserReferencesList) return { ok: false, references: [], error: NO_BRIDGE }
+    try {
+      const result = await api.browserReferencesList(paneId)
+      return result && typeof result.ok === 'boolean' && Array.isArray(result.references)
+        ? result : { ok: false, references: [], error: 'não foi possível carregar as referências da página' }
+    } catch {
+      return { ok: false, references: [], error: 'não foi possível carregar as referências da página' }
+    }
+  },
+
+  async removeBrowserReference(paneId: string, id: string): Promise<GuiBrowserReferencesResult> {
+    const api = bridge()
+    if (!api?.removeBrowserReference) return { ok: false, references: [], error: NO_BRIDGE }
+    try {
+      const result = await api.removeBrowserReference(paneId, id)
+      return result && typeof result.ok === 'boolean' && Array.isArray(result.references)
+        ? result : { ok: false, references: [], error: 'não foi possível remover a referência; tente novamente' }
+    } catch {
+      return { ok: false, references: [], error: 'não foi possível remover a referência; tente novamente' }
+    }
+  },
+
+  async revealBrowserReference(paneId: string, id: string): Promise<GuiBrowserReferenceRevealResult> {
+    const api = bridge()
+    if (!api?.revealBrowserReference) return { ok: false, error: 'Reabra o Synkora para localizar referências na página.' }
+    try {
+      const result = await api.revealBrowserReference(paneId, id)
+      if (result?.ok === true) return result
+      if (result?.ok === false && typeof result.error === 'string') return result
+    } catch { /* Keep IPC exceptions out of the user-facing message. */ }
+    return { ok: false, error: 'Não consegui mostrar o elemento agora. Tente novamente.' }
+  },
+
+  async consumeBrowserReferences(paneId: string, ids: string[]): Promise<GuiBrowserReferencesResult> {
+    const api = bridge()
+    if (!api?.consumeBrowserReferences) return { ok: false, references: [], error: NO_BRIDGE }
+    try {
+      const result = await api.consumeBrowserReferences(paneId, ids)
+      return result && typeof result.ok === 'boolean' && Array.isArray(result.references)
+        ? result : { ok: false, references: [], error: 'a mensagem foi enviada, mas a lista de referências não foi atualizada' }
+    } catch {
+      return { ok: false, references: [], error: 'a mensagem foi enviada, mas a lista de referências não foi atualizada' }
+    }
+  },
+
+  onBrowserReferencesChanged(cb: (payload: GuiBrowserReferencesPayload) => void): () => void {
+    return bridge()?.onBrowserReferencesChanged?.(payload => {
+      if (payload && typeof payload.paneId === 'string' && Array.isArray(payload.references)) cb(payload)
+    }) ?? (() => undefined)
   },
 
   async kill(paneId: string): Promise<{ ok: boolean }> {
@@ -821,14 +923,17 @@ export const guiApi = {
   async fileOpen(
     paneId: string,
     reference: string,
-    selectedPath?: string
+    selectedPath?: string,
+    mode?: GuiFileOpenMode
   ): Promise<GuiFileOpenResult> {
     const api = bridge()
     if (!api?.fileOpen) {
       return { ok: false, reason: 'unavailable', error: NO_BRIDGE }
     }
     try {
-      return await api.fileOpen(paneId, reference, selectedPath)
+      return mode === undefined
+        ? await api.fileOpen(paneId, reference, selectedPath)
+        : await api.fileOpen(paneId, reference, selectedPath, mode)
     } catch (error) {
       return {
         ok: false,

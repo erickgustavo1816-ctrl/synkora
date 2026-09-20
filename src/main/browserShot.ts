@@ -26,7 +26,9 @@
  * E a lei que veio da pesquisa de mercado: **o codex descarta imagem de MCP**
  * (`openai/codex#10334`). Então o produto desta tool é o CAMINHO EM TEXTO — que
  * o chat do dono renderiza (R36) — e a imagem inline só entra no `content[]`
- * quando o CLI do pane é o claude. Nenhuma tool emite `structuredContent`.
+ * quando o CLI do pane é o claude E a finalidade visual foi explícita.
+ * Artefatos para o dono não adicionam imagem ao contexto do modelo.
+ * Nenhuma tool emite `structuredContent`.
  *
  * O módulo não importa `electron`: fala com interfaces estruturais que o
  * `WebContents`/`NativeImage` reais satisfazem sem cast.
@@ -75,6 +77,9 @@ export interface BrowserShotRequest {
 
 export interface BrowserShotResult {
   text: string
+  /** Explicit outcome for local check runners; never infer success from prose. */
+  ok?: boolean
+  artifact?: { path: string; width: number; height: number; bytes: number; fresh: boolean }
   /** Preenchido só quando `inline` E o arquivo coube no teto. */
   image?: { data: string; mimeType: string }
 }
@@ -93,7 +98,7 @@ export const BROWSER_SHOT_DIR = '.synkora/browser'
 
 /** A receita de toda recusa de captura. Um lugar só. */
 export const BROWSER_SHOT_PANE_RECIPE =
-  'Receita: abra o painel BROWSER desta missão no dock (a view precisa estar ANEXADA à janela). Enquanto isso, browser_read e browser_probe continuam valendo — o DOM está vivo mesmo sem pixel.'
+  'Receita: confira se o painel BROWSER desta missão está aberto no dock. Se já estiver, continue com browser_read e browser_probe e informe que a captura de pixels está indisponível.'
 
 // ————————————————————————————— nome do arquivo —————————————————————————————
 
@@ -155,7 +160,7 @@ async function withTimeout<T>(work: Promise<T>, ms: number): Promise<T | 'timeou
 
 /**
  * Captura, grava e devolve o TEXTO (caminho relativo + medidas + carimbo).
- * A imagem só volta inline quando o chamador disse que o CLI é o claude.
+ * A imagem só volta inline quando o chamador pediu análise visual no claude.
  */
 export async function captureBrowserShot(
   capturer: ShotCapturer,
@@ -180,12 +185,14 @@ export async function captureBrowserShot(
   )
   if (captured === 'timeout') {
     return {
-      text: `a captura PENDUROU (mais de ${BROWSER_SHOT_CAPTURE_TIMEOUT_MS}ms sem retorno) — nesta condição a view do browser está FORA da árvore da janela, e a chamada só voltaria em 5-8 segundos. NADA foi gravado. ${BROWSER_SHOT_PANE_RECIPE}`
+      ok: false,
+      text: `a captura PENDUROU (mais de ${BROWSER_SHOT_CAPTURE_TIMEOUT_MS}ms sem retorno). Não foi possível obter pixels no prazo. NADA foi gravado. ${BROWSER_SHOT_PANE_RECIPE}`
     }
   }
   if (captured.isEmpty()) {
     return {
-      text: `a captura voltou VAZIA (a janela do app está escondida ou a view foi desanexada). NADA foi gravado. ${BROWSER_SHOT_PANE_RECIPE}`
+      ok: false,
+      text: `a captura voltou VAZIA. O compositor não entregou pixels. NADA foi gravado. ${BROWSER_SHOT_PANE_RECIPE}`
     }
   }
 
@@ -219,7 +226,11 @@ export async function captureBrowserShot(
     'CITE ESTE CAMINHO no chat para o dono ver a imagem — ele renderiza no fio da conversa.'
   ].filter(Boolean)
 
-  const result: BrowserShotResult = { text: lines.join('\n') }
+  const result: BrowserShotResult = {
+    ok: true,
+    text: lines.join('\n'),
+    artifact: { path: relative, width: size.width, height: size.height, bytes: bytes.byteLength, fresh: request.freshness.pulsing }
+  }
   if (request.inline) {
     if (bytes.byteLength <= BROWSER_SHOT_INLINE_MAX_BYTES) {
       result.image = {

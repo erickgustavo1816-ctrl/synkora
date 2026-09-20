@@ -1,5 +1,5 @@
 /**
- * O KIT `browser` DOS CHATS — as 11 ferramentas do browser embutido (H2 do
+ * O KIT `browser` DOS CHATS — ferramentas do browser embutido (H2 do
  * design `.synkora/reports/DESIGN_BROWSER_EMBUTIDO_2026-08-29.md`).
  *
  * Este módulo é a metade que o AGENTE vê. Ele traduz a identidade do pane em
@@ -17,15 +17,15 @@
  * 1. **Nenhuma tool emite `structuredContent`.** O codex DESCARTA `content[]`
  *    quando há `structuredContent` (`openai/codex#10334`) — o texto sumiria
  *    para metade da frota do dono. Tudo é `content: [{type:'text'}]`, e a
- *    ÚNICA exceção é a imagem inline do `browser_shot`, que só entra quando o
- *    CLI do pane é o claude (o codex descartaria a imagem).
+ *    exceção é imagem explicitamente pedida com purpose:"vision" em
+ *    browser_shot/browser_check, para o CLI claude. Codex usa o caminho local.
  *
  * 2. **Recusa é RESULTADO, nunca erro de protocolo**, e sempre nomeia a
  *    receita. `BROWSER_ENGINE_OFF` diz em letras maiúsculas que NADA foi
  *    aberto: um agente que racionalizasse "abri e falhou" contaria ao dono um
  *    QA que não aconteceu.
  *
- * 3. **O catálogo é fechado no boot.** Onze tools, não setenta: só as
+ * 3. **O catálogo é fechado no boot.** Um conjunto pequeno: só as
  *    definições do `chrome-devtools-mcp` custam ~17 000 tokens em TODO prompt
  *    (pesquisa de mercado §2), e cortar 80% do catálogo rendeu à Vercel 3,5×
  *    de velocidade. Kit enxuto vence kit completo.
@@ -42,19 +42,10 @@
  * passou a nomear o DONO de cada uma (consciência, não controle), e o ⚡ que
  * as tools acendem nomeia a ABA além da missão.
  */
-import { z } from 'zod'
-import type { McpServer } from '@modelcontextprotocol/server'
 import type { PaneIdentity } from './hub'
 import {
   BrowserDriverRegistry,
-  BROWSER_ACT_MAX_STEPS,
-  BROWSER_FIND_MAX_HITS,
-  BROWSER_READ_CEILING_CHARS,
-  BROWSER_READ_DEFAULT_MAX_CHARS,
-  BROWSER_WAIT_DEFAULT_MS,
-  BROWSER_WAIT_MAX_MS,
   type BrowserAction,
-  type BrowserActionKind,
   type BrowserDriverLog,
   type BrowserDriverSession,
   type BrowserPageLike,
@@ -62,7 +53,7 @@ import {
   type BrowserViewportOptions,
   type BrowserWaitOptions
 } from './browserDriver'
-import { PROBE_MAX_EXTRA_STYLES, type BrowserProbeParams } from './browserProbe'
+import type { BrowserProbeParams } from './browserProbe'
 // DE QUEM É A ABA (2026-09-01). Módulo PURO — importado, não espelhado: o
 // espelho abaixo existe para não depender do MANAGER (que arrasta Electron), e
 // `browserTabOwner.ts` não tem uma linha dele. Duas cópias do tipo do dono
@@ -74,18 +65,16 @@ import {
 import {
   BROWSER_VIEWPORT_MAX_WIDTH,
   BROWSER_VIEWPORT_MIN_WIDTH,
-  BROWSER_VIEWPORT_PRESETS,
   normalizeViewportMode,
   viewportReceipt,
   type BrowserViewportMode
 } from './browserViewport'
-import {
-  captureBrowserShot,
-  BROWSER_SHOT_DEFAULT_QUALITY,
-  BROWSER_SHOT_MAX_WIDTH,
-  type BrowserShotResult,
-  type ShotCapturer
-} from './browserShot'
+import type { BrowserShotResult, ShotCapturer } from './browserShot'
+import { captureBrowserToolShot, type BrowserToolShotInput } from './browserToolCapture'
+import { instrumentBrowserToolkit } from './browserToolMetrics'
+import { runBrowserCheck, validateBrowserCheck, type BrowserCheckInput, type BrowserCheckResult } from './browserCheck'
+import { browserResponseBudget, boundBrowserText } from './browserObservation'
+import { sanitizeGuiArtifactPreviewText } from './guiFileBrowserUrl'
 
 // ————————————————————————— espelho do contrato da H1 —————————————————————————
 //
@@ -183,7 +172,7 @@ export interface BrowserTarget {
 export interface GuiBrowserToolkit {
   /** D7 — sem `tabId`: com uma aba por identidade, focar a aba de outro não é
    *  ação do agente (o dono escolhe o que olhar no chrome). */
-  open(id: PaneIdentity, input: { url?: string }): Promise<string>
+  open(id: PaneIdentity, input: { url?: string; read?: BrowserReadOptions }): Promise<string>
   read(id: PaneIdentity, input: BrowserReadOptions): Promise<string>
   find(id: PaneIdentity, input: { query: string; role?: string }): Promise<string>
   act(
@@ -191,17 +180,8 @@ export interface GuiBrowserToolkit {
     input: { actions: BrowserAction[]; read?: BrowserReadOptions }
   ): Promise<string>
   probe(id: PaneIdentity, input: BrowserProbeParams): Promise<string>
-  shot(
-    id: PaneIdentity,
-    input: {
-      name?: string
-      ref?: number
-      selector?: string
-      format?: 'jpeg' | 'png'
-      quality?: number
-      maxWidth?: number
-    }
-  ): Promise<BrowserShotResult>
+  check(id: PaneIdentity, input: BrowserCheckInput): Promise<BrowserCheckResult>
+  shot(id: PaneIdentity, input: BrowserToolShotInput): Promise<BrowserShotResult>
   viewport(id: PaneIdentity, input: BrowserViewportOptions): Promise<string>
   console(
     id: PaneIdentity,
@@ -216,7 +196,7 @@ export interface GuiBrowserToolkit {
 }
 
 /**
- * Os ONZE nomes, em UM lugar só. A pré-sanção do claude
+ * Os nomes do catálogo, em UM lugar só. A pré-sanção do claude
  * (`GUI_DELEGATE_CLAUDE_ALLOWED_TOOLS`) e as suítes leem daqui — lista
  * duplicada à mão é exatamente como uma tool nova volta a levantar card de
  * permissão para o dono no gesto que ele acabou de pedir (lição da R14).
@@ -226,6 +206,7 @@ export const BROWSER_TOOL_NAMES: readonly string[] = [
   'browser_read',
   'browser_find',
   'browser_act',
+  'browser_check',
   'browser_probe',
   'browser_shot',
   'browser_viewport',
@@ -367,14 +348,14 @@ export function buildGuiBrowserTools(deps: GuiBrowserToolsDeps): GuiBrowserToolk
     const lines = tabs.map((tab) => {
       const marks = `${tab.active ? '▸' : ' '}${tab.driving ? '⚡' : ' '}`
       const mine = tab.tabId === ownTabId ? '  ← a SUA' : ''
-      return `${marks} ${browserTabOwnerLabel(tab.owner)}: ${tab.title || tab.url || 'em branco'}${mine}`
+      return sanitizeGuiArtifactPreviewText(`${marks} ${browserTabOwnerLabel(tab.owner)}: ${tab.title || tab.url || 'em branco'}${mine}`)
     })
     return `\n\nabas desta missão (▸ = a que o dono está vendo · ⚡ = sendo dirigida):\n${lines.join(
       '\n'
     )}`
   }
 
-  return {
+  const toolkit: GuiBrowserToolkit = {
     async open(id, input) {
       const target = deps.resolveTarget(id)
       if (!target) return BROWSER_NO_MISSION
@@ -390,10 +371,12 @@ export function buildGuiBrowserTools(deps: GuiBrowserToolsDeps): GuiBrowserToolk
         )
       } catch (error) {
         return `não consegui abrir o browser desta missão: ${
-          error instanceof Error ? error.message : String(error)
-        }. NADA foi aberto.`
+          sanitizeGuiArtifactPreviewText(error instanceof Error ? error.message : String(error))
+        }. NADA foi aberto. Receita: chame browser_open com a URL desta missão para tentar novamente.`
       }
       let initial: string
+      let loaded = false
+      const budget = browserResponseBudget(input.read)
       let stage: 'attach' | 'load' | 'read' = 'attach'
       try {
         markDriving(target.missionId, tab.tabId)
@@ -405,11 +388,21 @@ export function buildGuiBrowserTools(deps: GuiBrowserToolsDeps): GuiBrowserToolk
         const deadline = Date.now() + 8_000
         while (Date.now() < deadline) {
           const state = await session.readyState()
-          if (state === 'complete' || state === 'interactive') break
+          if (state === 'complete' || state === 'interactive') { loaded = true; break }
           await new Promise((resolve) => setTimeout(resolve, 120))
         }
         stage = 'read'
-        initial = await session.read({ filter: 'all' })
+        const blank = tab.webContents.getURL() === 'about:blank'
+          ? 'a SUA aba está em branco. Receita: chame browser_open com a URL que você quer verificar nesta missão. Nenhuma página do projeto foi verificada.\n\n'
+          : ''
+        const loading = loaded ? '' : 'CARREGAMENTO EM ANDAMENTO: esta observação pode ser parcial. Receita: browser_wait com selector/text e depois browser_read.\n'
+        const before = boundBrowserText(blank + loading, Math.min(300, Math.max(0, budget - 200)))
+        const tabs = boundBrowserText(tabsBlock(target, tab.tabId), Math.min(600, Math.max(0, budget - before.length - 200)), 'browser_open com read.responseMaxChars maior para listar todas as abas')
+        // Reserve wrapper text BEFORE observing. Truncating afterward could expose
+        // a baseline id while silently withholding part of that observation.
+        const observation = await session.observe({ ...input.read, responseMaxChars: budget - before.length - tabs.length })
+        if (!observation.ok) throw new Error('initial observation incomplete')
+        initial = `${before}${observation.text}${tabs}`
       } catch {
         // A aba já nasceu: dizer "NADA foi aberto" seria falso. CDP pode cair
         // numa troca de página; a receita retoma só a aba desta identidade.
@@ -429,14 +422,10 @@ export function buildGuiBrowserTools(deps: GuiBrowserToolsDeps): GuiBrowserToolk
         detail: {
           missionId: target.missionId,
           tabId: tab.tabId,
-          url: tab.webContents.getURL().slice(0, 200),
           owner: target.owner
         }
       })
-      const blank = tab.webContents.getURL() === 'about:blank'
-        ? 'a SUA aba está em branco. Receita: chame browser_open com a URL que você quer verificar nesta missão. Nenhuma página do projeto foi verificada.\n\n'
-        : ''
-      return `${blank}${initial}${tabsBlock(target, tab.tabId)}`
+      return initial
     },
 
     read: (id, input) => withSession(id, (session) => session.read(input), failText),
@@ -451,56 +440,79 @@ export function buildGuiBrowserTools(deps: GuiBrowserToolsDeps): GuiBrowserToolk
     async shot(id, input) {
       return withSession<BrowserShotResult>(
         id,
-        async (session, target, tab) => {
-          // A guarda da H2/H1 antes de qualquer trabalho: com a view fora da
-          // árvore ou a janela escondida, a captura PENDURA (5-8s medidos) e o
-          // agente perde a rodada. Recusar em 1ms nomeando a receita é o
-          // comportamento correto — e o DOM continua vivo para read/probe.
-          const readiness = deps.manager.captureReadiness?.(target.missionId, tab.tabId)
-          if (readiness && !readiness.ok) {
-            return { text: `${readiness.error} NADA foi gravado.` }
-          }
-          let clip: { x: number; y: number; width: number; height: number } | undefined
-          let clipLabel: string | undefined
-          if (input.ref !== undefined || input.selector) {
-            const found = await session.rectFor({
-              ...(input.ref !== undefined ? { ref: input.ref } : {}),
-              ...(input.selector ? { selector: input.selector } : {})
-            })
-            if ('error' in found) return { text: `não consegui recortar: ${found.error}` }
-            const rect = {
-              x: Math.max(0, Math.round(found.rect.x)),
-              y: Math.max(0, Math.round(found.rect.y)),
-              width: Math.round(found.rect.width),
-              height: Math.round(found.rect.height)
+        (session, target, tab) => captureBrowserToolShot({
+          session,
+          capturer: tab.webContents,
+          root: target.root,
+          missionId: target.missionId,
+          title: tab.webContents.getTitle(),
+          url: tab.webContents.getURL(),
+          cli: deps.cliOf(id),
+          readiness: deps.manager.captureReadiness?.(target.missionId, tab.tabId)
+        }, input),
+        (reason) => ({ ok: false, text: reason })
+      )
+    },
+
+    async check(id, input) {
+      const invalid = validateBrowserCheck(input)
+      const fail = (text: string): BrowserCheckResult => ({ ok: false, text, localSteps: 0, completedScenarios: 0 })
+      if (invalid) return fail(`browser_check recusado: ${invalid}. Receita: corrija o roteiro; NENHUM passo foi executado.`)
+      const resolved = deps.resolveTarget(id)
+      if (!resolved) return fail(BROWSER_NO_MISSION)
+      const target = { ...resolved, owner: { ...resolved.owner } }
+      const paneId = id.paneId
+      const role = id.role
+      // Open only this identity's tab. A recipe with no URL reuses it; it never borrows the active tab.
+      let tab = ownTab(target)
+      if (input.url || !tab) {
+        try {
+          tab = await deps.manager.ensureTab(target.missionId, target.projectId, input.url, target.owner)
+        } catch { return fail('não consegui abrir a SUA aba. Receita: browser_open com a URL desta missão; nenhuma verificação foi concluída.') }
+      }
+      const checkedTab = tab
+      let expectedWidth: BrowserViewportMode | undefined
+      try {
+        markDriving(target.missionId, checkedTab.tabId)
+        const session = registry.for(checkedTab.webContents)
+        await session.ensureAttached()
+        return await runBrowserCheck({
+          driver: session,
+          guard: () => {
+            const currentTarget = deps.resolveTarget(id)
+            if (!currentTarget || currentTarget.missionId !== target.missionId ||
+              currentTarget.projectId !== target.projectId || currentTarget.root !== target.root ||
+              currentTarget.owner.paneId !== target.owner.paneId || currentTarget.owner.kind !== target.owner.kind ||
+              id.paneId !== paneId || id.role !== role) {
+              return { ok: false, error: 'o vínculo desta identidade com a missão mudou; interrompi o roteiro. Receita: browser_open no contexto atual antes de nova verificação.' }
             }
-            if (rect.width <= 0 || rect.height <= 0) {
-              return {
-                text: `o alvo do recorte tem tamanho ZERO (${rect.width}x${rect.height}) — ele não está pintando nada. Receita: chame browser_probe no mesmo alvo para ver por quê (display:none? cortado por overflow?).`
-              }
+            const current = ownTab(target)
+            if (!current || current.tabId !== checkedTab.tabId || current.webContents !== checkedTab.webContents || current.webContents.isDestroyed()) {
+              return { ok: false, error: 'a SUA aba mudou ou fechou; interrompi o roteiro. Receita: browser_open e reveja o estado antes de repetir.' }
             }
-            clip = rect
-            clipLabel = found.label
-          }
-          // LEI 2: o carimbo de frescor é medido ANTES da captura, sempre.
-          const freshness = await session.freshness()
-          return captureBrowserShot(tab.webContents, {
+            if (expectedWidth !== undefined && deps.manager.viewportOf && deps.manager.viewportOf(target.missionId, checkedTab.tabId) !== expectedWidth) {
+              return { ok: false, error: 'a largura foi alterada fora deste roteiro; interrompi para preservar o controle do dono. Receita: confirme a largura em browser_read antes de novo browser_check.' }
+            }
+            return { ok: true }
+          },
+          viewport: (width) => {
+            const result = deps.manager.setViewportMode?.(target.missionId, width, 'agent', checkedTab.tabId)
+            if (!result) return { ok: false, error: 'este harness não controla a largura. Receita: use browser_viewport após atualizar o app; nenhuma largura foi emulada.' }
+            if (result.ok) expectedWidth = width
+            return result
+          },
+          capture: (shot) => captureBrowserToolShot({
+            session,
+            capturer: checkedTab.webContents,
             root: target.root,
             missionId: target.missionId,
-            ...(input.name ? { name: input.name } : {}),
-            title: tab.webContents.getTitle(),
-            url: tab.webContents.getURL(),
-            ...(input.format ? { format: input.format } : {}),
-            ...(input.quality !== undefined ? { quality: input.quality } : {}),
-            ...(input.maxWidth !== undefined ? { maxWidth: input.maxWidth } : {}),
-            ...(clip ? { clip } : {}),
-            ...(clipLabel ? { clipLabel } : {}),
-            inline: deps.cliOf(id) === 'claude',
-            freshness
-          })
-        },
-        (reason) => ({ text: reason })
-      )
+            title: checkedTab.webContents.getTitle(),
+            url: checkedTab.webContents.getURL(),
+            cli: deps.cliOf(id),
+            readiness: deps.manager.captureReadiness?.(target.missionId, checkedTab.tabId)
+          }, shot)
+        }, input)
+      } catch { return fail('a SUA aba está aberta, mas o motor não concluiu a verificação. Receita: browser_read ou browser_open para recuperar a mesma aba; nenhum QA foi confirmado.') }
     },
 
     /**
@@ -570,374 +582,7 @@ export function buildGuiBrowserTools(deps: GuiBrowserToolsDeps): GuiBrowserToolk
 
     wait: (id, input) => withSession(id, (session) => session.wait(input), failText)
   }
+  return instrumentBrowserToolkit(toolkit, deps.resolveTarget, log)
 }
 
-// ————————————————————————————— o catálogo MCP —————————————————————————————
-
-type ToolText = { content: { type: 'text'; text: string }[] }
-type ToolContent = {
-  content: ({ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string })[]
-}
-
-function text(value: string): ToolText {
-  return { content: [{ type: 'text', text: value }] }
-}
-
-const refField = z
-  .number()
-  .int()
-  .min(1)
-  .optional()
-  .describe('o número que veio entre colchetes no browser_read desta página (ex.: [ref_7] → 7)')
-
-const selectorField = z
-  .string()
-  .min(1)
-  .max(300)
-  .optional()
-  .describe('seletor CSS, quando você prefere apontar sem passar pelo browser_read')
-
-const ACTION_KINDS: readonly BrowserActionKind[] = [
-  'click',
-  'double_click',
-  'right_click',
-  'hover',
-  'type',
-  'press',
-  'scroll',
-  'select',
-  'fill',
-  'clear'
-]
-
-/**
- * Registra o kit no servidor daquele pane. Chamado pelo `buildServer` dentro
- * dos retornos antecipados de `gui-delegator` e `ajudante` — quem não é um dos
- * dois nunca vê uma linha disto.
- *
- * `toolkit` ausente = as tools CONTINUAM no catálogo e respondem com a receita
- * (`BROWSER_ENGINE_OFF`). Tool que some entre um boot e outro é o pior
- * desfecho possível: o agente racionaliza a ausência em vez de ler o motivo.
- */
-export function registerBrowserKit(
-  server: McpServer,
-  toolkit: GuiBrowserToolkit | undefined,
-  identity: PaneIdentity
-): void {
-  const off = (): ToolText => text(BROWSER_ENGINE_OFF)
-
-  server.registerTool(
-    'browser_open',
-    {
-      description:
-        'ABRE A SUA ABA no browser desta missão numa URL e já devolve a leitura da página. É a primeira tool de todo QA visual: o painel BROWSER da missão aparece no dock do dono, sua aba nasce em primeiro plano e a partir daí ele vê tudo o que você faz. A ABA É SUA: você tem UMA nesta missão, e todas as outras tools do browser trabalham NELA. O dev tem a dele, cada ajudante tem a dele (e a porta de servidor dele) — ninguém navega a aba de ninguém. Idempotente: chamar de novo reusa a SUA aba morna, e só recarrega quando a URL muda. A sessão (cookies, logins) é do PROJETO e sobrevive entre missões: se o dono logou uma vez, você entra logado. Sem `url`, devolve a leitura da sua aba mais a lista das abas da missão com o dono de cada uma (é consciência, não controle: as outras você vê, não dirige). PROIBIDO abrir browser externo ou subir um playwright seu para testar UI: é para acabar com isso que este existe.',
-      inputSchema: {
-        url: z
-          .string()
-          .max(2_000)
-          .optional()
-          .describe(
-            'endereço a abrir (http/https, ou o localhost do dev server desta missão — se você é ajudante, a SUA porta). Ausente = mantém sua página atual; se ainda não tiver aba, abre em branco e pede a URL'
-          )
-      }
-    },
-    async ({ url }) => (toolkit ? text(await toolkit.open(identity, { ...(url ? { url } : {}) })) : off())
-  )
-
-  server.registerTool(
-    'browser_read',
-    {
-      description: `A SUA ABA EM TEXTO: uma linha por elemento, com \`[ref_N]\` em tudo o que se clica ou se digita. Lê SEMPRE a sua aba — nunca a que o dono está olhando, que pode ser a de outro. PREFIRA ESTA TOOL AO SCREENSHOT para conferir texto, estrutura e estado — ela é ordens de grandeza mais barata e é o que os dois CLIs leem igual. Os refs são ESTÁVEIS enquanto a página não navegar: reler devolve os mesmos números, e é por isso que você pode encadear browser_act sem re-ler. Navegou ou recarregou? Os refs viram pó e a próxima ação recusa mandando você reler. Teto de ${BROWSER_READ_DEFAULT_MAX_CHARS} caracteres por padrão, e o corte SE ANUNCIA com a receita para caber.`,
-      inputSchema: {
-        filter: z
-          .enum(['interactive', 'all'])
-          .optional()
-          .describe(
-            "'all' (padrão) traz texto e estrutura junto — é o que confere conteúdo; 'interactive' traz SÓ o que se clica/digita e é o corte barato numa página grande"
-          ),
-        scope: z
-          .string()
-          .max(300)
-          .optional()
-          .describe(
-            'seletor CSS para ler só um pedaço da tela (ex.: "main", ".dock-browser"). É o jeito certo de caber no teto sem perder o que importa'
-          ),
-        depth: z
-          .number()
-          .int()
-          .min(1)
-          .max(40)
-          .optional()
-          .describe('profundidade máxima da árvore (padrão 20)'),
-        maxChars: z
-          .number()
-          .int()
-          .min(500)
-          .max(BROWSER_READ_CEILING_CHARS)
-          .optional()
-          .describe(`teto de caracteres (padrão ${BROWSER_READ_DEFAULT_MAX_CHARS})`)
-      }
-    },
-    async (input) => (toolkit ? text(await toolkit.read(identity, input)) : off())
-  )
-
-  server.registerTool(
-    'browser_find',
-    {
-      description: `PROCURA na SUA aba por texto ou papel e devolve até ${BROWSER_FIND_MAX_HITS} elementos com ref e caixa. É o atalho barato: quando você sabe o que quer ("Salvar", "e-mail"), isto custa uma fração do browser_read inteiro. Nada casou? Aí sim leia a página — provavelmente ela não está no estado que você imagina.`,
-      inputSchema: {
-        query: z
-          .string()
-          .min(1)
-          .max(200)
-          .describe('trecho do texto ou do nome acessível (sem diferenciar maiúsculas)'),
-        role: z
-          .string()
-          .max(40)
-          .optional()
-          .describe('restringe ao papel (button, link, textbox, heading…)')
-      }
-    },
-    async ({ query, role }) =>
-      toolkit
-        ? text(await toolkit.find(identity, { query, ...(role ? { role } : {}) }))
-        : off()
-  )
-
-  server.registerTool(
-    'browser_act',
-    {
-      description: `AGE NA SUA ABA e JÁ DEVOLVE a leitura pós-ação — você não precisa de um browser_read separado depois. A lista é SEQUENCIAL e PARA NO PRIMEIRO ERRO: um formulário de dez campos é UMA chamada, não dez. Sempre uma LISTA, mesmo para uma ação só. Alvo por \`ref\` (do browser_read/browser_find) ou por coordenada \`x\`/\`y\`. Se o ponto do clique estiver COBERTO por outro elemento, o recibo diz quem recebeu — porque é isso que aconteceria com o dono clicando. Ref de antes de uma navegação recusa nomeando a receita. Teto de ${BROWSER_ACT_MAX_STEPS} passos por chamada.`,
-      inputSchema: {
-        actions: z
-          .array(
-            z.object({
-              action: z
-                .enum([ACTION_KINDS[0]!, ...ACTION_KINDS.slice(1)])
-                .describe(
-                  "click/double_click/right_click/hover (ponteiro) · type (digita no que tem foco ou no alvo) · press (tecla: Enter, Tab, Escape, ArrowDown, Ctrl+A…) · scroll · select (opção de um <select>) · fill (põe o valor direto no campo, com os eventos que React & cia escutam) · clear (esvazia)"
-                ),
-              ref: refField,
-              selector: selectorField,
-              x: z.number().optional().describe('coordenada X na viewport, quando não há ref'),
-              y: z.number().optional().describe('coordenada Y na viewport, quando não há ref'),
-              text: z.string().max(4_000).optional().describe('o que digitar (action:"type")'),
-              key: z
-                .string()
-                .max(40)
-                .optional()
-                .describe('a tecla ou o acorde (action:"press"): Enter, Tab, Escape, Ctrl+A, Shift+Tab'),
-              value: z
-                .string()
-                .max(4_000)
-                .optional()
-                .describe('o valor (action:"fill") ou a opção (action:"select")'),
-              direction: z
-                .enum(['up', 'down', 'left', 'right'])
-                .optional()
-                .describe('direção do scroll (padrão down)'),
-              amount: z.number().int().optional().describe('pixels do scroll (padrão 400)'),
-              clear: z
-                .boolean()
-                .optional()
-                .describe('em action:"type", esvazia o campo antes de digitar')
-            })
-          )
-          .min(1)
-          .max(BROWSER_ACT_MAX_STEPS)
-          .describe('os passos, na ordem em que devem acontecer'),
-        filter: z
-          .enum(['interactive', 'all'])
-          .optional()
-          .describe('o filtro da leitura pós-ação (mesmo do browser_read)'),
-        scope: z
-          .string()
-          .max(300)
-          .optional()
-          .describe('o escopo CSS da leitura pós-ação — use quando só uma parte da tela importa')
-      }
-    },
-    async ({ actions, filter, scope }) =>
-      toolkit
-        ? text(
-            await toolkit.act(identity, {
-              actions: actions as BrowserAction[],
-              read: { ...(filter ? { filter } : {}), ...(scope ? { scope } : {}) }
-            })
-          )
-        : off()
-  )
-
-  server.registerTool(
-    'browser_probe',
-    {
-      description:
-        'O VEREDITO VISUAL EM TEXTO — a tool que substitui "olhar a tela", sempre sobre a SUA aba. Sobre um elemento devolve: caixa (posição e tamanho), se está visível e dentro da viewport, CONTRASTE calculado pela WCAG contra o fundo EFETIVO (composto pelos ancestrais, com AA/AAA e o piso que faltou), TRANSBORDO (conteúdo maior que a caixa, texto cortado com reticências), CORTE por ancestral com overflow, quem está COBRINDO o ponto central, e os estilos computados que você pedir. Use isto — não screenshot — para responder "está torto?", "está cortado?", "dá para ler?": são números, e números não dependem de ninguém enxergar imagem.',
-      inputSchema: {
-        ref: refField,
-        selector: selectorField,
-        styles: z
-          .array(z.string().max(60))
-          .max(PROBE_MAX_EXTRA_STYLES)
-          .optional()
-          .describe(
-            'propriedades computadas extras, no nome CSS (ex.: "gap", "grid-template-columns"). O conjunto base (cor, fundo, fonte, espaçamento, posição, overflow) já vem sempre'
-          )
-      }
-    },
-    async (input) => (toolkit ? text(await toolkit.probe(identity, input)) : off())
-  )
-
-  server.registerTool(
-    'browser_shot',
-    {
-      description: `FOTOGRAFA A SUA ABA em ARQUIVO dentro do worktree e devolve o CAMINHO (a foto é da sua aba mesmo quando o dono está olhando outra) — cite esse caminho no chat e o DONO vê a imagem no fio da conversa. Isto é para ELE olhar: para VOCÊ decidir, use browser_probe (fato em texto) e browser_read. \`ref\`/\`selector\` recortam UM elemento. JPEG q${BROWSER_SHOT_DEFAULT_QUALITY} por padrão, largura no teto de ${BROWSER_SHOT_MAX_WIDTH}px. Todo recibo traz um CARIMBO DE FRESCOR: se o compositor não estiver pulsando (painel oculto), o aviso é explícito e você NÃO deve aprovar tela por aquela imagem.`,
-      inputSchema: {
-        name: z
-          .string()
-          .max(60)
-          .optional()
-          .describe('apelido curto que vira o nome do arquivo (ex.: "dock-colapsado")'),
-        ref: refField,
-        selector: selectorField,
-        format: z
-          .enum(['jpeg', 'png'])
-          .optional()
-          .describe('jpeg (padrão, barato) ou png (sem perda, para diferença fina de pixel)'),
-        quality: z
-          .number()
-          .int()
-          .min(20)
-          .max(100)
-          .optional()
-          .describe(`qualidade do JPEG (padrão ${BROWSER_SHOT_DEFAULT_QUALITY})`),
-        maxWidth: z
-          .number()
-          .int()
-          .min(200)
-          .max(BROWSER_SHOT_MAX_WIDTH)
-          .optional()
-          .describe(`teto de largura em pixels (padrão e máximo ${BROWSER_SHOT_MAX_WIDTH})`)
-      }
-    },
-    async (input): Promise<ToolContent> => {
-      if (!toolkit) return off()
-      const result = await toolkit.shot(identity, input)
-      const content: ToolContent['content'] = [{ type: 'text', text: result.text }]
-      if (result.image) {
-        content.push({ type: 'image', data: result.image.data, mimeType: result.image.mimeType })
-      }
-      return { content }
-    }
-  )
-
-  server.registerTool(
-    'browser_viewport',
-    {
-      description:
-        'MUDA A LARGURA QUE A SUA PÁGINA ENXERGA e o TEMA em uma ida (a largura é da SUA aba; a aba do dev e a de cada ajudante têm a delas): preset auto/mobile/tablet/desktop, `width` livre, e `colorScheme` claro/escuro (o `prefers-color-scheme` de verdade, não um truque de CSS). É assim que o QA de responsivo e o de tema deixam de ser duas rodadas. IMPORTANTE: o painel do browser é ESTREITO, então sem isto toda página responsiva te entrega o layout de celular — peça `desktop` antes de julgar qualquer tela. A largura NUNCA é ampliada: quando ela cabe na moldura a página fica em TAMANHO REAL, centralizada, com faixas do app dos lados (é uma moldura de dispositivo — o que estiver quebrado dentro dela é da PÁGINA); quando não cabe, a página é ESCALADA para caber. As medidas de browser_probe seguem sempre em pixels lógicos. O DONO vê esta mesma largura no seletor do chrome do browser (AUTO · 375 · 768 · 1280) e pode mudá-la a qualquer momento: é um estado só, compartilhado — não existe emulação escondida dele.',
-      inputSchema: {
-        preset: z
-          .enum(['auto', 'mobile', 'tablet', 'desktop'])
-          .optional()
-          .describe(
-            `auto = a largura real da moldura (sem emulação) · mobile ${BROWSER_VIEWPORT_PRESETS[0]} · tablet ${BROWSER_VIEWPORT_PRESETS[1]} · desktop ${BROWSER_VIEWPORT_PRESETS[2]}`
-          ),
-        width: z
-          .number()
-          .int()
-          .min(BROWSER_VIEWPORT_MIN_WIDTH)
-          .max(BROWSER_VIEWPORT_MAX_WIDTH)
-          .optional()
-          .describe('largura lógica à mão, quando nenhum preset serve (vence o `preset`)'),
-        colorScheme: z
-          .enum(['light', 'dark'])
-          .optional()
-          .describe('emula prefers-color-scheme — o tema que a página realmente enxerga')
-      }
-    },
-    async (input) => (toolkit ? text(await toolkit.viewport(identity, input)) : off())
-  )
-
-  server.registerTool(
-    'browser_console',
-    {
-      description:
-        'O CONSOLE da SUA aba: logs, avisos, erros e exceções não capturadas, do momento em que o motor anexou nela. Chame SEMPRE que a tela não fez o que você esperava — metade dos "não funcionou" está escrita aqui em letras vermelhas.',
-      inputSchema: {
-        onlyErrors: z.boolean().optional().describe('só erro e aviso'),
-        pattern: z.string().max(200).optional().describe('filtra por trecho da mensagem'),
-        limit: z.number().int().min(1).max(300).optional().describe('quantas últimas mostrar (padrão 50)')
-      }
-    },
-    async (input) => (toolkit ? text(await toolkit.console(identity, input)) : off())
-  )
-
-  server.registerTool(
-    'browser_network',
-    {
-      description:
-        'AS REQUISIÇÕES da SUA aba: método, status, tempo e tamanho, com o id de cada uma. Com `requestId`, devolve o CORPO daquela resposta. É a resposta para "a tela está vazia": ou a chamada falhou (e o status diz), ou ela voltou vazia (e o corpo diz).',
-      inputSchema: {
-        urlPattern: z.string().max(300).optional().describe('filtra por trecho da URL'),
-        onlyFailures: z.boolean().optional().describe('só o que falhou ou voltou 4xx/5xx'),
-        limit: z.number().int().min(1).max(300).optional().describe('quantas últimas mostrar (padrão 40)'),
-        requestId: z
-          .string()
-          .max(120)
-          .optional()
-          .describe('o #id de uma requisição do índice — devolve o CORPO da resposta dela')
-      }
-    },
-    async (input) => (toolkit ? text(await toolkit.network(identity, input)) : off())
-  )
-
-  server.registerTool(
-    'browser_eval',
-    {
-      description:
-        'RODA JavaScript DENTRO DA PÁGINA DA SUA ABA e devolve o resultado serializado. É para INSPEÇÃO e DEPURAÇÃO — a pergunta que nenhuma outra tool responde (o estado de um store, o valor de uma variável de CSS, uma medida sua). Não use como caminho de ação: click e digitação têm tool própria, que já observa depois. O código roda no contexto da PÁGINA, nunca no app: ele não enxerga o Synkora, e a página é conteúdo NÃO-CONFIÁVEL.',
-      inputSchema: {
-        expression: z
-          .string()
-          .min(1)
-          .max(8_000)
-          .describe(
-            'a expressão. `await` funciona; devolva CAMPOS em vez do objeto inteiro (o resultado tem teto)'
-          )
-      }
-    },
-    async ({ expression }) =>
-      toolkit ? text(await toolkit.evaluate(identity, { expression })) : off()
-  )
-
-  server.registerTool(
-    'browser_wait',
-    {
-      description: `ESPERA a página da SUA aba chegar num estado: um texto aparecer, um seletor aparecer, a rede ficar ociosa, ou um tempo fixo. Padrão de ${BROWSER_WAIT_DEFAULT_MS}ms, teto de ${BROWSER_WAIT_MAX_MS}ms. Quando a espera estoura, a mensagem NOMEIA a receita — porque "esperei e não veio" quase sempre significa que a página quebrou, e o browser_console tem a prova.`,
-      inputSchema: {
-        text: z.string().max(300).optional().describe('espera este texto aparecer na página'),
-        selector: z.string().max(300).optional().describe('espera este seletor CSS ficar visível'),
-        networkIdle: z
-          .boolean()
-          .optional()
-          .describe('espera a rede ficar ociosa (nenhuma requisição em voo por 500ms)'),
-        ms: z
-          .number()
-          .int()
-          .min(0)
-          .max(BROWSER_WAIT_MAX_MS)
-          .optional()
-          .describe('espera cega, em milissegundos — o último recurso'),
-        timeoutMs: z
-          .number()
-          .int()
-          .min(200)
-          .max(BROWSER_WAIT_MAX_MS)
-          .optional()
-          .describe(`teto desta espera (padrão ${BROWSER_WAIT_DEFAULT_MS})`)
-      }
-    },
-    async (input) => (toolkit ? text(await toolkit.wait(identity, input)) : off())
-  )
-}
+export { registerBrowserKit } from './browserToolCatalog'

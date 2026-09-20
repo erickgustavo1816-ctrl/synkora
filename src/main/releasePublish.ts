@@ -115,9 +115,11 @@ export interface ReleasePublishSignal {
 }
 
 /** A linha PUBLICAÇÃO da fotografia (release_status). */
-export function releasePublishStatusLine(publish: ReleasePublishSignal): string {
+export function releasePublishStatusLine(publish: ReleasePublishSignal, released = false): string {
   if (!publish.hasReleaseScript)
-    return 'PUBLICAÇÃO: sem pipeline declarado (nenhum script `release` no package.json) — a subida é só código na main.'
+    return 'PUBLICAÇÃO: nenhum script `release` no package.json. A subida envia código à branch de destino; a hospedagem pode publicar por integração Git. Verifique a configuração e o resultado do deploy antes de declarar PROD publicado.'
+  if (released)
+    return 'PUBLICAÇÃO: a versão já subiu e o produto declara caixa (npm run release). Confira a entrega e se as correções exigem reconstrução/publicação autorizada; commit e push não confirmam instalador publicado.'
   const versionPart =
     publish.manifestVersion && publish.expectedVersion
       ? publish.manifestVersion === publish.expectedVersion

@@ -20,7 +20,9 @@ const universe = readFileSync(
 )
 const home = readFileSync(new URL('../src/renderer/src/screens/Home.tsx', import.meta.url), 'utf8')
 const settings = readFileSync(new URL('../src/renderer/src/screens/Settings.tsx', import.meta.url), 'utf8')
-const main = readFileSync(new URL('../src/renderer/src/main.tsx', import.meta.url), 'utf8')
+const main = readFileSync(new URL('../src/renderer/src/mainApp.tsx', import.meta.url), 'utf8')
+const bootstrap = readFileSync(new URL('../src/renderer/src/main.tsx', import.meta.url), 'utf8')
+const phone = readFileSync(new URL('../src/renderer/src/components/MobilePhone.tsx', import.meta.url), 'utf8')
 
 test('falha de painel é contida, recuperável e não revela a exceção', () => {
   assert.match(boundary, /getDerivedStateFromError/)
@@ -66,6 +68,9 @@ test('painéis do board e do canvas ficam dentro do limite isolado', () => {
   assert.match(home, /paneId="overlay:home:new-universe"/)
   assert.match(settings, /paneId="settings:accounts"/)
   assert.match(main, /paneId="overlay:progress"/)
+  assert.match(phone, /<GuiPanelErrorBoundary[\s\S]*<MobileViewport/)
+  assert.match(bootstrap, /query\.get\('view'\) === 'mobile-phone'[\s\S]*import\('\.\/components\/MobilePhone'\)[\s\S]*else\s*\{\s*void import\('\.\/mainApp'\)/)
+  assert.doesNotMatch(bootstrap, /import .* from ['"]\.\/App|installDevMock\(|startRendererPerfWatchdog\(/)
 })
 
 test('boundary React mantém o irmão, remonta no retry e recupera por paneId', async () => {

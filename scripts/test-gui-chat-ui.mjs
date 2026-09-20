@@ -267,10 +267,10 @@ test('id vindo de fora da geração só é aceito quando está livre no fio', as
 
 test('chat reconhece arquivos sem capturar HTTPS, versao ou email', () => {
   const text =
-    'Veja src/main/app.ts, foo.ts e README. Versão 2.0; me@example.com; https://example.com/docs/site.ts.'
+    'Veja src/main/app.ts, foo.ts, README, preview.xhtml e clip.mp4. Versão 2.0; me@example.com; https://example.com/docs/site.ts.'
   assert.deepEqual(
     findGuiFileTokens(text).map((token) => token.value),
-    ['src/main/app.ts', 'foo.ts', 'README']
+    ['src/main/app.ts', 'foo.ts', 'README', 'preview.xhtml', 'clip.mp4']
   )
   assert.equal(
     guiInlineCodeFileToken('C:\\Work tree\\src\\app.ts'),
@@ -282,9 +282,9 @@ test('chat reconhece arquivos sem capturar HTTPS, versao ou email', () => {
     new URL('../src/renderer/src/components/GuiMarkdown.tsx', import.meta.url),
     'utf8'
   )
-  assert.match(markdown, /linkifyGuiFileReferences\(routeChatLinksExternally\(sanitized\)\)/u)
+  assert.match(markdown, /linkifyGuiFileReferences\(routeChatLinksExternally\(sanitized, fileLinks\.references\)\)/u)
   assert.match(markdown, /parent\.closest\('a, button, pre'\)/u)
-  assert.match(markdown, /guiApi\.fileOpen\(paneId, reference, selectedPath\)/u)
+  assert.ok(markdown.includes('guiApi.fileOpen(paneId, reference, selectedPath, mode)'))
 })
 
 test('autocomplete slash fecha a conclusao e so reabre para outra consulta valida', () => {
@@ -475,7 +475,12 @@ test('anexos entram no rascunho sem enviar e respeitam o teto local', () => {
   assert.equal(base64FromDataUrl('data:text/plain;base64,YWJj'), 'YWJj')
   assert.equal(base64FromDataUrl('YWJj'), null)
   assert.equal(guiAttachmentSizeProblem('foto.png', 10 * 1024 * 1024), null)
-  assert.match(guiAttachmentSizeProblem('video.mov', 10 * 1024 * 1024 + 1) ?? '', /10 MB/u)
+  assert.equal(guiAttachmentSizeProblem('documento.txt', 10 * 1024 * 1024 + 1), null)
+  assert.equal(guiAttachmentSizeProblem('documento.txt', 50 * 1024 * 1024), null)
+  assert.match(guiAttachmentSizeProblem('video.mov', 50 * 1024 * 1024 + 1) ?? '', /50 MB/u)
+  const largeBatch = planGuiAttachmentBatch([{ name: 'documento.txt', size: 50 * 1024 * 1024 }])
+  assert.equal(largeBatch.accepted.length, 1)
+  assert.deepEqual(largeBatch.errors, [])
   const batch = planGuiAttachmentBatch([
     ...Array.from({ length: 20 }, (_, index) => ({ name: `${index}.txt`, size: 1 })),
     { name: 'extra.txt', size: 1 }
@@ -898,7 +903,7 @@ test('o chat pronto convida a escrever e diz que o briefing vai junto', () => {
 
   // O vazio deixou de ser suprimido pela injeção: o pane que nasce mudo tem de
   // dizer o que fazer, senão lê como chat quebrado com um `<details>` em cima.
-  assert.match(pane, /const empty =\s*gui\.items\.length === 0 && !gui\.stream && !gui\.perm && !awaitingCard/u)
+  assert.match(pane, /const empty =\s*gui\.items\.length === 0 && !gui\.queued && !gui\.stream && !gui\.perm && !awaitingCard/u)
   assert.match(pane, /const briefingPending =/u)
   assert.match(pane, /ambiente pronto — escreva para começar/u)
   assert.match(pane, /o briefing desta missão vai junto com a sua primeira mensagem/u)
@@ -1109,7 +1114,7 @@ test('a remontagem para respawn não pinta o medidor com contexto de conversa mo
   assert.match(respawn, /contextTokens: null,\s*contextWindow: null/u)
 })
 
-test('duas mensagens Claude mantêm gerações FIFO após o primeiro resultado', () => {
+test('duas mensagens Claude mantêm gerações FIFO após o primeiro resultado', async t => {
   let pending = enqueueGuiTurn([], 41)
   pending = enqueueGuiTurn(pending, 42)
   assert.deepEqual(pending, [41, 42])
@@ -1121,11 +1126,41 @@ test('duas mensagens Claude mantêm gerações FIFO após o primeiro resultado',
     pending: []
   })
 
-  const claude = readFileSync(
-    new URL('../src/main/maestroSession.ts', import.meta.url),
-    'utf8'
+  const { buildSync } = await import('esbuild')
+  const { createRequire } = await import('node:module')
+  const compiled = buildSync({
+    stdin: { contents: `
+      export { MaestroSession } from './src/main/maestroSession';
+      export { GuiClaudeTaskRegistry } from './src/main/guiClaudeTasks';
+    `, resolveDir: process.cwd(), loader: 'ts' },
+    bundle: true, platform: 'node', format: 'cjs', write: false
+  }).outputFiles[0].text
+  const loaded = { exports: {} }
+  new Function('require', 'module', 'exports', compiled)(
+    createRequire(import.meta.url), loaded, loaded.exports
   )
-  assert.match(claude, /continues: this\.activeTurnGeneration !== null/u)
+  const { MaestroSession, GuiClaudeTaskRegistry } = loaded.exports
+  const events = []
+  // Real parser, synthetic process state: no CLI, account or storage is opened.
+  const session = Object.create(MaestroSession.prototype)
+  Object.assign(session, {
+    opts: {}, claudeTasks: new GuiClaudeTaskRegistry(), pending: new Map(),
+    pendingTurnGenerations: pending, activeTurnGeneration: 41, turnGeneration: 42,
+    interruptGeneration: null, interruptRequestId: null, interruptTimer: null,
+    emit: event => events.push(event), resetIdle() {}
+  })
+  t.after(() => session.clearInterruptGuard())
+  session.claudeTasks.noteStarted('preview', 'preview-tool', { taskType: 'local_bash' })
+  session.handleLine(JSON.stringify({ type: 'result', is_error: false }))
+  assert.deepEqual(session.pendingTurnGenerations, [42])
+  assert.equal(session.activeTurnGeneration, 42)
+  assert.equal(events.at(-1).type, 'result')
+  assert.equal(events.at(-1).continues, true, 'the second queued request remains active')
+  session.handleLine(JSON.stringify({ type: 'result', is_error: false }))
+  assert.deepEqual(session.pendingTurnGenerations, [])
+  assert.equal(session.activeTurnGeneration, null)
+  assert.equal(events.at(-1).continues, false, 'a preview alone does not prolong the final result')
+  assert.ok(session.claudeTasks.taskFor('preview'), 'the preview remains tracked after both results')
   const store = readFileSync(new URL('../src/renderer/src/store.ts', import.meta.url), 'utf8')
   assert.match(store, /status === 'idle' && evt\.continues \? 'working' : status/u)
   assert.equal(shouldArmGuiTurnWatchdog(0, true, false), true)
@@ -1372,7 +1407,7 @@ test('R23.2 — enviar no pane morto reabre a conversa e só então manda a mens
   assert.match(send, /if \(!spawnRef\.current\.configDir\)[\s\S]{0,400}?return false/u)
   assert.match(send, /escolha uma conta no cabeçalho e envie de novo/u)
   // R33: o envio do renascimento leva `outgoing` (mensagem + citações do fio).
-  assert.match(send, /sendGuiMessage\(paneId, outgoing, undefined, attachments, true\)/u)
+  assert.match(send, /sendGuiMessage\(paneId, outgoing, undefined, attachments, true, referenceSnapshot\)/u)
   assert.match(send, /reabrir a conversa/u, 'a falha do renascimento fala, com receita')
 
   // O código da morte vira ESTADO: sem ele o placeholder não teria o que dizer.
@@ -1902,13 +1937,9 @@ test('cópia só aparece na fala assistente que fecha o turno', () => {
   )
 })
 
-test('interrupção sem confirmação e troca durante turno falham fechadas', () => {
+test('interrupção sem confirmação e troca durante turno falham fechadas', async t => {
   const codex = readFileSync(
     new URL('../src/main/codexSession.ts', import.meta.url),
-    'utf8'
-  )
-  const claude = readFileSync(
-    new URL('../src/main/maestroSession.ts', import.meta.url),
     'utf8'
   )
   const pane = readFileSync(
@@ -1930,18 +1961,75 @@ test('interrupção sem confirmação e troca durante turno falham fechadas', ()
   assert.match(codex, /queueMicrotask\(\(\) =>/u)
   assert.match(codex, /this\.pendingSendOperations\.size > 0/u)
   assert.match(codex, /if \(resp\.error \|\| !thread\?\.id\)[\s\S]*this\.kill\(\)/u)
-  assert.match(claude, /INTERRUPT_CONFIRM_TIMEOUT/u)
-  assert.match(claude, /if \(this\.activeTurnGeneration === null\) return false/u)
-  assert.match(
-    claude,
-    /this\.interruptGeneration === generation[\s\S]*this\.interruptRequestId !== null[\s\S]*this\.interruptTimer !== null[\s\S]*return true/u
+  const { buildSync } = await import('esbuild')
+  const { createRequire } = await import('node:module')
+  const compiled = buildSync({
+    stdin: { contents: `
+      export { MaestroSession } from './src/main/maestroSession';
+      export { GuiClaudeTaskRegistry } from './src/main/guiClaudeTasks';
+      export { GUI_INTERRUPT_ESCALATION_NOTE } from './src/main/guiInterruptEscalation';
+    `, resolveDir: process.cwd(), loader: 'ts' },
+    bundle: true, platform: 'node', format: 'cjs', write: false
+  }).outputFiles[0].text
+  const loaded = { exports: {} }
+  new Function('require', 'module', 'exports', compiled)(
+    createRequire(import.meta.url), loaded, loaded.exports
   )
-  assert.match(claude, /resp\.request_id === this\.interruptRequestId/u)
-  // R23.1 — o estouro do timeout de confirmação DERRUBA o processo, e os dois
-  // motores falam a MESMA nota (o par mora em guiInterruptEscalation).
-  assert.match(claude, /this\.failInterrupt\(generation, GUI_INTERRUPT_ESCALATION_NOTE\)/u)
-  assert.match(claude, /text: withGuiInterruptRecipe\(message\)/u)
-  assert.match(claude, /this\.interruptGeneration === generation[\s\S]*this\.clearInterruptGuard\(\)/u)
+  const { MaestroSession, GuiClaudeTaskRegistry, GUI_INTERRUPT_ESCALATION_NOTE } = loaded.exports
+  const fixture = (generation = null) => {
+    const writes = [], events = []
+    const session = Object.create(MaestroSession.prototype)
+    Object.assign(session, {
+      killed: false, closed: false, child: { exitCode: null, signalCode: null }, opts: {},
+      claudeTasks: new GuiClaudeTaskRegistry(), controlWaiters: new Map(),
+      pendingTurnGenerations: generation === null ? [] : [generation],
+      activeTurnGeneration: generation, turnGeneration: generation ?? 0,
+      interruptGeneration: null, interruptRequestId: null, interruptTimer: null,
+      write: frame => writes.push(frame), emit: event => events.push(event), resetIdle() {},
+      kill() { this.killed = true }
+    })
+    t.after(() => session.clearInterruptGuard())
+    return { session, writes, events }
+  }
+
+  const idle = fixture()
+  assert.equal(idle.session.interrupt(), false, 'an idle engine has no interrupt to dispatch')
+  idle.session.claudeTasks.noteStarted('preview', 'preview-tool', { taskType: 'local_bash' })
+  assert.equal(idle.session.interrupt(), false, 'a preview process does not invent agent work')
+  assert.equal(idle.writes.length, 0)
+  assert.equal(idle.session.killed, false)
+  assert.ok(idle.session.claudeTasks.taskFor('preview'))
+
+  const active = fixture(9)
+  assert.equal(active.session.interrupt(), true)
+  const request = active.writes.at(-1)
+  assert.equal(request.request.subtype, 'interrupt')
+  assert.ok(active.session.interruptTimer, 'active work arms the confirmation deadline')
+  assert.equal(active.session.interrupt(), true)
+  assert.equal(active.writes.length, 1, 'duplicate Stop reuses the pending request')
+  active.session.handleLine(JSON.stringify({ type: 'control_response',
+    response: { subtype: 'success', request_id: 'unrelated-synthetic-request' } }))
+  assert.equal(active.session.interruptRequestId, request.request_id, 'unrelated ACK cannot settle Stop')
+  // Exercise the real deadline handler directly, without a wall-clock delay or a real process.
+  active.session.failInterrupt(active.session.interruptGeneration, GUI_INTERRUPT_ESCALATION_NOTE)
+  assert.equal(active.session.killed, true, 'unconfirmed active work retains failure-closed escalation')
+  assert.deepEqual(active.events.at(-1), { type: 'fatal', text: GUI_INTERRUPT_ESCALATION_NOTE })
+  assert.equal(active.session.interruptTimer, null)
+
+  const background = fixture()
+  background.session.claudeTasks.noteStarted('agent', 'agent-tool', { taskType: 'local_agent' })
+  assert.equal(background.session.interrupt(), true, 'a live agent remains interruptible after its parent result')
+  assert.equal(background.session.turnActive, false, 'background Stop does not invent a parent turn')
+  assert.equal(background.session.backgroundActive, true, 'dispatch alone is not confirmation')
+  assert.equal(background.session.interrupt(), true)
+  assert.equal(background.writes.length, 1)
+  background.session.handleLine(JSON.stringify({ type: 'control_response', response: {
+    subtype: 'success', request_id: background.writes[0].request_id
+  } }))
+  assert.equal(background.session.backgroundActive, false)
+  assert.equal(background.session.interruptTimer, null, 'matching ACK needs no nonexistent parent result')
+  assert.equal(background.session.killed, false)
+  assert.equal(background.session.interrupt(), false)
   assert.match(
     pane,
     /const spawnChangeLocked =\s*dead \|\| turnOpen \|\| attaching \|\| Boolean\(busyMenu\) \|\| Boolean\(gui\.queued\)/u
@@ -2170,7 +2258,7 @@ test('composer usa trilho plano do app, anexos e contexto no rodapé', () => {
   assert.match(attachmentChips, /guiApi\.attachmentPreview\(paneId, attachment, 'thumbnail'\)/u)
   assert.match(attachmentChips, /new IntersectionObserver/u)
   assert.match(attachmentChips, /rootMargin: '160px'/u)
-  assert.match(attachmentChips, /data:image\/png;base64,/u)
+  assert.match(readFileSync(new URL('../src/renderer/src/guiAttachmentPreview.ts', import.meta.url), 'utf8'), /data:image\/png;base64,/u)
   assert.match(attachmentChips, /<img src=\{thumbnail\}/u)
   assert.doesNotMatch(attachmentChips, /file:\/\/|attachment\.path/u)
   assert.match(attachmentChips, /guiApi\.attachmentAction\(paneId, action, attachment\)/u)
@@ -2221,7 +2309,7 @@ test('composer usa trilho plano do app, anexos e contexto no rodapé', () => {
   }
   assert.match(css, /\.gui-slash-menu::-webkit-scrollbar\s*\{\s*display: none/su)
   assert.match(css, /\.gui-mode-menu::-webkit-scrollbar\s*\{\s*display: none/su)
-  assert.match(pane, /useGuiComposerFit\(composerSurfaceRef, !readOnly\)/u)
+  assert.match(pane, /useGuiComposerFit\(composerSurfaceRef, composerVisible\)/u)
   assert.match(
     pane,
     /className="gui-mode-btn mode-model"[\s\S]*?aria-label=\{`Modelo desta conversa:/u
@@ -2248,12 +2336,12 @@ test('composer usa trilho plano do app, anexos e contexto no rodapé', () => {
     css,
     /@container pane \(max-width: 430px\)[\s\S]*?\.gui-mode-menu\s*\{[^}]*width: min\(240px, calc\(100cqw - 40px\)\);[^}]*min-width: 0;/u
   )
-  assert.match(pane, /activityRunning \? ' stop' : ''/u)
-  assert.match(pane, /aria-label=\{\s*activityRunning\s*\? 'Interromper resposta'/u)
-  assert.match(pane, /aria-keyshortcuts=\{activityRunning \? 'Escape' : undefined\}/u)
-  assert.ok(/onClick=\{activityRunning \? \(\) => void interruptGuiPane\(paneId\) : \(\) => submit\(\)\}/u.test(pane),
+  assert.match(pane, /stopInsteadOfSend \? ' stop' : ''/u)
+  assert.match(pane, /aria-label=\{\s*stopInsteadOfSend\s*\? 'Interromper resposta'/u)
+  assert.match(pane, /aria-keyshortcuts=\{stopInsteadOfSend \? 'Escape' : undefined\}/u)
+  assert.ok(/onClick=\{stopInsteadOfSend \? \(\) => void interruptGuiPane\(paneId\) : \(\) => submit\(\)\}/u.test(pane),
     'botão principal interrompe a resposta atual ou envia com o modo padrão')
-  assert.match(pane, /activityRunning \? <StopGlyph \/> : <SendGlyph \/>/u)
+  assert.match(pane, /stopInsteadOfSend \? <StopGlyph \/> : <SendGlyph \/>/u)
   // Glifos desenhados à mão na mesma grade de 16: nada de emoji, nada de
   // biblioteca de ícones, e a MESMA caixa nos dois estados — trocar enviar por
   // interromper no meio do turno não pode empurrar o rodapé.
@@ -2401,14 +2489,14 @@ test('modelo e effort usam troca viva, confirmada e sem status no transcript', (
   )
   // R33: o caminho direto envia `outgoing` (mensagem + citações) e limpa os
   // chips no sucesso.
-  assert.match(pane, /await sendGuiMessage\(paneId, outgoing, undefined, attachments\)/u)
+  assert.match(pane, /await sendGuiMessage\(paneId, outgoing, undefined, attachments, false, referenceSnapshot\)/u)
   assert.match(
     pane,
     /guiComposerClearPlan\([\s\S]*?if \(clear\.draft\) clearDraft\(\)[\s\S]*?if \(clear\.attachments\) clearAttachments\(\)/u
   )
   assert.match(
     pane,
-    /disabled=\{\s*activityRunning\s*\?\s*false\s*:\s*\(!draft\.trim\(\) && attachments\.length === 0\) \|\| !canSubmit\s*\}/u
+    /disabled=\{\s*stopInsteadOfSend\s*\?\s*false\s*:\s*\(!draft\.trim\(\) && attachments\.length === 0 && browserReferences\.length === 0\) \|\| !canSubmit\s*\}/u
   )
 })
 
@@ -3019,8 +3107,10 @@ test('C5b — o fio deriva da lateral, troca o verbo genérico e para no reduced
   assert.match(pane, /guiBackgroundWorkPresentation\(\{ status: gui\.status, liveSubagents \}\)/u)
   assert.doesNotMatch(pane, /liveSubagents = .*visibleItems/u)
 
-  // Um indicador por vez: a linha de pensar cede para a de fundo.
-  assert.match(pane, /\{thinkingPresentation && !backgroundWork && \(/u)
+  // Parent activity stays visible even while independent helpers are alive:
+  // the pulse (2026-09-16) mounts on its own and gates itself on the parent turn.
+  assert.match(pane, /<GuiAgentPulse\b[\s\S]{0,300}?active=\{!inert\}/u)
+  assert.doesNotMatch(pane, /active=\{!inert && backgroundWork/u)
   assert.match(pane, /\{backgroundWork && \([\s\S]{0,400}?className="gui-background-work"/u)
   assert.match(pane, /data-subagent-count=\{backgroundWork\.count\}/u)
   assert.match(pane, /gui-background-work-label/u)
@@ -4288,14 +4378,15 @@ test('R27 — o board não lista o registro de release e o trilho vira release',
     'a coluna e o retrato listam só missões de superfície'
   )
   // Onda B do RIGHTDOCK (2026-08-22): o trilho próprio virou componente
-  // (`ReleaseRail`, vestindo a moldura do dock) — o mapa "dev → main" mudou de
-  // casa junto, mas continua sendo a fala do trilho do release.
+  // (`ReleaseRail`, vestindo a moldura do dock). O destino é o escolhido na
+  // versão; não pode ser uma promessa fixa de main enquanto o motor usa dev.
   assert.match(board, /<ReleaseRail/u, 'o release tem trilho próprio')
   const releaseRail = readFileSync(
     new URL('../src/renderer/src/components/ReleaseRail.tsx', import.meta.url),
     'utf8'
   )
-  assert.match(releaseRail, /dev → main/u)
+  assert.doesNotMatch(releaseRail, /dev → main/u)
+  assert.match(releaseRail, /targetBranch \?\? 'destino no chat'/u)
   const railGate = board.indexOf('selIsRelease')
   assert.ok(railGate > 0, 'o trilho de missão é condicionado ao registro não ser release')
 })
@@ -4390,14 +4481,16 @@ test('composer e overlay de menções quebram linha com a MESMA política', () =
 // teto menor e o texto pintado fica uma linha atrás do real. A sentinela de
 // largura zero no fim materializa a última linha — o truque padrão
 // de todo espelho de textarea.
-test('o overlay de menções materializa a última linha com a sentinela', () => {
+// A geometria de quando usar a sentinela é verificada no browser em
+// test-gui-composer-layout; aqui a regra é não esconder caracteres no fonte.
+test('o overlay mantém a sentinela de última linha escapada no fonte', () => {
   const overlay = readFileSync(
     new URL('../src/renderer/src/components/GuiMentionOverlay.tsx', import.meta.url),
     'utf8'
   )
   assert.match(
     overlay,
-    /\{'\\u200b'\}/u,
+    /'\\u200b'/u,
     'a sentinela de largura zero existe no fim do conteúdo pintado - ESCAPADA (caractere invisível cru em fonte é a armadilha do r24 §7)'
   )
 })
@@ -4621,7 +4714,7 @@ test('R35 — o GuiMarkdown pinta por patch, não por dangerouslySetInnerHTML', 
   )
   // O contrato que não pode regredir junto: sanitização e delegação seguem
   // exatamente onde estavam.
-  assert.match(md, /DOMPurify\.sanitize\(raw, \{/u, 'a sanitização saiu do caminho')
+  assert.match(md, /DOMPurify\.sanitize\(fileLinks\.html, \{/u, 'a sanitização saiu do caminho')
   assert.match(md, /onClickCapture=\{handleLinkOpenAttempt\}/u, 'a delegação do wrapper sumiu')
   assert.match(md, /aria-live="polite"/u, 'o status do link externo sumiu')
 })
@@ -4761,7 +4854,7 @@ test('R36 — a fiação do renderer: pipeline, cache de hidratação e o guard 
 
   assert.match(
     md,
-    /rewriteGuiInlineImages\(linkifyGuiFileReferences\(routeChatLinksExternally\(sanitized\)\)\)/u,
+    /rewriteGuiInlineImages\(linkifyGuiFileReferences\(routeChatLinksExternally\(sanitized, fileLinks\.references\)\)\)/u,
     'a reescrita saiu do pipeline (ou entrou fora de ordem): a imagem volta a quebrar muda'
   )
   assert.match(

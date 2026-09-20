@@ -4,6 +4,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
 import { randomUUID } from 'crypto'
 import { freshWindowsPath } from './winPath'
 import type { GuiAttachmentDescriptor } from './guiAttachments'
+import type { GuiBrowserReference } from './guiBrowserReferenceTypes'
 import { guiToolResultDetails } from './guiToolResults'
 import {
   GuiProtocolStream,
@@ -11,7 +12,8 @@ import {
   parseGuiProtocolLine
 } from './guiProtocolLine'
 import { limitGuiToolInput } from './guiToolInput'
-import { mergeClaudeSettings } from './guiOwnerDebtHook'
+import { guiClaudeSettingsArgument, mergeClaudeSettings } from './guiOwnerDebtHook'
+import { GuiClaudePublicProgress, withClaudePublicProgressHook, type ClaudePublicProgressNotice } from './guiClaudePublicProgress'
 import { terminateGuiProcessTree } from './guiProcessTree'
 import {
   GUI_INTERRUPT_ESCALATION_NOTE,
@@ -19,6 +21,7 @@ import {
 } from './guiInterruptEscalation'
 import {
   guiClaudeTaskId,
+  guiClaudeTaskBlocksTurn,
   GuiClaudeTaskRegistry,
   type GuiClaudeTask
 } from './guiClaudeTasks'
@@ -36,6 +39,9 @@ import type { PlanDraft } from './planDraft'
 // R25.1 — o odômetro da conversa: o motor CARREGA as parcelas de cada chamada;
 // quem soma e persiste é o registro de sessões (o renderer remonta).
 import { guiApiCallParcels, type GuiApiCallParcels } from './guiConversationOdometer'
+import { guiClaudeUsageSample, type GuiUsageSample } from './guiRequestUsage'
+import type { GuiUsageMeters } from '../shared/guiUsage'
+import { GuiClaudeSkillReload } from './guiClaudeSkillReload'
 
 // Sessão PERSISTENTE do Maestro: um processo `claude` vivo em stream-json
 // bidirecional — o mesmo motor do TUI, rodando como "painel de fundo".
@@ -58,9 +64,12 @@ export interface MaestroSessionOpts {
   /** claude: settings EXTRAS deste pane, fundidos com o `fastMode` no mesmo
    *  `--settings` (o CLI aceita um só). Hoje quem usa é a dívida de resposta ao
    *  dono, que entra por aqui como `guiOwnerDebtHookSettings(flagPath)` — o
-   *  hook `PreToolUse` que bloqueia TODA tool enquanto o pane deve resposta
+   *  hook `PreToolUse` que bloqueia tools de trabalho enquanto o pane deve resposta
    *  (R39; a sonda probe-claude-pretooluse-block mediu a forma no binário). */
   settings?: Record<string, unknown>
+  /** Trusted per-pane advisory file; only GUI conversations configure it. */
+  publicProgressFile?: string
+  recordPublicProgress?: (notice: ClaudePublicProgressNotice) => void
   /** codex: SandboxMode do thread/start (ex.: 'read-only' para o /estudar) */
   sandbox?: string
   /** claude: --permission-mode (ex.: 'acceptEdits' nos executores de tarefa) */
@@ -335,8 +344,9 @@ export type SessionEvent =
   /** `text` = delta do raciocínio quando o backend o entrega (aditivo: quem
    *  só acende um spinner continua funcionando sem ler o campo). */
   | { type: 'thinking'; text?: string }
+  | { type: 'context-compaction'; active: boolean }
   | { type: 'turn-started' }
-  | { type: 'turn-continuation'; continues: boolean }
+  | { type: 'turn-continuation'; continues: boolean; turnActive?: boolean }
   | {
       type: 'session-restarted'
       ready: boolean
@@ -360,6 +370,7 @@ export type SessionEvent =
       /** Anexos já validados pelo main; o transcript mostra chips, nunca paths
        * despejados dentro da fala do usuário. */
       attachments?: GuiAttachmentDescriptor[]
+      browserReferences?: GuiBrowserReference[]
       at: number
     }
   | { type: 'text'; text: string }
@@ -449,6 +460,8 @@ export type SessionEvent =
    * `clientId` é o nosso `clientUserMessageId`.
    */
   | { type: 'owner-steer-absorbed'; tag: string }
+  /** Internal negative receipt; the registry recovers the durable copy. */
+  | { type: 'owner-steer-rejected'; tag: string; reason: 'cancelled' | 'discarded' | 'refused' }
   /** Medição canônica do contexto vivo; `null` significa que o backend não a informou. */
   | {
       type: 'context-usage'
@@ -462,6 +475,9 @@ export type SessionEvent =
        * e o odômetro simplesmente não anda.
        */
       call?: GuiApiCallParcels
+      /** Stable numeric-only transport to the registry. Explicit null means
+       * no reliable attribution; never count it as a new identified request. */
+      sample?: GuiUsageSample | null
       /**
        * R25.1 — O ODÔMETRO DA CONVERSA, carimbado pelo REGISTRO no publish (o
        * motor nunca os preenche: ele morre a cada respawn e não teria como
@@ -471,6 +487,8 @@ export type SessionEvent =
        */
       convCalls?: number
       convWeightTokens?: number
+      /** Additive snapshot mirrored in renderer/guiApi.ts. */
+      usage?: GuiUsageMeters | null
     }
   | { type: 'command-completed'; isError: boolean; continues: boolean; errorText?: string }
   | { type: 'limit'; text: string }
@@ -491,11 +509,17 @@ export type SessionEvent =
       interrupted?: true
       /** Outra mensagem já foi aceita pelo stream e continua trabalhando. */
       continues?: boolean
+      /** Parent activity captured by guiSessions before helper projection.
+       * Mirrored in renderer/guiApi.ts; absent on older stored events. */
+      turnActive?: boolean
       errorText?: string
       /* texto final do turno — comandos locais (ex.: /usage) respondem por
          mensagem assistant SINTÉTICA e o texto só aparece aqui, não em
          <local-command-stdout> (sondado 2026-07-23) */
       resultText?: string
+      /** Internal command receipt, identified from Claude protocol metadata.
+       * The GUI registry consumes it before publishing a normal turn result. */
+      localCommand?: 'reload-skills'
       contextTokens?: number
       contextWindow?: number
       fastModeState?: string
@@ -532,8 +556,11 @@ export function guiRateLimitBlocks(status: string | undefined): boolean {
   return Boolean(status) && status !== 'allowed' && status !== 'allowed_warning'
 }
 
-function guiLimitClock(resetsAt: number | undefined): string {
-  return resetsAt ? new Date(resetsAt * 1000).toLocaleTimeString('pt-BR') : ''
+function guiLimitClock(resetsAt: number | undefined, compact = false): string {
+  if (!resetsAt || !Number.isFinite(resetsAt)) return ''
+  return new Date(resetsAt * 1000).toLocaleTimeString(
+    'pt-BR', compact ? { hour: '2-digit', minute: '2-digit' } : undefined
+  )
 }
 
 /** Chave de ESTADO do limite: o CLI emite o evento a CADA request, e repetir o
@@ -566,14 +593,14 @@ export function translateGuiRateLimit(
   if (status === 'allowed') return { key: null }
   const key = guiRateLimitKey(status, info?.resetsAt)
   if (key === lastKey) return { key }
-  const clock = guiLimitClock(info?.resetsAt)
+  const clock = guiLimitClock(info?.resetsAt, status === 'allowed_warning')
   if (!guiRateLimitBlocks(status)) {
     return {
       key,
       event: {
         type: 'command-output',
-        text: `aviso: o limite do plano está se APROXIMANDO (${status}) — nada parou${
-          clock ? ` · renova ${clock}` : ''
+        text: `Você está perto do limite do plano.${
+          clock ? ` Renovação prevista às ${clock}.` : ''
         }`
       }
     }
@@ -677,6 +704,8 @@ interface StreamLine {
   command_uuid?: string
   state?: string
   result?: string
+  num_turns?: number
+  duration_api_ms?: number
   is_error?: boolean
   // ————— tarefas de fundo (subagentes do Claude), todas sob type 'system' —————
   /** task_started / task_updated / task_progress / task_notification. */
@@ -720,6 +749,7 @@ interface StreamLine {
     delta?: { type?: string; text?: string }
   }
   message?: {
+    id?: string
     role?: string
     /** Uso da MENSAGEM (uma chamada de API). É o único lugar do stream que
      *  mede contexto — o `usage` do `result` é a SOMA do turno inteiro. */
@@ -866,12 +896,17 @@ export class MaestroSession {
   private turnGeneration = 0
   private pendingTurnGenerations: number[] = []
   private activeTurnGeneration: number | null = null
+  /** Parent result kept the GUI open only for native background tasks. */
+  private backgroundContinuationPending = false
   private interruptGeneration: number | null = null
+  private interruptBackgroundOnly = false
+  private interruptTaskIds: string[] | null = null
   private interruptRequestId: string | null = null
   private interruptTimer: NodeJS.Timeout | null = null
   /** Modelo anunciado pelo último `system/init`: é a chave do `modelUsage` no
    *  `result`. Trocar de modelo reemite init, então este campo acompanha. */
   private initModel: string | null = null
+  private usageSessionId: string | null = null
   /** Janela REAL já medida pelo CLI para `initModel` neste processo. Existe
    *  porque o `init` REPETE a cada turno carregando o piso curado: sem esta
    *  memória, cada volta rebaixaria a medição de volta ao piso — e o piso
@@ -901,6 +936,7 @@ export class MaestroSession {
   /** As capacidades de protocolo do `system/init` — feature-detect, como o
    *  próprio binário manda. Vazio = CLI que não as anuncia. */
   private capabilities: readonly string[] = []
+  private skillReload: GuiClaudeSkillReload | undefined
 
   /**
    * RÉGUA ÚNICA DA JANELA deste processo. A medição do CLI manda
@@ -917,7 +953,9 @@ export class MaestroSession {
 
   constructor(opts: MaestroSessionOpts, emit: (evt: SessionEvent) => void) {
     this.opts = opts
-    this.emit = emit
+    const progress = opts.publicProgressFile
+      ? new GuiClaudePublicProgress(opts.publicProgressFile, undefined, opts.recordPublicProgress) : undefined
+    this.emit = (event) => { progress?.observe(event); emit(event) }
 
     const env: Record<string, string> = {
       ...(process.env as Record<string, string>),
@@ -962,10 +1000,12 @@ export class MaestroSession {
     // fusão: quem chega depois não apaga quem chegou antes. Objeto vazio = não
     // passar a flag, que é o caso de todo pane sem /fast e sem hook.
     // Com shell no Windows, o JSON precisa da camada extra de aspas.
-    const settings = mergeClaudeSettings({ ...(opts.settings ?? {}), fastMode: opts.fastMode })
+    const baseSettings = opts.publicProgressFile
+      ? withClaudePublicProgressHook(opts.settings ?? {}, opts.publicProgressFile)
+      : opts.settings ?? {}
+    const settings = mergeClaudeSettings({ ...baseSettings, fastMode: opts.fastMode })
     if (Object.keys(settings).length > 0) {
-      const json = JSON.stringify(settings)
-      args.push('--settings', process.platform === 'win32' ? JSON.stringify(json) : json)
+      args.push('--settings', guiClaudeSettingsArgument(settings))
     }
     if (opts.extraArgs?.length) args.push(...opts.extraArgs)
 
@@ -1093,14 +1133,9 @@ export class MaestroSession {
     // dois helpers "failed" exatos 600s depois do texto final). Só a sessão
     // OCIOSA abre geração — aí o CLI desenfileira a mensagem como turno
     // próprio (`enqueue`+`dequeue` no mesmo milissegundo, no transcript).
-    // Janela residual: steer que alcança o CLI DEPOIS de o turno fechar vira
-    // turno sem geração — o `result` dele chega com `continues` honesto e
-    // nada fica preso; só o `turnActive` não o enxerga enquanto ele roda.
-    if (!this.turnActive) {
-      const generation = ++this.turnGeneration
-      this.pendingTurnGenerations = enqueueGuiTurn(this.pendingTurnGenerations, generation)
-      this.activeTurnGeneration = this.pendingTurnGenerations[0] ?? null
-    }
+    // A tagged message that starts after this turn closes is promoted by its
+    // native command_lifecycle receipt below, before any token is emitted.
+    this.beginTurnIfIdle()
     let uuid: string | undefined
     if (tag) {
       uuid = randomUUID()
@@ -1118,6 +1153,47 @@ export class MaestroSession {
       ...(uuid ? { uuid } : {})
     })
     this.resetIdle()
+  }
+
+  /** The authenticated commentary tool supplies the model's own public text.
+   * Use the normal emitter so narration tracking, live GUI and replay agree. */
+  publishCommentary(text: string): void {
+    this.emit({ type: 'text', text })
+  }
+
+  private beginTurnIfIdle(): boolean {
+    if (this.turnActive) return false
+    // Keep the old request's identity for a late ACK, but it loses authority
+    // to kill the process once an autonomous/queued parent request begins.
+    if (this.interruptBackgroundOnly && this.interruptTimer) {
+      clearTimeout(this.interruptTimer)
+      this.interruptTimer = null
+    }
+    this.backgroundContinuationPending = false
+    const generation = ++this.turnGeneration
+    this.pendingTurnGenerations = enqueueGuiTurn(this.pendingTurnGenerations, generation)
+    this.activeTurnGeneration = this.pendingTurnGenerations[0] ?? null
+    return true
+  }
+
+  /** Native autonomous requests do not pass through send(). Their first root
+   * activity must open the same generation used by interrupts and results. */
+  private noteParentActivity(): void {
+    if (!this.beginTurnIfIdle()) return
+    this.emit({ type: 'turn-started' })
+    this.resetIdle()
+  }
+
+  /** A local catalog command owns no agent generation, even when sent idle. */
+  reloadSkills(): void {
+    this.skillReload = new GuiClaudeSkillReload()
+    try {
+      this.write({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: '/reload-skills' }] } })
+      this.resetIdle()
+    } catch (error) {
+      this.skillReload = undefined
+      throw error
+    }
   }
 
   /**
@@ -1207,18 +1283,29 @@ export class MaestroSession {
     return true
   }
 
-  interrupt(): boolean {
-    if (this.activeTurnGeneration === null) return false
-    const generation = this.activeTurnGeneration
+  cancelQueuedMessages(): boolean {
+    if (!this.capabilities.includes('interrupt_cancel_queued_v1')) return false
+    if (this.interruptRequestId && this.interruptTimer) return false
+    return this.interrupt(true)
+  }
+
+  interrupt(cancelQueued = false): boolean {
     if (
-      this.interruptGeneration === generation &&
+      this.interruptGeneration !== null &&
+      (this.interruptGeneration === this.activeTurnGeneration ||
+        (this.interruptBackgroundOnly && this.activeTurnGeneration === null)) &&
       this.interruptRequestId !== null &&
       this.interruptTimer !== null
     )
       return true
+    if (this.activeTurnGeneration === null && !this.backgroundActive) return false
+    const backgroundOnly = this.activeTurnGeneration === null
+    const generation = this.activeTurnGeneration ?? ++this.turnGeneration
     this.clearInterruptGuard()
     const requestId = randomUUID()
     this.interruptGeneration = generation
+    this.interruptBackgroundOnly = backgroundOnly
+    this.interruptTaskIds = backgroundOnly ? this.claudeTasks.liveAgentTaskIds() : null
     this.interruptRequestId = requestId
     // R23.1 — ESCALADA: sem confirmação neste prazo o processo CAI (o
     // `failInterrupt` abaixo derruba pelo kill de sempre) e a nota diz a
@@ -1229,13 +1316,17 @@ export class MaestroSession {
     this.write({
       type: 'control_request',
       request_id: requestId,
-      request: { subtype: 'interrupt' }
+      request: { subtype: 'interrupt', ...(cancelQueued ? { cancel_queued: true } : {}) }
     })
     return true
   }
 
   get turnActive(): boolean {
     return this.activeTurnGeneration !== null || this.pendingTurnGenerations.length > 0
+  }
+
+  get backgroundActive(): boolean {
+    return this.claudeTasks.liveAgentTaskIds().length > 0
   }
 
   /** Espera o handshake initialize responder (caps reais do CLI). */
@@ -1398,16 +1489,37 @@ export class MaestroSession {
     outcome: 'completed' | 'failed' | 'cancelled',
     isError: boolean
   ): void {
-    if (!task.toolUseId) return
+    if (!task.toolUseId || !guiClaudeTaskBlocksTurn(task)) return
     this.emit(agentSettledEvent(text, task.toolUseId, task.taskId, outcome, isError))
+  }
+
+  /** A background receipt is the final lifecycle event when the CLI has no
+   * further root response. Wait for the whole IO chunk so a new root request
+   * can take over without an obsolete close after its first activity. */
+  private settleBackgroundContinuation(): void {
+    // A factual terminal also settles an outstanding background-only Stop;
+    // there is no parent result left to disarm its acknowledgement timeout.
+    if (this.interruptBackgroundOnly && !this.backgroundActive) this.clearInterruptGuard()
+    if (!this.backgroundContinuationPending) return
+    queueMicrotask(() => {
+      if (!this.backgroundContinuationPending || this.turnActive || this.backgroundActive) return
+      this.backgroundContinuationPending = false
+      this.emit({ type: 'turn-continuation', continues: false })
+    })
   }
 
   /** Interrupção confirmada, `closed`, `fatal` e dispose levam os agentes de
    *  fundo junto: drena o registro e fecha cada card ANTES do terminal
    *  correspondente (com o pane já disposto, o sink descarta — mas o registro
    *  precisa zerar de qualquer forma para o `continues` não mentir). */
-  private cancelLiveAgents(): void {
-    for (const task of this.claudeTasks.settleAll()) {
+  private cancelLiveAgents(taskIds?: readonly string[]): void {
+    const tasks = taskIds
+      ? taskIds.flatMap(id => {
+          const task = this.claudeTasks.noteSettled(id)
+          return task ? [task] : []
+        })
+      : this.claudeTasks.settleAll()
+    for (const task of tasks) {
       this.emitAgentSettled(task, 'subagente cancelado', 'cancelled', false)
     }
   }
@@ -1420,6 +1532,11 @@ export class MaestroSession {
     const settled = this.claudeTasks.noteSettled(taskId ?? evt.tool_use_id, evt.status)
     const toolUseId = guiClaudeTaskId(evt.tool_use_id) ?? settled?.toolUseId
     const agentTaskId = taskId ?? settled?.taskId
+    this.settleBackgroundContinuation()
+    // The ordinary Bash tool already delivered its launch receipt. A process
+    // ending later is not a native subagent delivering work to the chat.
+    if (this.claudeTasks.isBackgroundProcess(taskId ?? evt.tool_use_id) ||
+      !guiClaudeTaskBlocksTurn(settled ?? { taskType: evt.task_type })) return
     // Sem os dois ids não há card endereçável; sem registro, a notificação
     // ainda vale (o task_started pode ter se perdido e o card não pode ficar
     // girando para sempre).
@@ -1443,6 +1560,7 @@ export class MaestroSession {
    *  SEM terminal e é encerrado por reconciliação. */
   private reconcileAgents(tasks: StreamLine['tasks']): void {
     const missing = this.claudeTasks.reconcile(tasks)
+    this.settleBackgroundContinuation()
     if (missing.length === 0) return
     queueMicrotask(() => {
       for (const task of missing) {
@@ -1455,6 +1573,7 @@ export class MaestroSession {
           false
         )
       }
+      this.settleBackgroundContinuation()
     })
   }
 
@@ -1481,7 +1600,8 @@ export class MaestroSession {
     }
     const agentTaskId = agentId ?? this.claudeTasks.taskFor(toolUseId)?.taskId
     if (!agentTaskId) return null
-    this.claudeTasks.noteStarted(agentTaskId, toolUseId)
+    const task = this.claudeTasks.noteStarted(agentTaskId, toolUseId)
+    if (!task || !guiClaudeTaskBlocksTurn(task)) return null
     return agentLaunchedEvent(raw, toolUseId, agentTaskId)
   }
 
@@ -1489,6 +1609,8 @@ export class MaestroSession {
     if (this.interruptTimer) clearTimeout(this.interruptTimer)
     this.interruptTimer = null
     this.interruptGeneration = null
+    this.interruptBackgroundOnly = false
+    this.interruptTaskIds = null
     this.interruptRequestId = null
   }
 
@@ -1501,6 +1623,11 @@ export class MaestroSession {
    *  (nenhum motivo de queda por ■ fica mudo sobre como voltar). */
   private failInterrupt(generation: number, message: string): void {
     if (!this.alive || this.interruptGeneration !== generation) return
+    if (this.interruptBackgroundOnly && this.activeTurnGeneration !== null &&
+      this.activeTurnGeneration !== generation) {
+      this.clearInterruptGuard()
+      return
+    }
     this.clearInterruptGuard()
     if (this.activeTurnGeneration === generation) this.activeTurnGeneration = null
     this.emit({ type: 'fatal', text: withGuiInterruptRecipe(message) })
@@ -1516,6 +1643,16 @@ export class MaestroSession {
       return
     }
     const evt = parsed.value as StreamLine
+
+    const reload = this.skillReload?.observe(evt)
+    if (reload) {
+      // A late command receipt must not finish a newly accepted user turn,
+      // cancel its interaction, consume its context or disarm its interrupt.
+      this.skillReload = undefined
+      this.emit({ type: 'result', localCommand: 'reload-skills', isError: reload.isError,
+        continues: this.turnActive || this.backgroundActive, resultText: reload.text })
+      return
+    }
 
     switch (evt.type) {
       /**
@@ -1536,19 +1673,28 @@ export class MaestroSession {
           const tag = this.steerTags.get(uuid)
           if (tag) {
             this.steerTags.delete(uuid)
+            if (this.beginTurnIfIdle()) {
+              this.emit({ type: 'turn-started' })
+              this.resetIdle()
+            }
             this.emit({ type: 'owner-steer-absorbed', tag })
           }
           break
         }
-        // Terminal sem leitura: o bilhete morre aqui para o mapa não crescer.
-        if (evt.state === 'cancelled' || evt.state === 'discarded' || evt.state === 'refused')
+        // A negative receipt proves the CLI no longer owns the queued copy.
+        // Tell the registry to recover it; forgetting only the tag strands it.
+        if (evt.state === 'cancelled' || evt.state === 'discarded' || evt.state === 'refused') {
+          const tag = this.steerTags.get(uuid)
           this.steerTags.delete(uuid)
+          if (tag) this.emit({ type: 'owner-steer-rejected', tag, reason: evt.state })
+        }
         break
       }
 
       case 'system': {
         if (guiClaudeParentToolUseId(evt.parent_tool_use_id)) break
         if (evt.subtype === 'init' && evt.session_id) {
+          this.usageSessionId = evt.session_id
           // init repete a cada turno — inclusive nos CICLOS AUTÔNOMOS que o CLI
           // roda a cada conclusão de agente, com o MESMO session_id. Anuncia uma
           // vez por processo, mas o session_id sobe sempre (resume pode trocar o
@@ -1592,6 +1738,7 @@ export class MaestroSession {
             subagentType: evt.subagent_type,
             taskType: evt.task_type
           })
+          this.settleBackgroundContinuation()
           break
         }
         if (evt.subtype === 'task_updated' || evt.subtype === 'task_progress') {
@@ -1613,10 +1760,13 @@ export class MaestroSession {
       case 'stream_event': {
         if (guiClaudeParentToolUseId(evt.parent_tool_use_id)) break
         const inner = evt.event
+        if (inner?.type === 'message_start') this.noteParentActivity()
         if (inner?.type === 'content_block_delta') {
           if (inner.delta?.type === 'text_delta' && inner.delta.text) {
+            this.noteParentActivity()
             this.emit({ type: 'delta', text: inner.delta.text })
           } else if (inner.delta?.type === 'thinking_delta') {
+            this.noteParentActivity()
             this.emit({ type: 'thinking', text: inner.delta.text })
           }
         }
@@ -1627,6 +1777,9 @@ export class MaestroSession {
         const content = evt.message?.content
         if (!Array.isArray(content)) break
         const parentToolUseId = guiClaudeParentToolUseId(evt.parent_tool_use_id)
+        if (!parentToolUseId && content.some(block =>
+          block.type === 'text' || block.type === 'thinking' || block.type === 'tool_use'
+        )) this.noteParentActivity()
         // MEDIÇÃO DO CONTEXTO: cada mensagem é uma chamada de API, e a ÚLTIMA
         // do turno é a que diz quanto da janela está ocupado. Sobrescrever a
         // cada mensagem é o certo — o turno pode ter uma dúzia delas.
@@ -1654,6 +1807,8 @@ export class MaestroSession {
               type: 'context-usage',
               contextTokens: measured,
               contextWindow: this.contextWindowNow(),
+              sample: guiClaudeUsageSample(evt.session_id ?? this.usageSessionId ?? this.opts?.resumeSessionId,
+                evt.message?.id, evt.message?.usage),
               ...(parcels ? { call: parcels } : {})
             })
           }
@@ -1681,7 +1836,12 @@ export class MaestroSession {
           if (resp.subtype === 'success') {
             // Interrupção CONFIRMADA: quem o dono mandou parar inclui os
             // subagentes daquele turno.
-            this.cancelLiveAgents()
+            const backgroundOnly = this.interruptBackgroundOnly
+            this.cancelLiveAgents(this.interruptTaskIds ?? this.claudeTasks.liveAgentTaskIds())
+            if (backgroundOnly) {
+              this.clearInterruptGuard()
+              this.settleBackgroundContinuation()
+            }
           } else if (this.interruptGeneration !== null) {
             this.failInterrupt(
               this.interruptGeneration,
@@ -1750,6 +1910,7 @@ export class MaestroSession {
               toolResultEvent(raw, Boolean(block.is_error), block.tool_use_id)
           )
         }
+        this.settleBackgroundContinuation()
         break
       }
 
@@ -1846,10 +2007,11 @@ export class MaestroSession {
           generation !== null && this.interruptGeneration === generation
         this.pendingTurnGenerations = advanced.pending
         this.activeTurnGeneration = advanced.active
+        const interruptedTaskIds = this.interruptTaskIds
         this.clearInterruptGuard()
         // Parar o turno para os agentes de fundo dele também — antes do
         // terminal, e antes de medir o `continues`.
-        if (interrupted) this.cancelLiveAgents()
+        if (interrupted) this.cancelLiveAgents(interruptedTaskIds ?? this.claudeTasks.liveAgentTaskIds())
         // A medição vem das MENSAGENS do turno, nunca do `evt.usage` daqui: o
         // `usage` do result é o agregado de todas as chamadas de API do turno e
         // não descreve ocupação de janela nenhuma (ver
@@ -1876,6 +2038,7 @@ export class MaestroSession {
         // o `init` que repete a cada turno anuncia ELA, não o piso curado.
         const measuredWindow = claudeReportedContextWindow(evt.modelUsage, this.initModel)
         if (measuredWindow !== undefined) this.measuredWindow = measuredWindow
+        this.backgroundContinuationPending = !this.turnActive && this.backgroundActive
         this.emit({
           type: 'result',
           isError: interrupted ? false : Boolean(evt.is_error),
@@ -1884,7 +2047,7 @@ export class MaestroSession {
           // O `result` raiz não diz UMA palavra sobre background (dump completo
           // verificado): agente vivo é o que impede este terminal de virar o
           // desfecho visual — e é isso que dá UM plim por turno lógico.
-          continues: this.activeTurnGeneration !== null || this.claudeTasks.size > 0,
+          continues: this.turnActive || this.backgroundActive,
           // R21.3 — UMA VOZ para o limite: com o bloqueio ARMADO (fato
           // estrutural do `rate_limit_event`, nunca as palavras do erro), o
           // card fala PT-BR com a receita em vez do inglês cru do CLI.

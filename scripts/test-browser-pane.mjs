@@ -341,6 +341,31 @@ test('MODELO/GEOMETRIA: rolar o dock RECORTA a página nativa — ela não conhe
   assert.equal(vazio.height, 0)
 })
 
+test('MODELO/GEOMETRIA: a view fica dentro da moldura em toda largura fracionária', () => {
+  // A borda do DOM pode cair entre pixels ao redimensionar com escala de tela.
+  // Arredondar posição e largura separadamente faz a view cobri-la em certos passos.
+  for (const left of [39, 39.2, 39.4, 39.6, -12.4]) {
+    for (const width of [358, 358.2, 359.5, 600.4, 899.8]) {
+      const box = { left, top: 120, width, height: 300 }
+      const rect = browserRect(box, 'inward')
+      assert.ok(rect.x >= box.left, `left edge escaped at ${left}, width ${width}`)
+      assert.ok(rect.y >= box.top, 'top edge escaped')
+      assert.ok(rect.x + rect.width <= box.left + box.width, `right edge escaped at width ${width}`)
+      assert.ok(rect.y + rect.height <= box.top + box.height, 'bottom edge escaped')
+      assert.ok(Object.values(rect).every(Number.isInteger))
+    }
+  }
+  assert.deepEqual(browserRect({ left: 40, top: 120, width: 358, height: 300 }, 'inward'), {
+    x: 40, y: 120, width: 358, height: 300
+  }, 'aligned dimensions retain their full area')
+  assert.deepEqual(browserRect({ left: 39.2, top: 120.4, width: 600.4, height: 300.4 }, 'inward'), {
+    x: 40, y: 121, width: 599, height: 299
+  }, 'fractional top and bottom edges are contained too')
+  for (const width of [0, 0.2, -10, Number.NaN]) {
+    assert.equal(browserRect({ left: 39.2, top: 120, width, height: 300 }, 'inward').width, 0)
+  }
+})
+
 test('MODELO/OVERLAY: só o portal que REALMENTE cruza a página a esconde', () => {
   // O padrão pago (`88c49d4^`) escondia a view com QUALQUER overlay aberto, por
   // um contador incrementado à mão. Aqui o fato é lido pela estrutura — e um
@@ -817,6 +842,7 @@ function fakeWebContents() {
   wc.openDevTools = (options) => {
     wc.devtoolsOpen = true
     wc.devtoolsMode = options?.mode
+    wc.devtoolsActivate = options?.activate
   }
   wc.closeDevTools = () => {
     wc.devtoolsOpen = false
@@ -977,6 +1003,56 @@ function makeManager(options = {}) {
 }
 
 const RECT = { x: 300, y: 120, width: 600, height: 400 }
+
+test('BACKGROUND: collapsed one-pixel measurements retain a usable browser for every identity', async () => {
+  const { manager, host, detaches } = makeManager()
+  const dev = await manager.ensureTab('m1', 'p', 'https://synthetic.test/dev', OWNER_DEV)
+  manager.applyBounds('m1', RECT, true)
+  const helper = await manager.ensureTab('m1', 'p', 'https://synthetic.test/helper',
+    { kind: 'helper', label: 'qa', paneId: 'helper-qa' })
+  host.forbidDetach = true
+  manager.applyBounds('m1', { x: 1500, y: 0, width: 1, height: 1 }, false)
+  for (const view of host.views) {
+    assert.equal(view.bounds.width, RECT.width)
+    assert.equal(view.bounds.height, RECT.height)
+    assert.equal(view.visible, false)
+    assert.equal(view.attached, true)
+  }
+  assert.equal(manager.captureReadiness('m1', dev.tabId).ok, true)
+  assert.equal(manager.captureReadiness('m1', helper.tabId).ok, true)
+  manager.selectTab('m1', dev.tabId)
+  assert.equal(manager.tabOf('m1', 'helper-qa').tabId, helper.tabId)
+  assert.equal(host.views[1].bounds.width, RECT.width)
+  assert.equal(detaches(), 0)
+  host.forbidDetach = false
+  manager.destroy()
+})
+
+test('BACKGROUND: a mission born hidden has a full surface even with a one-pixel host', async () => {
+  const { manager, host } = makeManager({ dockMission: null, size: { width: 1, height: 1 } })
+  await manager.ensureTab('m1', 'p', 'https://synthetic.test/', OWNER_DEV)
+  manager.applyBounds('m1', { x: 0, y: 0, width: 1, height: 1 }, false)
+  assert.equal(host.views[0].bounds.width, 1280)
+  assert.equal(host.views[0].bounds.height, 800)
+  assert.equal(host.views[0].visible, false)
+  manager.destroy()
+})
+
+test('BACKGROUND: clipping the dock outside the window hides it without shrinking the page to one pixel', async () => {
+  const { manager, host } = makeManager()
+  await manager.ensureTab('m1', 'p', 'https://synthetic.test/', OWNER_DEV)
+  manager.applyBounds('m1', RECT, true)
+  host.size = { width: 200, height: 100 }
+  host.windowHooks.onGeometry()
+  assert.equal(host.views[0].visible, false)
+  assert.equal(host.views[0].bounds.width, RECT.width)
+  assert.equal(host.views[0].bounds.height, RECT.height)
+  host.size = { width: 1440, height: 900 }
+  manager.applyBounds('m1', RECT, true)
+  assert.equal(host.views[0].visible, true)
+  assert.deepEqual(host.views[0].bounds, RECT)
+  manager.destroy()
+})
 
 test('VISIBILITY: home defaults closed to dock geometry without destroying or detaching tabs', async () => {
   const { manager, host, detaches } = makeManager({ dockMission: null, forbidDetach: true })
@@ -1723,22 +1799,36 @@ test('NOTA: a guarda que dispara sem dono conhecido vai ao diário e NÃO invent
   assert.ok(records.some((entry) => entry.event === 'browser-download-blocked'))
 })
 
+test('a recovered local preview clears its own load failure without erasing another tab or permission notice', async () => {
+  const { manager, host } = makeManager()
+  const first = await manager.ensureTab('m1', 'p', 'http://127.0.0.1:8790/', OWNER_DEV)
+  const second = await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_HELPER)
+  first.webContents.emit('did-fail-load', {}, -102, 'ERR_CONNECTION_REFUSED', 'http://127.0.0.1:8790/', true)
+  assert.match(manager.state('m1').notice.text, /prévia local.*8790/u)
+  assert.match(manager.state('m1').notice.text, /⟳/u)
+  second.webContents.emit('did-navigate', {}, 'https://a.test/', 200, 'OK')
+  assert.equal(manager.state('m1').notice.kind, 'load-failed', 'another tab cannot retire this failure')
+  first.webContents.emit('did-navigate', {}, 'http://127.0.0.1:8790/', 200, 'OK')
+  assert.equal(manager.state('m1').notice, undefined, 'successful navigation retires the obsolete failure')
+  first.webContents.emit('did-fail-load', {}, -102, 'ERR_CONNECTION_REFUSED', 'http://127.0.0.1:8790/', true)
+  // A notice with a different cause must survive recovery of the preview.
+  host.hooks.onPermissionDenied('geolocation', first.webContents.id)
+  first.webContents.emit('did-navigate', {}, 'http://127.0.0.1:8790/', 200, 'OK')
+  assert.equal(manager.state('m1').notice.kind, 'permission-denied')
+})
+
 // ————— captura, ⚡ e geometria da janela —————
 
-test('GUARDA DE CAPTURA: sem browser e com a janela escondida, recusa NA HORA com a receita', async () => {
+test('GUARDA DE CAPTURA: sem browser recusa; visibilidade não substitui tentativa limitada de captura', async () => {
   const fechado = makeManager()
   const none = fechado.manager.captureReadiness('m1')
   assert.equal(none.ok, false)
   assert.match(none.error, /browser_open/u)
 
-  // P5: com a janela minimizada/escondida as DUAS rotas de captura PENDURAM
-  // (5-8 s) e o agente perde a rodada. Recusar em 1 ms é o comportamento certo.
+  // The native capture deadline and freshness stamp decide availability.
   const escondida = makeManager({ visible: false })
   await escondida.manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
-  const refused = escondida.manager.captureReadiness('m1')
-  assert.equal(refused.ok, false)
-  assert.match(refused.error, /minimizada\/escondida/u)
-  assert.match(refused.error, /restaure a janela/u)
+  assert.equal(escondida.manager.captureReadiness('m1').ok, true)
 
   const viva = makeManager()
   const opened = await viva.manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
@@ -1851,6 +1941,102 @@ test('MOTOR: o devtools abre DESTACADO — acoplado mexeria na geometria de que 
   assert.equal(manager.toggleDevtools('m1'), true)
   assert.equal(opened.webContents.isDevToolsOpened(), false)
   assert.equal(manager.toggleDevtools('m-inexistente'), false)
+})
+
+test('MOTOR: o gesto das DevTools usa a janela oferecida pelo host da página', async () => {
+  const { manager, host } = makeManager()
+  const { webContents: wc } = await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
+  const targets = []
+  host.toggleDevtools = view => targets.push(view.webContents)
+  manager.toggleDevtools('m1')
+  assert.deepEqual(targets, [wc])
+  assert.equal(wc.devtoolsOpen, false, 'the legacy detached window must not also open')
+})
+
+test('MOTOR: DevTools recebe foco depois de concluir a abertura nativa', async () => {
+  const { manager } = makeManager()
+  const { webContents: wc } = await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
+  let focused = 'app'
+  let requests = 0
+  wc.devToolsWebContents = {
+    isDestroyed: () => false,
+    focus: () => { focused = 'devtools'; requests++ }
+  }
+  manager.toggleDevtools('m1')
+  await new Promise(setImmediate)
+  assert.equal(requests, 0, 'a janela ainda não terminou de abrir')
+  wc.emit('devtools-opened')
+  // A abertura nativa ainda pode devolver foco ao host antes de desenrolar.
+  focused = 'app'
+  await new Promise(setImmediate)
+  assert.equal(focused, 'devtools', 'a abertura deve terminar com as DevTools na frente')
+  assert.equal(wc.devtoolsActivate, true)
+  assert.equal(requests, 1)
+  focused = 'app'
+  wc.emit('blur')
+  wc.emit('did-finish-load')
+  await new Promise(setImmediate)
+  assert.equal(focused, 'app', 'depois de abrir, o dono pode escolher outra janela')
+  assert.equal(requests, 1)
+})
+
+test('MOTOR: fechar ou destruir durante a abertura cancela o foco pendente das DevTools', async () => {
+  for (const phase of ['before-opened', 'after-opened', 'destroyed', 'replaced']) {
+    const { manager } = makeManager()
+    const { webContents: wc } = await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
+    let requests = 0
+    wc.devToolsWebContents = { isDestroyed: () => false, focus: () => requests++ }
+    manager.toggleDevtools('m1')
+    if (phase !== 'before-opened') wc.emit('devtools-opened')
+    if (phase === 'destroyed') {
+      wc.destroyed = true
+      wc.emit('destroyed')
+    } else if (phase === 'replaced') {
+      wc.devToolsWebContents = { isDestroyed: () => false, focus: () => requests++ }
+    } else {
+      manager.toggleDevtools('m1')
+      wc.emit('devtools-closed')
+    }
+    await new Promise(setImmediate)
+    assert.equal(requests, 0, phase)
+    assert.equal(wc.listenerCount('devtools-opened'), 0, phase)
+    assert.equal(wc.listenerCount('devtools-closed'), 0, phase)
+  }
+})
+
+test('MOTOR: reabrir DevTools dá foco só à nova janela e libera os ouvintes', async () => {
+  const { manager } = makeManager()
+  const { webContents: wc } = await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
+  let first = 0, second = 0
+  wc.devToolsWebContents = { isDestroyed: () => false, focus: () => first++ }
+  manager.toggleDevtools('m1')
+  wc.emit('devtools-opened')
+  manager.toggleDevtools('m1')
+  wc.emit('devtools-closed')
+  wc.devToolsWebContents = { isDestroyed: () => false, focus: () => second++ }
+  manager.toggleDevtools('m1')
+  wc.emit('devtools-opened')
+  await new Promise(setImmediate)
+  assert.equal(first, 0)
+  assert.equal(second, 1)
+  assert.equal(wc.listenerCount('devtools-opened'), 0)
+  assert.equal(wc.listenerCount('devtools-closed'), 0)
+})
+
+test('MOTOR: fechar DevTools dentro do evento de abertura não deixa um foco atrasado', async () => {
+  const { manager } = makeManager()
+  const { webContents: wc } = await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
+  let requests = 0
+  wc.devToolsWebContents = { isDestroyed: () => false, focus: () => requests++ }
+  // EventEmitter já copiou a lista: um ouvinte removido ainda pode ser chamado.
+  wc.once('devtools-opened', () => {
+    manager.toggleDevtools('m1')
+    wc.emit('devtools-closed')
+  })
+  manager.toggleDevtools('m1')
+  wc.emit('devtools-opened')
+  await new Promise(setImmediate)
+  assert.equal(requests, 0)
 })
 
 test('MOTOR: retângulo que não é retângulo é recusado na PORTA do IPC', () => {
@@ -2193,9 +2379,11 @@ test('CURA 2: janela minimizada NÃO recalcula nada, e o restore REFAZ o `setBou
   // `setBounds` REFEITO curou. É o `onRestored` da janela que manda refazer.
   win.userRestore()
   assert.equal(bounds().length, before + 1, 'o restore REFAZ a geometria')
-  // Bônus da mesma cerca: o relato degenerado (0×1) não vira superfície de um
-  // pixel — cai na janela inteira, onde a página é capturável.
-  assert.deepEqual(bounds().at(-1).bounds, POPOUT_FULL)
+  // A medição degenerada conserva a última superfície útil e não pinta por
+  // cima do chrome. O próximo relato real volta a mostrar a mesma página.
+  assert.deepEqual(bounds().at(-1).bounds, POPOUT_RECT)
+  manager.applyBounds('m1', POPOUT_RECT, true, 'popout')
+  assert.deepEqual(bounds().at(-1).bounds, POPOUT_RECT)
 })
 
 test('AUTORIDADE DE GEOMETRIA: o relato do host ERRADO é ignorado, com UM registro por transição', async () => {
@@ -2305,7 +2493,7 @@ test('GUARDA DE CAPTURA: view SEM JANELA recusa NA HORA, nomeando a receita', as
   assert.equal(logged.detail.wc, view.webContents.id)
 })
 
-test('GUARDA DE CAPTURA: pop-out MINIMIZADO segue capturável — a janela do APP escondida, não', async () => {
+test('GUARDA DE CAPTURA: dock e pop-out anexados permitem captura mesmo com janela reportada oculta', async () => {
   const { manager, host, popouts } = makeHostedManager()
   await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
   manager.popOut('m1')
@@ -2315,14 +2503,10 @@ test('GUARDA DE CAPTURA: pop-out MINIMIZADO segue capturável — a janela do AP
   // garantem. O dono minimiza a janela destacada e o agente SEGUE trabalhando.
   assert.equal(manager.captureReadiness('m1').ok, true)
 
-  // No DOCK nada foi relaxado: ali a captura pendura 5-8 s e a recusa em 1 ms
-  // é o comportamento certo.
+  // Window visibility is not evidence that the compositor cannot capture.
   manager.dockBack('m1')
   host.visible = false
-  const refused = manager.captureReadiness('m1')
-  assert.equal(refused.ok, false)
-  assert.match(refused.error, /minimizada\/escondida/u)
-  assert.match(refused.error, /restaure a janela/u)
+  assert.equal(manager.captureReadiness('m1').ok, true)
 })
 
 test('ROTEAMENTO: aba nova de missão destacada nasce NA JANELA DESTACADA', async () => {

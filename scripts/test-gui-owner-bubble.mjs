@@ -27,6 +27,7 @@ import {
   ownerForceLabel,
   ownerForceRefusalText
 } from '../src/renderer/src/guiOwnerBubble.ts'
+import { applyGuiOwnerMessageState as applyOwnerState } from '../src/renderer/src/guiOwnerBubble.ts'
 
 const read = (rel) => readFileSync(new URL(`../${rel}`, import.meta.url), 'utf8')
 
@@ -40,6 +41,25 @@ const AT = new Date(2026, 8, 2, 21, 33, 46).getTime()
 const NOW = new Date(2026, 8, 2, 21, 40, 0).getTime()
 
 // ————————————————————————————— o carimbo —————————————————————————————
+
+test('a cancelled message leaves the thread: no stamp, no bubble, and a read one cannot be cancelled', () => {
+  // Ordem do dono (2026-09-16): "quando eu cancelar, a minha mensagem some, e
+  // nada avisa que o turno foi interrompido — parecer que cancelou sem afetar".
+  const cancelled = nextOwnerDelivery({ state: 'unread', at: 1 }, 'cancelled', 2)
+  assert.deepEqual(cancelled, { state: 'cancelled', at: 2 })
+  assert.equal(ownerDeliveryStamp(cancelled, 3), null, 'nothing is left to stamp')
+  assert.equal(nextOwnerDelivery(cancelled, 'read', 4), null)
+  assert.equal(nextOwnerDelivery({ state: 'read', at: 1 }, 'cancelled', 2), null)
+  const items = [
+    { id: 'a', kind: 'user', delivery: { state: 'unread', at: 1 } },
+    { id: 'b', kind: 'user', delivery: { state: 'read', at: 1 } },
+    { id: 'c', kind: 'assistant' }
+  ]
+  const afterCancel = applyOwnerState(items, 'a', 'cancelled', 2)
+  assert.deepEqual(afterCancel.map(item => item.id), ['b', 'c'], 'the cancelled bubble is removed, neighbours stay')
+  assert.equal(applyOwnerState(items, 'b', 'cancelled', 2), items, 'a read bubble cannot be cancelled: same list')
+  assert.equal(applyOwnerState(afterCancel, 'a', 'read', 3), afterCancel, 'a late receipt for a gone bubble changes nothing')
+})
 
 test('o carimbo diz a palavra de cada estado (e a hora da entrega)', () => {
   assert.deepEqual(ownerDeliveryStamp({ state: 'stopping', at: AT }, NOW), {
@@ -348,7 +368,7 @@ test('R39.1 — a bolha `unread` tem o botão "ler agora", e só ela', () => {
   // O gesto vai pelo canal do main, com o id DESTA bolha.
   assert.match(bolha, /guiApi\.forceOwnerMessage\(paneId, item\.id\)/u)
   // Em voo o botão desliga: dois cliques seriam dois cortes.
-  assert.match(bolha, /disabled=\{forcing\}/u)
+  assert.match(bolha, /disabled=\{forcing \|\| cancelling\}/u)
   assert.match(bolha, /setForcing\(true\)/u)
   assert.match(bolha, /setForcing\(false\)/u)
   // O nome do botão cita a fala; a dica conta o custo antes do clique.

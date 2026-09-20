@@ -789,7 +789,7 @@ test('o catálogo frio NÃO é "não suporta effort"', () => {
 // ————— 7. AS TOOLS —————
 
 function delegationApi(overrides = {}) {
-  const calls = { begin: [], end: [], spawn: [] }
+  const calls = { begin: [], end: [], spawn: [], waits: [] }
   const engine = {
     spawn: (delegator, helpers) => {
       calls.spawn.push({ delegator, helpers })
@@ -808,7 +808,8 @@ function delegationApi(overrides = {}) {
     status: () => [],
     liveCount: () => overrides.liveCount ?? 0,
     get: (helperId) => (helperId === 'h-meu' ? { delegatorPaneId: 'p1' } : { delegatorPaneId: 'outro' }),
-    result: async (helperId) => {
+    result: async (helperId, waitSeconds) => {
+      calls.waits.push(waitSeconds)
       // O irmão que encerra DURANTE a espera: o long-poll segue esperando o seu
       // (contrato intacto) e quem conta a novidade é o correio, na volta.
       overlap?.()
@@ -1855,6 +1856,20 @@ function ownerMailbox() {
   )
   return new ownerMailModule.GuiOwnerMailbox()
 }
+
+test('owner guidance arriving before the helper long-poll prevents a fresh wait without duplicating the steer', async () => {
+  const ownerMail = ownerMailbox()
+  const { api, calls } = delegationApi({ ownerMail })
+  ownerMail.post('p1', { messageId: 'early-steer', text: 'orientação sintética', at: 0, steered: true })
+  const text = await api.helperResult(delegatorId, 'h-meu', 240)
+  assert.deepEqual(calls.waits, [0], 'a wake arriving before waiter registration cannot be lost')
+  assert.equal(text.includes('orientação sintética'), false, 'the CLI already owns this same message')
+  assert.equal(ownerMail.count('p1'), 1, 'receipt tracking survives the early return')
+  ownerMail.removeById('p1', 'early-steer')
+  ownerMail.post('p2', { messageId: 'other-pane', text: 'outra conversa', at: 0, steered: true })
+  await api.helperResult(delegatorId, 'h-meu', 240)
+  assert.deepEqual(calls.waits, [0, 240], 'another conversation cannot shorten this wait')
+})
 
 test('R22.2 — a mensagem do dono viaja no PRÓXIMO resultado de tool, uma vez só', async () => {
   const ownerMail = ownerMailbox()

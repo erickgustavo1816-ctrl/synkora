@@ -50,6 +50,7 @@ import type {
 // porque duas cópias da centralização virariam duas centralizações diferentes na
 // terceira correção.
 import { viewportViewRect, type BrowserViewportMode } from './browserViewport'
+import { resolveBrowserSurfaceLayout } from './browserSurfaceLayout'
 
 // ————————————————————————————————————————————————————————————————
 // A fatia do registro da missão que esta máquina governa
@@ -86,6 +87,9 @@ export interface BrowserHostedMission {
    *  — e o que impede o retângulo de uma janela de ser aplicado na outra. */
   dockLayout: BrowserMissionLayout | null
   popoutLayout: BrowserMissionLayout | null
+  /** Usable surfaces survive hidden/degenerate measurements from each host. */
+  dockSurface: BrowserPanelRect | null
+  popoutSurface: BrowserPanelRect | null
   /** Último host cujo relato de geometria foi ignorado (registro UMA vez por
    *  transição: o ResizeObserver relata a cada quadro e encheria o diário). */
   staleReported: BrowserHostKind | null
@@ -113,8 +117,6 @@ export interface BrowserHostMachineContext<M extends BrowserHostedMission> {
   /** Título da página ativa — a barra da janela destacada conta a mesma verdade
    *  que a aba. */
   activeTitle(mission: M): string
-  /** Clampa o retângulo relatado à área útil de quem o hospeda. */
-  clampTo(rect: BrowserPanelRect, size: { width: number; height: number } | null): BrowserPanelRect
   /** A LARGURA QUE A PÁGINA ENXERGA sai do zoom, e o zoom sai da MOLDURA — que
    *  é outra na janela destacada. Destacar e reencaixar têm de refazer o fit no
    *  mesmo passo do `setBounds`, senão a página fica com o zoom da moldura de
@@ -174,14 +176,10 @@ export function createBrowserHostMachine<M extends BrowserHostedMission>(
     const size = popout.contentSize()
     if (!size) return
     const wanted = mission.popoutLayout
-    const asked =
-      wanted && wanted.rect.width > 0 && wanted.rect.height > 0 ? ctx.clampTo(wanted.rect, size) : null
-    // Sem relato do cromo da janela (ou relato degenerado), a página ocupa a
-    // janela INTEIRA: o pop-out nunca fica com uma faixa preta esperando
-    // renderer nenhum.
-    const usable = asked !== null && asked.width > 0 && asked.height > 0
-    const rect = usable && asked ? asked : { x: 0, y: 0, width: size.width, height: size.height }
-    const show = wanted ? wanted.visible : true
+    const { rect, visible: show } = resolveBrowserSurfaceLayout(
+      wanted ?? { rect: { x: 0, y: 0, ...size }, visible: true }, size, mission.popoutSurface
+    )
+    mission.popoutSurface = rect
     for (const tab of mission.tabs) {
       // A MOLDURA DE DISPOSITIVO vale MAIS aqui do que no dock: é na janela
       // destacada que sobra largura, e é ali que o dono viu o botão 375 AMPLIAR
@@ -233,6 +231,7 @@ export function createBrowserHostMachine<M extends BrowserHostedMission>(
     // rotas de captura, porque a view nunca compôs um quadro ali.
     mission.host = 'popout'
     mission.popoutLayout = null
+    mission.popoutSurface = null
     mission.staleReported = null
     // UM PASSO por aba (sonda §P1): `addChildView` na janela nova, sem
     // `removeChildView` antes — não existe instante nenhum com a view fora de

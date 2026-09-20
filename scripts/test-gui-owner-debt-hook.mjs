@@ -16,9 +16,10 @@
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, existsSync, readFileSync, readdirSync, rmSync } from 'node:fs'
+import { mkdtempSync, existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, basename, dirname } from 'node:path'
+import { join, basename, dirname, resolve, sep } from 'node:path'
+import { spawnSync } from 'node:child_process'
 
 // Como rodar: `npm run test:gui-owner-debt-hook` — SEMPRE pelo npm, porque o
 // script recompila os dois módulos em `.tmp/` antes do node (o `.mjs` solto
@@ -28,7 +29,8 @@ import {
   guiOwnerDebtHookCommand,
   guiOwnerDebtHookSettings,
   guiOwnerDebtHookPayload,
-  mergeClaudeSettings
+  mergeClaudeSettings,
+  guiClaudeSettingsArgument
 } from '../.tmp/gui-owner-debt-hook-test/guiOwnerDebtHook.js'
 import {
   GuiOwnerReplyDebt,
@@ -105,11 +107,10 @@ test('o caminho vai entre aspas: pasta de usuário com espaço não quebra o hoo
 
 // ————— 3. O BLOCO DE SETTINGS —————
 
-test('o hook é PreToolUse com matcher `*` — toda tool, nativa inclusive', () => {
+test('a cobrança permanece em PreToolUse com um único comando limitado', () => {
   const settings = guiOwnerDebtHookSettings('C:\\flags\\pane.txt')
   const entries = settings.hooks?.PreToolUse
   assert.ok(Array.isArray(entries) && entries.length === 1, 'esperava UMA entrada PreToolUse')
-  assert.equal(entries[0].matcher, '*', 'o matcher não pega toda tool')
   const hooks = entries[0].hooks
   assert.ok(Array.isArray(hooks) && hooks.length === 1, 'esperava UM comando')
   assert.equal(hooks[0].type, 'command')
@@ -118,13 +119,49 @@ test('o hook é PreToolUse com matcher `*` — toda tool, nativa inclusive', () 
   assert.deepEqual(Object.keys(settings), ['hooks'], 'o bloco do hook trouxe chave estranha junto')
 })
 
+test('a cobrança permite a fala pública exata e continua cobrando ferramentas de trabalho', () => {
+  const { hooks } = guiOwnerDebtHookSettings('C:/synthetic/pane.txt')
+  const blocked = name => hooks.PreToolUse.some(entry => entry.matcher === '*' || new RegExp(entry.matcher).test(name))
+  assert.equal(blocked('mcp__synkora__commentary'), false,
+    'a ferramenta que responde ao dono não pode ser bloqueada pela cobrança da própria resposta')
+  for (const name of ['Bash', 'Read', 'Edit', 'AskUserQuestion', 'mcp__synkora__helper_result',
+    'mcp__other__commentary', 'mcp__synkora__commentary_extra', 'prefix_mcp__synkora__commentary']) {
+    assert.equal(blocked(name), true, name)
+  }
+})
+
+test('a receita da cobrança oferece a ferramenta de fala pública além do texto normal', () => {
+  const refusal = guiOwnerReplyRefusal(['mensagem sintética'])
+  assert.match(refusal, /mcp__synkora__commentary/u)
+  assert.ok(refusal.includes('já autorizado nesta mesma rodada'), 'destravar a fala não conclui o pedido')
+  assert.ok(refusal.includes('parar ou pausar'), 'a cobrança não autoriza ignorar uma parada')
+  assert.ok(refusal.includes('impedimento concreto'), 'encerramento precisa explicar o bloqueio real')
+})
+
 test('o settings sobrevive à camada dupla de aspas do win32 (a forma do maestroSession)', () => {
   const settings = guiOwnerDebtHookSettings('C:\\Users\\Erick\\AppData\\Roaming\\synkora\\owner-debt\\p1.txt')
-  const inner = JSON.stringify(settings)
-  const arg = JSON.stringify(inner) // é ASSIM que o maestroSession empurra no argv do win32
+  const arg = guiClaudeSettingsArgument(settings, 'win32')
   const backToInner = JSON.parse(arg)
   assert.deepEqual(JSON.parse(backToInner), settings, 'a ida e volta pela camada dupla perdeu o bloco')
   assert.doesNotMatch(arg, CMD_METACHARS, 'o argv final carrega metacaractere que o cmd comeria')
+})
+
+test('configurações passam pelo cmd real sem interpretar a expressão nem expandir variáveis', t => {
+  if (process.platform !== 'win32') return t.skip('Windows shell regression')
+  const root = mkdtempSync(resolve('.tmp/owner settings '))
+  t.after(() => {
+    assert.ok(root.startsWith(resolve('.tmp') + sep))
+    rmSync(root, { recursive: true, force: true })
+  })
+  const fixture = join(root, 'read-argv.cjs')
+  writeFileSync(fixture, 'process.stdout.write(JSON.stringify(JSON.parse(process.argv[2])))')
+  const settings = { ...guiOwnerDebtHookSettings('C:/synthetic flags/pane.txt'),
+    fastMode: true, synthetic: 'literal %PATH% !PATH! & < > ( ) | @ ^' }
+  const child = spawnSync(`"${process.execPath}"`, [`"${fixture}"`, guiClaudeSettingsArgument(settings, 'win32')],
+    { shell: true, encoding: 'utf8', timeout: 10_000, windowsHide: true })
+  assert.equal(child.status, 0, child.stderr)
+  assert.deepEqual(JSON.parse(child.stdout), settings)
+  assert.deepEqual(JSON.parse(guiClaudeSettingsArgument(settings, 'linux')), settings)
 })
 
 // ————— 4. A FUSÃO DOS SETTINGS —————
@@ -146,15 +183,15 @@ test('fastMode falso/ausente NÃO vira chave — o pane sem /fast continua como 
   assert.equal('fastMode' in withHooks, false, 'fastMode:false vazou para o settings')
 })
 
-test('o maestroSession usa a fusão e mantém a camada dupla do win32', () => {
+test('o maestroSession usa a fusão e a serialização protegida para o shell', () => {
   // `includes` em vez de `assert.match`: o arquivo tem 60k+ chars e uma falha
   // de match despejaria o fonte inteiro no relatório do gate.
   const source = readFileSync(new URL('../src/main/maestroSession.ts', import.meta.url), 'utf8')
   assert.ok(source.includes('mergeClaudeSettings('), 'o maestroSession não passa pela fusão')
   assert.ok(source.includes('opts.settings'), 'o maestroSession não aceita settings de fora')
   assert.ok(
-    source.includes("process.platform === 'win32' ? JSON.stringify("),
-    'sumiu a camada extra de aspas do win32 — o cmd comeria o JSON'
+    source.includes("args.push('--settings', guiClaudeSettingsArgument(settings))"),
+    'o spawn precisa transportar a expressão de seleção sem metacaracteres crus'
   )
   assert.ok(
     !/JSON\.stringify\(\{ fastMode: true \}\)/u.test(source),

@@ -23,6 +23,21 @@ import test from 'node:test'
 const mailModule = await import('../.tmp/gui-owner-mail-test/guiOwnerMail.js').catch(() => ({}))
 const steerModule = await import('../.tmp/gui-owner-mail-test/guiOwnerSteer.js').catch(() => ({}))
 
+test('todos os envelopes oferecem uma resposta intermediária com continuação e preservam pausas', () => {
+  const entries = [{ id: 'synthetic', text: 'ajuste sintético já autorizado', createdAt: 1 }]
+  const envelopes = [
+    mailModule.guiOwnerMailBlock(entries),
+    mailModule.guiOwnerHandText(entries, 'Read — synthetic.txt'),
+    mailModule.guiOwnerForceText(null)
+  ]
+  for (const envelope of envelopes) {
+    assert.ok(envelope.includes('mcp__synkora__commentary'), 'a resposta precisa de uma saída que mantenha a rodada aberta')
+    assert.ok(envelope.includes('já autorizado nesta mesma rodada'), 'a confirmação não substitui o trabalho')
+    assert.ok(envelope.includes('parar ou pausar'), 'a retomada respeita a nova intenção do dono')
+    assert.ok(envelope.includes('impedimento concreto'), 'se não puder continuar, deve explicar por que parou')
+  }
+})
+
 function mailbox() {
   assert.ok(
     mailModule.GuiOwnerMailbox,
@@ -154,7 +169,7 @@ test('D3 — o envelope diz que ele foi PARADO, nomeia o passo cortado e pede re
   )
   assert.match(text, /re-cheque/u)
   assert.match(text, /Responda PRIMEIRO/u)
-  assert.match(text, /1–2 linhas/u)
+  assert.match(text, /(?:1–2|uma ou duas) linhas/u)
   assert.match(text, /retome/u, 'a ordem do dono é responder E retomar — não trocar de assunto')
 })
 

@@ -11,11 +11,11 @@
  * A guarda da R32 mora no nosso servidor MCP, e ali ela alcança só as tools do
  * Synkora: `Bash`, `Read`, `Edit` e `AskUserQuestion` nunca passam por lá. Este
  * módulo é a metade que fecha o buraco no claude — um hook `PreToolUse`
- * declarado no `--settings` do pane, que roda antes de CADA tool, nativa
- * inclusive, e devolve o bloqueio quando existe BANDEIRA em disco para aquele
+ * declarado no `--settings` do pane, que roda antes das tools de trabalho,
+ * nativas inclusive, e devolve o bloqueio quando existe BANDEIRA em disco para aquele
  * pane (`GuiOwnerReplyDebt.arm` escreve, `clear` apaga).
  *
- * TUDO AQUI É SONDADO, não suposto (`scripts/probe-claude-pretooluse-block.mjs`,
+ * A forma original do comando e do bloqueio foi sondada (`scripts/probe-claude-pretooluse-block.mjs`,
  * claude 2.1.258; relatório em
  * `.synkora/reports/PROBE_PRETOOLUSE_BLOCK_2026-09-02.md`):
  *
@@ -33,7 +33,9 @@
  *    aspeado, num spawn com `shell: true`; o cmd.exe alterna o estado de aspas
  *    a CADA `"` — inclusive nas escapadas — e acaba lendo o conteúdo das
  *    strings do JSON como se estivesse FORA de aspas. O cenário `inline-args`
- *    da sonda mediu a coisa inteira ponta a ponta e passou.
+ *    da sonda mediu a coisa inteira ponta a ponta e passou. A seleção atual
+ *    exclui commentary; guiClaudeSettingsArgument escapa os metacaracteres
+ *    da expressão em JSON e o teste percorre o cmd real sem chamar o modelo.
  * 4. Custo: 28,3 ms de mediana no caminho de 99% (bandeira ausente). Cada
  *    passo do modelo naquela conversa custava 40–90 SEGUNDOS.
  *
@@ -43,6 +45,7 @@
  */
 
 import { join } from 'node:path'
+import { GUI_COMMENTARY_CLAUDE_TOOL } from './guiPublicCommentary'
 
 /** Teto do nome de arquivo (o Windows para em 255; 120 sobra e não assusta). */
 const FLAG_NAME_MAX = 120
@@ -76,14 +79,14 @@ export function guiOwnerDebtHookCommand(flagPath: string): string {
   return `if [ -f "${posix}" ]; then cat "${posix}"; fi`
 }
 
-/** O bloco `hooks` do `--settings`. Matcher `*`: TODA tool, nativa inclusive —
- *  foi trocar de tool cinco vezes que custou os oito minutos de 01/09. */
+/** Work tools still owe the owner a reply. The authenticated public speech
+ * tool IS that reply, so it must remain reachable while the debt is armed. */
 export function guiOwnerDebtHookSettings(flagPath: string): ClaudeHookSettings {
   return {
     hooks: {
       PreToolUse: [
         {
-          matcher: '*',
+          matcher: `^(?!${GUI_COMMENTARY_CLAUDE_TOOL}$).*`,
           hooks: [
             { type: 'command', command: guiOwnerDebtHookCommand(flagPath), timeout: HOOK_TIMEOUT_SECONDS }
           ]
@@ -138,4 +141,17 @@ export function mergeClaudeSettings(parts: ClaudeSettingsParts): Record<string, 
   }
   if (parts.fastMode) merged.fastMode = true
   return merged
+}
+
+/** cmd.exe sees metacharacters even inside the nested JSON quoting used by
+ * the Claude shim. JSON unicode escapes preserve hook regexes/commands while
+ * keeping those characters out of the shell; the CLI decodes them normally. */
+export function guiClaudeSettingsArgument(
+  settings: Record<string, unknown>,
+  platform: NodeJS.Platform = process.platform
+): string {
+  const json = JSON.stringify(settings)
+  if (platform !== 'win32') return json
+  return JSON.stringify(json).replace(/[&<>()@^|%!]/gu,
+    char => `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`)
 }

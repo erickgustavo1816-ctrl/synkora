@@ -17,9 +17,9 @@
  *   - `win.hide()`: mesmo efeito para todas as views.
  * Por isso `removeChildView` só aparece em `closeTab`/`closeMission`/`destroy`
  * (teardown de verdade) e o único esconderijo do dia a dia é `setVisible`.
- * Corolário: `captureReadiness()` RECUSA na hora — nomeando a receita — quando
- * a janela está escondida/minimizada, porque ali a captura pendura e o agente
- * perde a rodada.
+ * Atualização 2026-09-11: janela escondida já pode entregar pixels novos no
+ * Electron atual. A captura recusa órfãs; visibilidade não substitui a tentativa
+ * limitada a 2s e a medição de frescor (test-browser-capture-host-native).
  *
  * ——— A SEGUNDA LEI (pop-out, 2026-08-29): UM HOST DE CADA VEZ ———
  * A missão tem um `host`: `'dock'` (a janela do app) ou `'popout'` (janela
@@ -71,6 +71,7 @@
 import { randomUUID } from 'node:crypto'
 import type { BrowserWindow, WebContents } from 'electron'
 import type { BlackboxEventInput } from './blackbox'
+import { isGuiArtifactPreviewUrl, sanitizeGuiArtifactPreviewUrl } from './guiFileBrowserUrl'
 // O HOST (o único lugar que toca Electron) mora no módulo irmão. O especificador
 // é EXTENSIONLESS de propósito: nenhuma suíte carrega este arquivo em
 // `--experimental-strip-types` — não conseguiria, a cadeia de import chega em
@@ -91,6 +92,9 @@ import type {
 // corte de 2026-08-29, pelo mesmo motivo do `./browserPaneHost`. Extensionless
 // pela mesma razão declarada acima.
 import { createBrowserHostMachine } from './browserPaneHosting'
+import { browserLoadFailureText } from './browserLoadFailure'
+import { installBrowserReferencePicker } from './browserReferencePicker'
+import { resolveBrowserSurfaceLayout, roundBrowserRect as roundRect } from './browserSurfaceLayout'
 // OS SETE GESTOS DO DONO (barra de URL, +, ← → ⟳, × e devtools) moram no módulo
 // irmão desde 2026-09-01 — o mesmo corte, pelo mesmo motivo. Aqui eles só têm
 // ENDEREÇO PÚBLICO: quem chama o `BrowserPaneManager` não muda uma linha.
@@ -128,7 +132,6 @@ import {
 // suítes consomem, mais os três nomes públicos. Promessa não é motor.
 import {
   BROWSER_CHANGED_CHANNEL,
-  BROWSER_DEFAULT_VIEW_SIZE,
   BROWSER_TAB_CAP,
   type BrowserCaptureReadiness,
   type BrowserGestureResult,
@@ -212,6 +215,8 @@ const BROWSER_LOAD_TIMEOUT_MS = 20000
 /** A aba do motor É uma aba hospedada (o `wc` inteiro no lugar do mínimo que a
  *  máquina de host precisa) — uma definição só, sem espelho. */
 interface TabRecord extends BrowserHostedTab, BrowserDrivingFlag {
+  ephemeralPartition?: string
+  loadFailureNotice?: BrowserNotice | null
   view: BrowserViewHandle
   wc: WebContents
   disposers: (() => void)[]
@@ -248,16 +253,6 @@ const EMPTY_STATE: BrowserMissionState = {
   tabs: [],
   host: 'dock',
   viewport: 'auto'
-}
-
-function roundRect(rect: BrowserPanelRect): BrowserPanelRect {
-  const num = (value: number): number => (Number.isFinite(value) ? Math.round(value) : 0)
-  return {
-    x: num(rect.x),
-    y: num(rect.y),
-    width: Math.max(0, num(rect.width)),
-    height: Math.max(0, num(rect.height))
-  }
 }
 
 
@@ -327,40 +322,17 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
     emitChanged(mission.missionId)
   }
 
-  // ——— geometria ———
-  /** Refúgio de quem ainda não tem retângulo do painel (ou o tem zerado). */
-  const defaultRect = (): BrowserPanelRect => {
-    const size = resolveHost().contentSize()
-    const fit = (want: number, have: number | undefined): number =>
-      Math.max(1, Math.min(want, have ?? want))
-    return {
-      x: 0,
-      y: 0,
-      width: fit(BROWSER_DEFAULT_VIEW_SIZE.width, size?.width),
-      height: fit(BROWSER_DEFAULT_VIEW_SIZE.height, size?.height)
-    }
+  const loadFailure = (mission: MissionRecord, tab: TabRecord, text: string): void => {
+    notice(mission, 'load-failed', text)
+    tab.loadFailureNotice = mission.notice
   }
-
-  /** Clampa o retângulo relatado à área útil: encolher a janela sem o
-   *  ResizeObserver ter reportado ainda deixaria a view pendurada para fora. */
-  const clampTo = (
-    rect: BrowserPanelRect,
-    size: { width: number; height: number } | null
-  ): BrowserPanelRect => {
-    const bounds = roundRect(rect)
-    if (!size) return bounds
-    const x = Math.max(0, Math.min(bounds.x, Math.max(0, size.width - 1)))
-    const y = Math.max(0, Math.min(bounds.y, Math.max(0, size.height - 1)))
-    return {
-      x,
-      y,
-      width: Math.max(0, Math.min(bounds.width, size.width - x)),
-      height: Math.max(0, Math.min(bounds.height, size.height - y))
+  const clearLoadFailure = (mission: MissionRecord, tab: TabRecord): void => {
+    if (tab.loadFailureNotice && mission.notice === tab.loadFailureNotice) {
+      mission.notice = null
+      emitChanged(mission.missionId)
     }
+    tab.loadFailureNotice = undefined
   }
-
-  const clampRect = (rect: BrowserPanelRect): BrowserPanelRect =>
-    clampTo(rect, resolveHost().contentSize())
 
   // ——— A MÁQUINA DE HOST (`./browserPaneHosting`) ———
   // Onde a página está pendurada, os dois gestos do dono (⧉/⇤) e a geometria da
@@ -375,7 +347,6 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
     liveTabs: (mission) => liveTabs(mission),
     applyLayout: (mission) => applyLayout(mission),
     activeTitle: (mission) => activeTitleOf(mission),
-    clampTo,
     // A janela destacada tem OUTRA largura — e é a largura que manda no zoom.
     // Reencaixar/destacar tem de refazer o fit no mesmo passo do `setBounds`,
     // senão a página fica com o zoom da moldura antiga.
@@ -445,13 +416,11 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
       return
     }
     const wanted = mission.dockLayout
-    const asked = wanted && wanted.rect.width > 0 && wanted.rect.height > 0 ? clampRect(wanted.rect) : null
-    // Retângulo pedido que o clamp zerou (painel inteiro fora da janela após um
-    // encolhimento) não vira superfície 0×0: aí a view cai no refúgio — anexada,
-    // invisível e AINDA capturável, que é o ponto todo da lei 1.
-    const usable = asked !== null && asked.width > 0 && asked.height > 0
-    const rect = usable && asked ? asked : defaultRect()
-    const show = mission.missionId === dockMissionId && usable && wanted?.visible === true
+    const { rect, visible: show } = resolveBrowserSurfaceLayout(
+      wanted && { ...wanted, visible: wanted.visible && mission.missionId === dockMissionId },
+      resolveHost().contentSize(), mission.dockSurface
+    )
+    mission.dockSurface = rect
     for (const tab of mission.tabs) {
       tab.view.setBounds(viewportViewRect(tab.viewport, rect))
       const visible = show && tab.tabId === mission.activeTabId
@@ -532,6 +501,7 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
     // destacada é filha da janela do pop-out, não da janela do app.
     hosting.detachView(mission, tab.view)
     if (closeContents && !tab.wc.isDestroyed()) tab.wc.close()
+    if (tab.ephemeralPartition) resolveHost().disposeEphemeralSession?.(tab.ephemeralPartition)
     if (mission.activeTabId === tab.tabId) {
       mission.activeTabId = liveTabs(mission)[0]?.tabId ?? null
     }
@@ -539,6 +509,21 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
 
   const wireTab = (mission: MissionRecord, tab: TabRecord): void => {
     const wc = tab.wc
+    if (deps.prepareReference) {
+      tab.disposers.push(installBrowserReferencePicker(wc, {
+        prepare: () => {
+          const receive = deps.prepareReference?.(mission.missionId, mission.projectId)
+          return receive ? snapshot => receive(tab.tabId, snapshot) : undefined
+        },
+        onError: text => notice(mission, 'reference-failed', text),
+        onCaptured: () => {
+          if (mission.notice?.kind === 'reference-failed') {
+            mission.notice = null
+            emitChanged(mission.missionId)
+          }
+        }
+      }))
+    }
     const repaint = (): void => emitChanged(mission.missionId)
     // O `WebContents` do Electron tem ~90 sobrecargas de `on` por evento; o
     // gate roda com um fake. Uma única ponte solta (o `EventEmitter` cru, que é
@@ -562,18 +547,17 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
     on('page-title-updated', repaint)
     on('did-start-loading', repaint)
     on('did-stop-loading', repaint)
-    on('did-navigate', repaintAndRefit)
+    on('did-navigate', () => {
+      clearLoadFailure(mission, tab)
+      repaintAndRefit()
+    })
     on('did-navigate-in-page', repaint)
     on('did-finish-load', repaintAndRefit)
     on('did-fail-load', (...args) => {
       const [, errorCode, errorDescription, validatedURL, isMainFrame] = args
       // -3 = ERR_ABORTED: navegação interrompida (redirect, novo goto), não falha.
       if (isMainFrame === false || errorCode === -3) return
-      notice(
-        mission,
-        'load-failed',
-        `não carregou ${String(validatedURL).slice(0, 160)} — ${String(errorDescription || errorCode)}`
-      )
+      loadFailure(mission, tab, browserLoadFailureText(String(validatedURL), String(errorDescription || errorCode)))
     })
     on('render-process-gone', (...args) => {
       const details = args[1]
@@ -651,11 +635,11 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
     })
     const load = tab.wc
       .loadURL(url)
-      .then(() => undefined)
+      .then(() => clearLoadFailure(mission, tab))
       .catch((error: unknown) => {
         const detail = error instanceof Error ? error.message : String(error)
         if (detail.includes('ERR_ABORTED')) return
-        notice(mission, 'load-failed', `não carregou ${url.slice(0, 160)} — ${detail.slice(0, 200)}`)
+        loadFailure(mission, tab, browserLoadFailureText(url, detail))
       })
     await Promise.race([load.finally(() => (settled = true)), watchdog])
   }
@@ -666,7 +650,8 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
     reason: 'gesture' | 'agent' | 'window-open',
     /** DE QUEM a aba nasce (D1). Os gestos do dono (barra de URL, `+`, pop-up de
      *  uma página) nascem `user`; só o `ensureTab` de um agente traz outro. */
-    owner: BrowserTabOwner = BROWSER_USER_TAB_OWNER
+    owner: BrowserTabOwner = BROWSER_USER_TAB_OWNER,
+    ephemeral = false
   ): Promise<{ ok: true; tab: TabRecord } | { ok: false; error: string }> {
     if (liveTabs(mission).length >= BROWSER_TAB_CAP) {
       const error = capRefusal(reason)
@@ -674,16 +659,17 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
         actor: reason === 'gesture' ? 'user' : 'agent',
         ids: { projectId: mission.projectId, missionId: mission.missionId },
         reason: error,
-        detail: { tabs: liveTabs(mission).length, cap: BROWSER_TAB_CAP, url: url?.slice(0, 200) }
+        detail: { tabs: liveTabs(mission).length, cap: BROWSER_TAB_CAP, url: sanitizeGuiArtifactPreviewUrl(url)?.slice(0, 200) }
       })
       notice(mission, 'tab-cap', error)
       return { ok: false, error }
     }
     const activeHost = resolveHost()
-    const partition = browserPartitionFor(mission.projectId)
+    const partition = ephemeral ? `browser-artifact-${randomUUID()}` : browserPartitionFor(mission.projectId)
     activeHost.hardenSession(partition, sessionHooks)
     const view = activeHost.create(partition)
     if (!view) {
+      if (ephemeral) activeHost.disposeEphemeralSession?.(partition)
       return { ok: false, error: 'a janela do Synkora não está pronta — abra o app e tente de novo' }
     }
     const tab: TabRecord = {
@@ -691,6 +677,7 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
       view,
       wc: view.webContents,
       disposers: [],
+      ...(ephemeral ? { ephemeralPartition: partition } : {}),
       // Aba nova NASCE em AUTO — inclusive quando a irmã está emulada. O modo é
       // da aba e morre com ela; herdar em silêncio faria o `+` abrir uma página
       // já escalada sem ninguém ter pedido.
@@ -723,7 +710,7 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
         tabId: tab.tabId,
         wc: tab.wc.id,
         partition,
-        url: url?.slice(0, 200),
+        url: sanitizeGuiArtifactPreviewUrl(url)?.slice(0, 200),
         tabs: liveTabs(mission).length,
         // D6 — AUTORIA: até 01/09 o diário não sabia QUEM abriu a aba. Sabe.
         owner: { kind: owner.kind, label: owner.label, ...(owner.paneId ? { paneId: owner.paneId } : {}) }
@@ -747,6 +734,8 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
       activeTabId: null,
       dockLayout: null,
       popoutLayout: null,
+      dockSurface: null,
+      popoutSurface: null,
       driving: false,
       driveTimer: null,
       notice: null,
@@ -786,7 +775,7 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
       guardFired(
         'browser-download-blocked',
         'o browser da missão não baixa arquivos (v1)',
-        { filename: filename.slice(0, 200), url: url.slice(0, 200) },
+        { filename: filename.slice(0, 200), url: sanitizeGuiArtifactPreviewUrl(url)?.slice(0, 200) },
         webContentsId,
         'download-blocked',
         `download bloqueado: "${filename.slice(0, 80)}" — o browser da missão não baixa arquivos; se precisar dele, baixe pelo terminal da missão`
@@ -817,6 +806,12 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
     liveTabs: (mission) => liveTabs(mission),
     activeTab: (mission) => activeRecord(mission),
     findTab: (mission, tabId) => findTab(mission, tabId),
+    toggleDevtools: (tab) => {
+      const host = resolveHost()
+      if (!host.toggleDevtools) return false
+      host.toggleDevtools(tab.view)
+      return true
+    },
     openTab: (mission, url) => openTab(mission, url, 'gesture'),
     loadInto: (mission, tab, url) => loadInto(mission, tab, url),
     // O × do dono fecha o `webContents` junto. O `closeContents: false` é do
@@ -837,6 +832,15 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
     // divergir em silêncio, e o contrato que o `ipc/browser.ts` e as suítes
     // enxergam é o mesmo de antes do corte, byte a byte.
     ...gestures,
+
+    async newArtifactTab(missionId, projectId, url) {
+      if (disposed) return { ok: false, error: 'o browser foi encerrado; reabra o Synkora' }
+      if (!isGuiArtifactPreviewUrl(url)) return { ok: false, error: 'abra a prévia pelo link do arquivo no chat' }
+      const mission = ensureMission(missionId, projectId)
+      if (mission.projectId !== projectId) return { ok: false, error: 'a prévia não pertence a esta missão' }
+      const opened = await openTab(mission, url, 'gesture', BROWSER_USER_TAB_OWNER, true)
+      return opened.ok ? { ok: true, tabId: opened.tab.tabId } : { ok: false, error: opened.error }
+    },
 
     async ensureTab(missionId, projectId, url, owner) {
       if (disposed) throw new Error('o browser embutido foi encerrado com a janela — reabra o app')
@@ -878,6 +882,12 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
       const mission = missions.get(missionId)
       if (!mission) return undefined
       const tab = activeRecord(mission)
+      return tab ? { tabId: tab.tabId, webContents: tab.wc } : undefined
+    },
+
+    tabById(missionId, tabId) {
+      const mission = missions.get(missionId)
+      const tab = mission ? findTab(mission, tabId) : undefined
       return tab ? { tabId: tab.tabId, webContents: tab.wc } : undefined
     },
 
@@ -1163,12 +1173,8 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
         }
       }
       const host = resolveHost()
-      // A GUARDA DE 296 ns (sonda do pop-out §P4): pergunta ao Electron ONDE a
-      // view está. `null` = ÓRFÃ (a janela morreu por baixo dela) — e é o ÚNICO
-      // predicado que enxerga isso: `view.getVisible()` devolve `true` e
-      // `wc.isDestroyed()` devolve `false` na órfã, e quem confia neles captura
-      // e PENDURA 6 s. `undefined` = host antigo (o dublê do gate), que cai na
-      // pergunta de sempre logo abaixo.
+      // The native host validates the current parent, including background
+      // carriers. Null means orphaned; missing metadata does not mean hidden.
       const where = host.viewWindow?.(tab.view)
       if (where === null) {
         const error =
@@ -1181,31 +1187,9 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
         })
         return { ok: false, error }
       }
-      if (where === undefined) {
-        // P5: com a janela do app escondida/minimizada as duas rotas de captura
-        // PENDURAM (5-8s) e o agente perde a rodada. Recusa na hora, com receita.
-        if (!host.windowVisible()) {
-          return {
-            ok: false,
-            error:
-              'a janela do Synkora está minimizada/escondida — a captura pendura ali; restaure a janela e repita'
-          }
-        }
-        return { ok: true, tab: { tabId: tab.tabId, webContents: tab.wc } }
-      }
-      // JANELA DESTACADA minimizada NÃO é motivo de recusa: a sonda mediu
-      // captura FRESCA em 19-81 ms com a janela minimizada/oculta/atrás, desde
-      // que a view já tenha composto ali — e ela compôs, porque o reparent só
-      // acontece com a janela visível (cura 1) e a geometria nunca se recalcula
-      // com a janela minimizada (cura 2). O dono minimiza o pop-out e o agente
-      // SEGUE trabalhando, com o carimbo de frescor de sempre.
-      if (mission.host === 'dock' && (!where.visible || where.minimized)) {
-        return {
-          ok: false,
-          error:
-            'a janela do Synkora está minimizada/escondida — a captura pendura ali; restaure a janela e repita'
-        }
-      }
+      // Visibility is not capture readiness: attached pages can compose in
+      // hidden windows too. captureBrowserShot bounds the attempt to 2s and
+      // labels freshness; never diagnose minimization without trying pixels.
       return { ok: true, tab: { tabId: tab.tabId, webContents: tab.wc } }
     },
 

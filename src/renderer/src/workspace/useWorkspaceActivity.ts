@@ -11,11 +11,6 @@ interface Activity {
   workspace: MissionWorkspaceSummary | null
 }
 
-function workKey(workspace: MissionWorkspaceSummary): string {
-  return JSON.stringify([workspace.insertions, workspace.deletions,
-    workspace.files.map(file => [file.path, file.status, file.insertions, file.deletions])])
-}
-
 /** Changes in published state, never guesses from chat or shell text. */
 export function workspaceActivityPanels(previous: Activity | undefined, next: Activity): WorkspacePanelId[] {
   const panels: WorkspacePanelId[] = []
@@ -34,7 +29,6 @@ export function workspaceActivityPanels(previous: Activity | undefined, next: Ac
 
   if (previous?.workspace && next.workspace) {
     if (next.workspace.ahead > previous.workspace.ahead) panels.push('historico')
-    else if (next.workspace.files.length > 0 && workKey(previous.workspace) !== workKey(next.workspace)) panels.push('trabalho')
   }
   return panels
 }

@@ -1,23 +1,8 @@
-/**
- * O ODÔMETRO DA CONVERSA (R25.1) — o que ela já custou de COTA.
- *
- * A queixa que abriu esta rodada (dono, 2026-08-20): "contexto 7% (~70k), mas
- * já foi ~10% da cota de 5h — o Synkora está gastando e não mostrando". A
- * auditoria (`.synkora/reports/AUDITORIA_COTA_CLAUDE_2026-08-20.md`) somou o
- * `usage` REAL de cada chamada nos transcripts dos dois seats e fechou a conta:
- * não há vazamento, há FÍSICA SEM MEDIDOR. Cada chamada de API re-processa o
- * contexto INTEIRO, e um turno de agente com N ferramentas são N chamadas — o
- * medidor do pane mostrava a JANELA (quanto ainda cabe), nunca o custo.
- *
- * Este módulo é PURO de propósito (nada de electron/fs): ele é o que deixa o
- * peso ser provado em node cru contra números medidos, em vez de conferido no
- * olho dentro do registro de sessões.
- *
- * DUAS RÉGUAS DIFERENTES, e confundi-las foi o bug original:
- * - CONTEXTO (R20) = ocupação da janela AGORA = a fotografia de UMA chamada.
- * - ODÔMETRO (R25) = a SOMA do que a conversa já consumiu, chamada a chamada.
- *   Ele só cresce; compactar reduz a primeira e não devolve nada da segunda.
- */
+/** Legacy conversation usage totals and a fixed weighted-token heuristic.
+ * Context occupancy, measured tokens and account subscription quota are
+ * separate quantities. Tool calls are not one-to-one with model requests.
+ * New deduplicated request/round accounting lives in guiRequestUsage.ts;
+ * historical observations without IDs cannot be retroactively deduplicated. */
 
 /**
  * As PARCELAS de uma chamada de API — a repartição que os dois CLIs entregam
@@ -43,19 +28,10 @@ export interface GuiConversationUsage {
   outputTokens: number
 }
 
-/**
- * OS PESOS — APROXIMAÇÃO DE COTA, NUNCA PREÇO.
- *
- * Com assinatura (sem API key) o CLI não reporta custo em dinheiro, então o
- * único jeito honesto de dizer "quanto isto pesou" é em TOKENS-PESO. Os
- * multiplicadores são os da tabela de preço relativo das famílias atuais
- * (escrever cache ~1,25×, ler cache ~0,1×, saída ~5× a entrada) e foram
- * VALIDADOS na auditoria: aplicados aos transcripts das 5h do seat Hotmail,
- * reproduziram os 81% que o `/usage` do próprio CLI reportou.
- *
- * REGRA DE RE-SONDA: se a tabela de preço relativo mudar, é aqui que envelhece
- * — e a UI nunca fala em $ justamente porque isto é uma aproximação.
- */
+/** Compatibility heuristic, not a current model pricing table or a verified
+ * subscription quota formula. The historical export names are retained for
+ * old consumers. Show the raw parcels and the estimate label alongside it.
+ * Mirrored solely for presentation in renderer/src/guiCostSignals.ts. */
 export const GUI_QUOTA_WEIGHT_CACHE_WRITE = 1.25
 export const GUI_QUOTA_WEIGHT_CACHE_READ = 0.1
 export const GUI_QUOTA_WEIGHT_INPUT = 1
@@ -142,10 +118,8 @@ export function guiConversationWeightTokens(usage: GuiConversationUsage | undefi
 /**
  * O LIMIAR DA CONVERSA PESADA.
  *
- * 150k não é palpite: o `/usage` dos dois seats reportou 46–67% do uso do dia
- * em contexto ACIMA de 150k, e a conversa que sozinha comeu ~70% da janela de
- * 5h estava em 190–326k por chamada. Daqui para cima cada mensagem custa mais
- * do que uma conversa nova inteira.
+ * Limiar operacional herdado para contexto grande. Não estabelece o custo
+ * relativo de outra conversa nem o percentual da assinatura consumido.
  *
  * ESPELHO DECLARADO: o par mora em `src/renderer/src/guiCostSignals.ts`
  * (GUI_HEAVY_CONTEXT_TOKENS) — o renderer nunca importa o main.
@@ -163,24 +137,8 @@ export function guiHeavyContextMilestone(contextTokens: unknown): number | null 
   return Math.floor(tokens / GUI_HEAVY_CONTEXT_TOKENS) * GUI_HEAVY_CONTEXT_TOKENS
 }
 
-/** Arredondamento de PROSA (o dono lê "192k", como a auditoria escreve). */
-function thousands(tokens: number): string {
-  return `${Math.round(tokens / 1_000)}k`
-}
-
-/**
- * A NOTA DA CONVERSA PESADA — advisory, com as três saídas REAIS de hoje.
- *
- * Beco sem saída é bug de primeira classe (regra da casa): toda fala do app
- * nomeia a RECEITA. As três existem e são executáveis DESTE chat: fechar a
- * missão (a entrega vira briefing da próxima — R16), `/compact` (está na régua
- * de slash da casa e vai CRU ao binário — R22) e seguir ciente do custo, que é
- * uma escolha legítima e por isso está escrita.
- */
-export function guiHeavyConversationNote(contextTokens: number): string {
-  return (
-    `esta conversa re-lê ~${thousands(contextTokens)} tokens a cada mensagem — ` +
-    'fechar a missão leva o conhecimento adiante (a entrega vira briefing da próxima), ' +
-    '/compact compacta a conversa aqui mesmo, ou siga ciente do custo.'
-  )
-}
+// A NOTA DA CONVERSA PESADA no fio morreu em 2026-09-16 (ordem do dono: "é
+// feia; um aviso em tooltip seria melhor"). O marco continua sendo carimbado
+// aqui e auditado no diário; a receita das três saídas (fechar a missão,
+// /compact, seguir ciente) mora agora em `guiCostSignals.guiHeavyConversationTip`
+// (renderer), no tooltip e no painel do medidor de contexto.

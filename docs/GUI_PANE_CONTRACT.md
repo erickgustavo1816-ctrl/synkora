@@ -6,6 +6,22 @@ existe: `MaestroSession` (claude, stream-json) e `CodexSession` (codex, app-serv
 instanciados POR PANE. Este contrato fixa os nomes e formas da costura para dois
 agentes construírem em paralelo (motor/main × pane/renderer) sem colisão.
 
+## Respostas rápidas de aprovação (2026-09-11)
+
+Pedidos de aprovação conversacional devem usar a pergunta estruturada do CLI
+(`AskUserQuestion`, `request_user_input` ou `request_user_input_async`), com a
+proposta identificada na pergunta e as opções **Aprovar** e **Não aprovar**.
+Uma pergunta única, de escolha única e com duas opções usa botões que enviam
+a resposta diretamente. O rótulo escolhido e o ID/texto da pergunta seguem
+pelo mesmo canal `gui:answerQuestion`, com a trava de envio já existente.
+
+**Outra resposta** permite escrever um ajuste quando o pedido aceita texto
+livre. Abrir o cartão, Enter sem escolha, silêncio e **Pular** não aprovam.
+Perguntas múltiplas ou de múltipla escolha mantêm o fluxo de seleção e envio.
+Não há inferência nova sobre o texto da IA; a barra legada de aceite mantém
+seu detector e passa a oferecer também **Não aprovar**. Esses cliques não
+substituem permissões de ferramentas nem os botões de integração/publicação.
+
 ## Papéis
 
 - **Agente MOTOR** é dono de: `src/main/guiSessions.ts` (novo), seams mínimos em
@@ -60,6 +76,7 @@ export interface GuiLivePayload { paneId: string; evt: unknown /* SessionEvent *
 | `gui:interrupt` | `(paneId) => {ok}` | interrompe o turno |
 | `gui:kill` | `(paneId) => {ok}` | encerra a sessão do pane |
 | `gui:state` | `(paneId) => {events: GuiLivePayload['evt'][]}` | replay p/ remontagem (main guarda ring buffer ~500 eventos por pane) |
+| `gui:fileOpen` | `(paneId, reference, selectedPath?, mode?: 'auto' \| 'preview' \| 'browser') => GuiFileOpenResult` | revalida o arquivo na raiz da conversa; `auto` abre artefatos renderizáveis no browser da missão e código no leitor; `preview` pede o leitor e `browser` pede a prévia explícita |
 | `gui:attach` | `(paneId, payload: GuiAttachPayload) => {ok, attachment?, error?}` | anexo do composer: grava/referencia e devolve descritor durável |
 | `gui:attachFolder` | `(paneId) => {ok, attachment?, cancelled?, error?}` | abre o diálogo nativo e referencia qualquer pasta local, sem copiar a árvore |
 | `gui:answerPlanProposal` | `(paneId, requestId, approve, text?) => {ok, error?}` | desfecho do card de PROPOSTA DE PLANO (2026-08-15): `approve=true` cria o Plan (o draft autoritativo sai do RING do pane, nunca do renderer) e injeta o recibo na conversa; `approve=false` exige `text` e devolve a prosa do dono ao agente |
@@ -142,9 +159,17 @@ interface GuiAttachResult {
 - Anexo nunca sobrescreve anexo: nome colidido ganha sufixo `-1`, `-2`…
 - Symlink/junction nos diretórios é recusado; o destino físico precisa continuar
   dentro do cwd e o arquivo nasce com criação exclusiva (`wx`).
-- Teto de **10 MB por arquivo** (`GUI_ATTACHMENT_MAX_BYTES`), aplicado também
+- Teto de **50 MB por arquivo** (`GUI_ATTACHMENT_MAX_BYTES`), aplicado também
   ao tamanho bruto e ao formato estrito do base64 ANTES de alocar o buffer; no
   máximo 20 anexos e 50 MB de arquivos por mensagem.
+- Falhas de anexação aparecem em um aviso não modal acima do composer, em portal,
+  com mensagem curta e nome abreviado quando necessário. O aviso some após 5 s,
+  pode ser fechado pelo dono, renova o prazo em uma nova falha e não toma foco
+  nem altera a altura do campo de mensagem.
+- Mensagens só com anexos (arquivo ou pasta), inclusive na fila, não desenham
+  uma bolha de texto vazia. Espaços e quebras de linha sem palavras também
+  contam como texto vazio. Os anexos alinham à direita com o rótulo do dono,
+  inclusive quando ocupam várias linhas; legenda e controles de entrega continuam visíveis.
 - O blackbox registra somente `kind` e sucesso/falha: nunca path, nome ou erro
   bruto de filesystem.
 - As decisões puras (nome seguro, unicidade, teto) moram em
@@ -281,7 +306,9 @@ agentTaskId?: string                   // task_id do CLI; presente sempre que ag
 ### `continues` e o plim
 
 `result.continues = fila de turnos do usuário não vazia **OU** registro de
-tarefas de fundo não vazio`. O sequenciador de avisos (`guiNotices.ts`) já
+agentes de fundo ativos`. Processos `local_bash`, como o servidor de preview,
+não prolongam o turno depois da resposta final. Um tipo desconhecido continua
+sendo tratado como trabalho ativo, de forma conservadora. O sequenciador de avisos (`guiNotices.ts`) já
 parqueia em `continues: true` e drena no terminal final — com o `continues`
 honesto ele passa a dar **um plim por turno lógico**, sem conhecer subagente.
 
@@ -291,6 +318,11 @@ retomada). Só os DOIS joins registram (`task_started` e o ACK); a fotografia
 reconcilia mas nunca adota tarefa desconhecida (sem `tool_use_id` não haveria
 card para fechar). Interrupção confirmada, `closed`, `fatal` e dispose drenam
 tudo e fecham cada card como `cancelled` ANTES do terminal correspondente.
+Se a raiz já terminou, uma interrupção atua somente sobre os agentes ainda
+ativos; um servidor de preview sozinho não exige confirmação de interrupção.
+Terminais e confirmações atrasados são idempotentes e não encerram um turno
+mais novo. A normalização de `turn-continuation` no main preserva a atividade
+factual de agentes nativos e delegados via MCP antes de liberar o composer.
 
 ### Codex: o wire REAL dos sub-agentes
 
@@ -405,6 +437,78 @@ virando no-op silencioso — isso é desejado, não descuido.
   limite de erro recuperável; detalhes crus da exceção nunca aparecem nem vão
   para log, e apenas o painel defeituoso cai.
 - Fechar o pane chama `gui:kill` (via fluxo de fechar existente).
+
+## Browser: observações e verificações econômicas (2026-09-11)
+
+O catálogo inclui `browser_check`: uma receita declarativa com até quatro
+cenários, oito alvos e 24 ações no total. A receita roda localmente na aba da
+identidade chamadora, verifica cada alvo e retorna um recibo limitado. Não há
+uma inferência de IA por clique, espera ou largura. Falha, perda de identidade,
+mudança de viewport pelo dono ou fim do orçamento suspendem os passos seguintes;
+uma ação já enviada ao Chromium termina dentro do limite do driver antes de
+liberar a próxima operação. O prazo não cancela comandos em voo.
+
+`browser_read` e a leitura de `browser_open` usam observação compacta por
+padrão, com corpo de até 1.500 caracteres e resposta total de até 2.000.
+`scope` limita ao trecho relevante; `detail: 'full'` recupera detalhes maiores.
+`baselineId` pede comparação somente com uma observação explícita ainda
+compatível, não truncada e recente. Navegação, expiração, carregamento e sinais
+de geometria/estilo invalidam a confirmação de estado repetido. O recibo de
+igualdade é sobre as medições efetuadas, não uma comparação de todos os pixels.
+
+Capturas de `browser_shot`/`browser_check` são artefatos para o dono por padrão.
+`purpose: 'vision'` pede a imagem para análise pelo modelo. A aprovação estética
+continua dependendo de inspeção visual; medidas e ausência de erro no console
+não a substituem. O contrato orienta agrupar a verificação conhecida e repetir
+somente após mudança, falha ou dúvida concreta. A telemetria registra operação,
+duração, caracteres de retorno e quantidade de imagens, sem conteúdo da página.
+
+## Artefatos clicáveis (2026-09-11)
+
+Referências a HTML, imagens e mídia renderizável abrem uma aba do dono no
+browser da missão. O menu oferece o browser explicitamente e mantém a leitura
+do código. Ambiguidade exige selecionar o arquivo; essa seleção conserva a
+intenção original. A abertura respeita o painel atual e o browser destacado.
+PDF mantém a abertura anterior e a opção de programa padrão: o visualizador
+nativo do Electron 43.1.1 falhou no controle com partição privada em memória,
+portanto não é oferecido como prévia até haver renderização comprovada ali.
+
+O main resolve a raiz física da conversa antes de abrir. A prévia usa um
+servidor temporário em loopback para o documento selecionado e seus arquivos
+estáticos permitidos, sem listar diretórios ou expor a raiz inteira. A aba de
+artefato tem armazenamento efêmero próprio. A autorização é revalidada em cada
+leitura; fechar a aba encerra a prévia. Endereços temporários de acesso são
+redigidos em logs e retornos de ferramentas.
+
+## Contadores de consumo (2026-09-11)
+
+`context-usage.usage` carrega fotografias de `GuiUsageMeters` para a conversa
+e a última rodada do dono. O registro no main deduplica IDs de mensagens do
+Claude e calcula deltas dos totais do Codex; eventos repetidos e retomadas não
+somam novamente. O renderer aplica a fotografia, sem acumular eventos.
+Ausência de medição permanece indisponível, diferente de zero. A contagem
+de chamadas exige IDs de requisição; registros antigos são rotulados como
+registros de uso, não chamadas comprovadas.
+Os metadados guardam até 2.048 IDs em 16 fontes. Se faltar identificação ou
+esse limite for alcançado, a fotografia anuncia medição parcial; IDs antigos
+não são descartados silenciosamente para depois serem contados novamente.
+
+Entrada, gravação de cache, leitura de cache e saída são parcelas distintas.
+Tokens-peso são uma estimativa e não equivalem ao percentual da assinatura.
+Contexto ocupado, consumo da rodada, total da conversa, custo estimado informado
+pelo CLI e limite real da conta são medidas separadas. Contabilidade e persistência
+não fazem novas chamadas de IA nem entram no contexto do modelo.
+
+## Compactação de contexto do Codex (2026-09-11)
+
+O ciclo estruturado `contextCompaction` do app-server é traduzido em
+`context-compaction { active }`, com escopo de thread/turno e deduplicação.
+Enquanto ativo, o chat mostra **Compactando contexto…** no indicador de
+atividade. A confirmação de aceite de `/compact` não encerra esse aviso.
+Conclusão, interrupção, falha, novo turno ou reinício limpam a fase; o replay
+de uma sessão ainda viva preserva-a, enquanto o replay para respawn a limpa.
+Perguntas bloqueantes mantêm precedência sobre o indicador. Nenhuma frase do
+modelo nem raciocínio interno é usado para inferir ou explicar compactação.
 
 ## O que NÃO entra nesta onda
 

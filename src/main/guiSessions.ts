@@ -30,11 +30,15 @@ import {
   withGuiConversationCommands
 } from './guiConversationCommands'
 import { MaestroSession, type SessionEvent } from './maestroSession'
+import { GUI_SKILL_RELOAD_TTL_MS } from './guiClaudeSkillReload'
+import { CLAUDE_PUBLIC_PROGRESS_STYLE } from './guiClaudePublicProgress'
+import { guiPublicCommentaryText, type GuiCommentaryIdentity, type GuiCommentaryDelivery } from './guiPublicCommentary'
+import { canSteerGuiQueuedMessage } from './guiQueuedTurnDelivery'
 import { GuiProgressTracker, type GuiProgressInput, type GuiProgressHelpers } from './guiProgress'
 import { loadJsonStore, persistJsonStore } from './jsonStore'
 import { limitGuiToolInput } from './guiToolInput'
 import { GuiAlertSequencer, type GuiNoticeKind } from './guiNotices'
-import { GuiIntegrationReply, pendingIntegrationTool } from './guiIntegrationReply'
+import { GuiIntegrationReply, pendingIntegrationTool, type IntegrationReplyPhase } from './guiIntegrationReply'
 import {
   GUI_ATTACHMENT_MAX_FILES,
   isGuiAttachmentDescriptor,
@@ -43,6 +47,15 @@ import {
 } from './guiAttachments'
 import { validateGuiAttachmentReferences } from './guiAttachmentStorage'
 import { GuiAttachmentCapabilityStore } from './guiAttachmentCapabilities'
+import { GuiBrowserReferenceStore } from './guiBrowserReferences'
+import {
+  isGuiBrowserReferenceList,
+  withGuiBrowserReferences,
+  type BrowserElementSnapshot,
+  type GuiBrowserReference,
+  type GuiBrowserReferencesChanged,
+  type GuiBrowserReferencesResult
+} from './guiBrowserReferenceTypes'
 import { isPlanDraft, type PlanDraft } from './planDraft'
 import {
   GuiHelperCardCorrelator,
@@ -60,9 +73,11 @@ import {
 } from './guiOwnerMail'
 import { GuiOwnerReplyDebt, guiOwnerReplyDebt } from './guiOwnerReplyDebt'
 import { guiOwnerDebtHookSettings } from './guiOwnerDebtHook'
+import { guiOwnerCancelText } from './guiOwnerMail'
 import {
   GuiOwnerStepTracker,
   guiOwnerMessageStateEvent,
+  isGuiOwnerMessageStateEvent,
   ownerSteerPlan,
   type GuiOwnerMessageState,
   type GuiOwnerPendingInteraction,
@@ -73,10 +88,19 @@ import {
   guiAddApiCall,
   guiConversationWeightTokens,
   guiHeavyContextMilestone,
-  guiHeavyConversationNote,
   isGuiConversationUsage,
   type GuiConversationUsage
 } from './guiConversationOdometer'
+import {
+  beginGuiUsageRound,
+  createGuiRequestUsage,
+  guiUsageMeters,
+  isGuiRequestUsageState,
+  isGuiUsageMeters,
+  markGuiUsageUnattributed,
+  recordGuiUsageSample,
+  type GuiRequestUsageState
+} from './guiRequestUsage'
 import type {
   GuiHelperChange,
   GuiHelperDelegator,
@@ -216,6 +240,8 @@ export interface GuiResult {
   ok: boolean
   error?: string
   retryable?: boolean
+  /** Interrupt arrived after the authoritative execution had already ended. */
+  alreadyIdle?: boolean
 }
 
 /** Mudança de executor solicitada pelo composer. `null` limpa o override;
@@ -247,6 +273,7 @@ export interface GuiQueuedDeliveryInput {
     permissionMode: string
   }
   attachments: GuiAttachmentDescriptor[]
+  browserReferences?: GuiBrowserReference[]
 }
 
 export function guiQueuedDeliveryProblem(value: unknown): string | null {
@@ -289,7 +316,10 @@ export function guiQueuedDeliveryProblem(value: unknown): string | null {
   ) {
     return 'anexos da fila em formato inválido'
   }
-  if (!candidate.text?.trim() && candidate.attachments.length === 0) return 'mensagem da fila vazia'
+  if (candidate.browserReferences !== undefined && !isGuiBrowserReferenceList(candidate.browserReferences)) {
+    return 'referências do browser da fila em formato inválido'
+  }
+  if (!candidate.text?.trim() && candidate.attachments.length === 0 && !candidate.browserReferences?.length) return 'mensagem da fila vazia'
   return null
 }
 
@@ -561,11 +591,16 @@ export function isGuiPersistedEvent(value: unknown): value is SessionEvent {
       return typeof event['text'] === 'string'
     case 'thinking':
       return guiOptionalString(event['text'])
+    case 'context-compaction':
+      return typeof event['active'] === 'boolean'
     case 'turn-started':
     case 'conversation-cleared':
       return true
     case 'turn-continuation':
-      return typeof event['continues'] === 'boolean'
+      return (
+        typeof event['continues'] === 'boolean' &&
+        (event['turnActive'] === undefined || typeof event['turnActive'] === 'boolean')
+      )
     case 'session-restarted':
       return (
         typeof event['ready'] === 'boolean' &&
@@ -583,11 +618,15 @@ export function isGuiPersistedEvent(value: unknown): value is SessionEvent {
     case 'user-message':
       return (
         guiMessageIdProblem(event['id']) === null &&
-        guiPromptProblem(event['text']) === null &&
+        guiPromptProblem(event['text'], 'mensagem', true) === null &&
         (event['attachments'] === undefined ||
           (Array.isArray(event['attachments']) &&
             event['attachments'].length <= 20 &&
             event['attachments'].every(isGuiAttachmentDescriptor))) &&
+        (event['browserReferences'] === undefined || isGuiBrowserReferenceList(event['browserReferences'])) &&
+        (Boolean((event['text'] as string).trim()) ||
+          (Array.isArray(event['attachments']) && event['attachments'].length > 0) ||
+          (Array.isArray(event['browserReferences']) && event['browserReferences'].length > 0)) &&
         typeof event['at'] === 'number' &&
         Number.isFinite(event['at'])
       )
@@ -667,7 +706,8 @@ export function isGuiPersistedEvent(value: unknown): value is SessionEvent {
         guiNullableContextTokens(event['contextTokens']) &&
         guiNullableContextWindow(event['contextWindow']) &&
         guiOptionalOdometerCount(event['convCalls']) &&
-        guiOptionalOdometerCount(event['convWeightTokens'])
+        guiOptionalOdometerCount(event['convWeightTokens']) &&
+        (event['usage'] === undefined || event['usage'] === null || isGuiUsageMeters(event['usage']))
       )
     case 'result':
       return (
@@ -677,6 +717,7 @@ export function isGuiPersistedEvent(value: unknown): value is SessionEvent {
           event['outcome'] === 'failed' ||
           event['outcome'] === 'cancelled') &&
         (event['continues'] === undefined || typeof event['continues'] === 'boolean') &&
+        (event['turnActive'] === undefined || typeof event['turnActive'] === 'boolean') &&
         guiOptionalString(event['errorText']) &&
         guiOptionalString(event['resultText']) &&
         guiOptionalString(event['fastModeState']) &&
@@ -711,6 +752,7 @@ function guiTranscriptCheckpoint(evt: SessionEvent): boolean {
     case 'conversation-cleared':
     case 'executor-changed':
     case 'context-usage':
+    case 'context-compaction':
     case 'command-output':
     case 'command-completed':
     case 'limit':
@@ -783,6 +825,9 @@ export class GuiEventRing {
   }
 
   push(evt: unknown): number {
+    // Thought content is never displayed. Keep one activity signal per
+    // contiguous span so token traffic cannot evict the owner's conversation.
+    if (guiEventRecord(evt)?.['type'] === 'thinking') evt = { type: 'thinking' }
     const seq = ++this.nextSeq
     const size = guiEventSize(evt)
 
@@ -793,6 +838,11 @@ export class GuiEventRing {
     const event = guiEventRecord(evt)
     const previous = this.items.at(-1)
     const previousEvent = previous ? guiEventRecord(previous.evt) : null
+    if (event?.['type'] === 'thinking' && previous?.seq === seq - 1 &&
+      previousEvent?.['type'] === 'thinking') {
+      previous.seq = seq
+      return seq
+    }
     if (
       event?.['type'] === 'delta' &&
       typeof event['text'] === 'string' &&
@@ -1018,6 +1068,8 @@ export interface GuiSessionRecord {
    * sai junto com o resume no `/clear`/troca de identidade.
    */
   conversationUsage?: GuiConversationUsage
+  /** Numeric accounting plus opaque request IDs. Never model or tool text. */
+  requestUsage?: GuiRequestUsageState
   /**
    * R25.3a — o último MARCO de conversa pesada já anunciado no fio. Persistido
    * porque o aviso é UM por marco: sem o carimbo, todo restart do app repetiria
@@ -1218,6 +1270,7 @@ export function guiSessionWithoutResume(record: GuiSessionRecord): GuiSessionRec
   // R25.1 — o odômetro é DA CONVERSA: sem endereço de resume não existe mais a
   // conversa que ele media, e o marco já anunciado se re-arma com ela.
   delete next.conversationUsage
+  delete next.requestUsage
   delete next.heavyContextMilestone
   return next
 }
@@ -1421,27 +1474,9 @@ interface GuiQueuedDeliveryLock {
 // MINI-TURNO próprio logo depois do `result` do agente (`commands_changed` →
 // `init` → `result` com "Reloaded skills: N skills available (1 added)").
 //
-// Daí saem as duas peças abaixo. A MARCA conta quantos `result` ainda são do
-// AGENTE antes de o recibo chegar (1 quando o pedido sai com o turno aberto — o
-// caso real, porque o `skill_pull` roda dentro de uma tool; 0 com a sessão
-// ociosa, quando o CLI desenfileira na hora). O `result` que chega com o
-// contador zerado é o RECIBO: ele NÃO é turno do agente, então não atravessa o
-// anel como fim de turno (seria um segundo plim, um segundo fecho de pote e uma
-// resposta que o dono não pediu) — ele vira uma NOTA no fio.
-interface GuiSkillReloadMark {
-  /** quantos `result` do AGENTE ainda vêm antes do recibo */
-  pendingAgentResults: number
-  at: number
-}
-
-/** Teto de espera pelo recibo. Um turno de agente pode passar de meia hora, e a
- *  marca precisa sobreviver a ele; o que ela NÃO pode é sobreviver ao dia e
- *  engolir o `result` de um turno futuro se o CLI nunca executar o comando. */
-const GUI_SKILL_RELOAD_TTL_MS = 60 * 60 * 1_000
-
-/** O slash cru que recarrega o catálogo nativo do claude. 0 token: o CLI o
- *  executa localmente (medido na sonda). */
-const GUI_SKILL_RELOAD_COMMAND = '/reload-skills'
+// A confirmação vem identificada pelo motor a partir do protocolo. A posição
+// de um result na fila não prova sua origem: contar resultados engolia a
+// resposta real e deixava o chat em “preparando”. A marca só deduplica pedidos.
 
 /** A linha que o DONO lê quando o recibo chega. `❖` é o marcador do harness (o
  *  mesmo das notas de pull/discard), para as três histórias ficarem juntas no
@@ -1486,6 +1521,11 @@ export interface GuiSessionDeps {
   storeFile?: string
   /** Autoridade opaca compartilhada com os handlers de attach/preview. */
   attachmentCapabilities?: GuiAttachmentCapabilityStore
+  /** Immutable page selections, scoped by the main process to their chat. */
+  browserReferences?: GuiBrowserReferenceStore
+  isPaneActive?(paneId: string): boolean
+  browserReferenceIdentity?(paneId: string): { missionId: string; projectId: string } | undefined
+  onBrowserReferencesChanged?(payload: GuiBrowserReferencesChanged): void
   /** Caixa-preta opcional. */
   record?(
     event: string,
@@ -1622,6 +1662,8 @@ export const GUI_HELPER_OWNER_INTERRUPTION =
 const READY_TIMEOUT_MS = 45_000
 
 export class GuiSessionRegistry {
+  private readonly cancelledIntegrationRecovery = new WeakSet<object>()
+  private readonly pendingIntegrationRecovery = new Map<string, object>()
   private readonly progressTracker = new GuiProgressTracker()
   private readonly integrationReply = new GuiIntegrationReply()
 
@@ -1648,6 +1690,7 @@ export class GuiSessionRegistry {
   /** A entrega enfileirada reaplica opcoes e envia sob uma unica trava. */
   private readonly queuedDeliveries = new Map<string, GuiQueuedDeliveryLock>()
   private readonly attachmentCapabilities: GuiAttachmentCapabilityStore
+  private readonly browserReferences: GuiBrowserReferenceStore
   /** AJUDANTES SEM ABA (2026-08-18): a costura entre a chamada `delegate` que o
    *  CLI publica no anel e a frota que o motor abriu — e o emissor dos cards
    *  sintetizados. Publica SEMPRE pelo sink da sessão viva: card que nascesse
@@ -1669,13 +1712,14 @@ export class GuiSessionRegistry {
   /** O motor de missões (ver `attachIntegration`). Ausente = registro sem fila:
    *  abrir uma conversa não re-estimula ⇪ nenhum. */
   private integration?: GuiSessionIntegrationControls
-  /** SKILLS 3.0 — a recarga PEDIDA e ainda sem recibo, por pane (ver
-   *  `reloadSkills`). Chave = paneId; sai por recibo, por TTL, ou com a sessão. */
-  private readonly skillReloads = new Map<string, GuiSkillReloadMark>()
+  /** Pending reload request time by pane. Receipt/session close removes it;
+   * expiry permits a fresh request without classifying any agent result. */
+  private readonly skillReloads = new Map<string, number>()
 
   constructor(deps: GuiSessionDeps) {
     this.deps = deps
     this.attachmentCapabilities = deps.attachmentCapabilities ?? new GuiAttachmentCapabilityStore()
+    this.browserReferences = deps.browserReferences ?? new GuiBrowserReferenceStore()
     this.ownerMail = deps.ownerMail ?? guiOwnerMailbox
     this.replyDebt = deps.replyDebt ?? guiOwnerReplyDebt
     this.helperCards = new GuiHelperCardCorrelator({
@@ -1711,6 +1755,61 @@ export class GuiSessionRegistry {
   /** Sessão do pane (undefined = nunca criada ou já encerrada). */
   has(paneId: string): boolean {
     return this.panes.has(paneId)
+  }
+
+  /** Freeze the eligible chat before native DevTools asynchronously reads DOM.
+   * A tab may belong to a helper; that identity never selects the destination. */
+  prepareBrowserReference(
+    missionId: string,
+    projectId: string
+  ): ((tabId: string, snapshot: BrowserElementSnapshot) => GuiResult) | undefined {
+    const eligible = [...this.panes.values()].filter(entry => {
+      const paneId = entry.spawn.paneId
+      const identity = this.deps.browserReferenceIdentity?.(paneId)
+      return this.deps.isPaneActive?.(paneId) === true && entry.spawn.projectId === projectId &&
+        identity?.missionId === missionId && identity.projectId === projectId
+    })
+    if (eligible.length !== 1) return undefined
+    const target = eligible[0]
+    const paneId = target.spawn.paneId
+    return (tabId, snapshot) => {
+      const identity = this.deps.browserReferenceIdentity?.(paneId)
+      if (this.panes.get(paneId) !== target || identity?.missionId !== missionId || identity.projectId !== projectId) {
+        return { ok: false, error: 'a conversa mudou durante a seleção; abra o chat da missão e selecione novamente' }
+      }
+      try {
+        this.browserReferences.capture(paneId, missionId, tabId, snapshot)
+        this.publishBrowserReferences(paneId)
+        return { ok: true }
+      } catch (error) {
+        return { ok: false, error: error instanceof Error ? error.message : 'não foi possível guardar a referência' }
+      }
+    }
+  }
+
+  browserReferencesList(paneId: string): GuiBrowserReferencesResult {
+    try { return { ok: true, references: this.browserReferences.list(paneId) } }
+    catch { return { ok: false, references: [], error: 'pane sem identificador válido' } }
+  }
+
+  removeBrowserReference(paneId: string, id: unknown): GuiBrowserReferencesResult {
+    return this.consumeBrowserReferences(paneId, [id])
+  }
+
+  consumeBrowserReferences(paneId: string, ids: unknown): GuiBrowserReferencesResult {
+    try {
+      this.browserReferences.consume(paneId, ids)
+      this.publishBrowserReferences(paneId)
+      return this.browserReferencesList(paneId)
+    } catch (error) {
+      return { ok: false, references: this.browserReferencesList(paneId).references,
+        error: error instanceof Error ? error.message : 'não foi possível atualizar as referências' }
+    }
+  }
+
+  private publishBrowserReferences(paneId: string): void {
+    try { this.deps.onBrowserReferencesChanged?.({ paneId, references: this.browserReferences.list(paneId) }) }
+    catch { /* The committed snapshot is recoverable through the list endpoint. */ }
   }
 
   /** Conversa gravada para este pane — a chave do resume pós-boot. */
@@ -1998,16 +2097,22 @@ export class GuiSessionRegistry {
       // executa a tool. Replay e IPC recebem uma cópia orçada.
       const budgeted: SessionEvent =
         evt.type === 'tool' ? { ...evt, input: limitGuiToolInput(evt.input) } : evt
-      const visibleEvt: SessionEvent = evt.type === 'ready'
-        ? { ...evt, caps: withGuiConversationCommands(evt.caps) }
-        : metered?.event ?? budgeted
+      // O FECHO DA INTEGRAÇÃO lê o evento ANTES do anel: o `result` do agente
+      // que chega com a finalização armada é republicado como continuação da
+      // rodada (o app ainda está finalizando), e a geração retomada na raiz
+      // herda essa rodada até o agente falar de verdade (guiIntegrationReply).
+      const visibleEvt: SessionEvent = this.integrationReply.observe(
+        token,
+        evt.type === 'ready'
+          ? { ...evt, caps: withGuiConversationCommands(evt.caps) }
+          : metered?.event ?? budgeted
+      )
       const seq = ring.push(visibleEvt)
       // Eventos intermediários ficam no anel; o próximo ponto legível captura
       // o snapshot inteiro, e dispose captura inclusive um stream parcial.
       // Assim o histórico é durável sem escrever disco por token/tool-start.
       if (guiTranscriptCheckpoint(visibleEvt)) this.saveTranscript(spawn.paneId, ring)
       this.deps.push({ paneId: spawn.paneId, seq, evt: visibleEvt })
-      this.integrationReply.observe(token, visibleEvt)
       // A PRIMEIRA PODA DESTA CONVERSA (R24.1). Uma notícia só: o que a linha
       // do topo precisa é a VERDADE "há mais antes", e o número exato volta
       // afinado no próximo replay. O `seq` é o do anel (posterior ao evento
@@ -2145,18 +2250,10 @@ export class GuiSessionRegistry {
           })
         }
       }
-      // R25.3a — A NOTA DA CONVERSA PESADA, uma por marco. Sai pelo MESMO sink
-      // (`command-output` vira nota no redutor), então ela é durável e volta no
-      // replay; e em MICROTASK, DEPOIS de a medição que a disparou já ter
-      // atravessado o anel e o IPC. É ADVISORY: nada bloqueia, nada de relógio
-      // novo, e a receita vem escrita nela.
-      if (metered?.note) {
-        const note = metered.note
-        queueMicrotask(() => {
-          if (!token.alive) return
-          publish({ type: 'command-output', text: note })
-        })
-      }
+      // R25.3a → R25.3b (2026-09-16): a conversa pesada NÃO fala mais no fio.
+      // O marco continua carimbado no diário por `meterConversation`; a receita
+      // mora no medidor de contexto do composer (tooltip + painel), derivada do
+      // `context-usage` sticky que já atravessa o anel e o replay.
     }
 
     const flushPendingTerminal = (): void => {
@@ -2170,17 +2267,58 @@ export class GuiSessionRegistry {
       }
     }
 
-    const sink = (evt: SessionEvent): void => {
+    const sink = (incoming: SessionEvent): void => {
       // Claude pode escrever `result` antes dos tool-result de uma ferramenta
       // filha no mesmo chunk de stdout. Publicar o terminal só no microtask
       // seguinte deixa o chunk inteiro atravessar o parser antes do ring e do
       // reducer, sem mascarar um órfão quando nenhum resultado aparecer.
       if (!token.alive) return
+      // Capture parent activity at the protocol boundary, before a deferred
+      // terminal or helper projection can confuse it with background work.
+      const turnActive = this.panes.get(spawn.paneId)?.session.turnActive
+      let evt: SessionEvent =
+        (incoming.type === 'result' || incoming.type === 'turn-continuation') &&
+        typeof turnActive === 'boolean'
+          ? { ...incoming, turnActive }
+          : incoming
+      if (evt.type === 'turn-continuation' && !evt.continues) {
+        const backend = this.panes.get(spawn.paneId)?.session
+        // One source finishing cannot declare the whole chat idle while
+        // another source is active. Shell previews are excluded by the motor.
+        const continues = turnActive === true ||
+          (backend instanceof MaestroSession && backend.backgroundActive) ||
+          this.helperCards.hasLiveHelpers(spawn.paneId)
+        if (continues) evt = { ...evt, continues: true }
+      }
+      // Tools may settle later in the same IO chunk, but the terminal of A
+      // must cross the renderer before the first event belonging to B.
+      if (
+        pendingTerminal.length > 0 && (
+          evt.type === 'turn-continuation' || evt.type === 'turn-started' || evt.type === 'thinking' ||
+          evt.type === 'context-compaction' ||
+          evt.type === 'delta' || evt.type === 'text' ||
+          (evt.type === 'tool' && !evt.parentToolUseId)
+        )
+      ) flushPendingTerminal()
       // R39.1 D2' — O RECIBO DE LEITURA para AQUI: ele não é fala de ninguém, e
       // não pode entrar no anel nem no transcript. O que a tela lê é o
       // `owner-message-state` que este ramo publica logo abaixo.
       if (evt.type === 'owner-steer-absorbed') {
         this.readOwnerSteer(spawn.paneId, 'echo', evt.tag)
+        return
+      }
+      if (evt.type === 'owner-steer-rejected') {
+        if (this.ownerMail.releaseSteered(spawn.paneId, evt.tag)) {
+          this.ownerSteer.takeRead(spawn.paneId, evt.tag)
+          this.deps.record?.(
+            'gui-owner-steer-rejected',
+            { paneId: spawn.paneId, projectId: spawn.projectId },
+            { messageId: evt.tag, reason: evt.reason }
+          )
+          queueMicrotask(() => {
+            if (token.alive) this.flushOwnerMail(spawn.paneId, 'recusa-do-cli', { skipSteered: true })
+          })
+        }
         return
       }
       if (evt.type === 'tool') {
@@ -2256,6 +2394,10 @@ export class GuiSessionRegistry {
         resumed: sameConversation,
         ...(replayContext ?? {})
       })
+      if (sameConversation && isGuiRequestUsageState(remembered?.requestUsage)) {
+        sink({ type: 'context-usage', contextTokens: replayContext?.contextTokens ?? null,
+          contextWindow: replayContext?.contextWindow ?? null })
+      }
       // A geração nova substitui qualquer override sticky da conta/CLI
       // anterior. `null` é intencional: padrão do CLI/modelo, não “desconhecido”.
       sink({
@@ -2388,14 +2530,14 @@ export class GuiSessionRegistry {
    * primeira mensagem do dono, e queimar o briefing da missão num texto de
    * máquina deixaria a primeira pergunta dele chegar sem contrato nenhum.
    */
-  private deliverBackstage(paneId: string, text: string, label: string): GuiResult {
+  private deliverBackstage(paneId: string, text: string, label: string, messageId?: string): GuiResult {
     const entry = this.panes.get(paneId)
     if (!entry) return { ok: false, error: 'este pane não tem sessão aberta' }
     if (!entry.session.alive) return { ok: false, error: 'a sessão deste pane encerrou' }
     const problem = guiPromptProblem(text, label, true)
     if (problem) return { ok: false, error: problem }
     entry.sink({ type: 'turn-started' })
-    entry.session.send(text)
+    entry.session.send(text, messageId)
     return { ok: true }
   }
 
@@ -2404,7 +2546,8 @@ export class GuiSessionRegistry {
     text: string,
     clientMessageId?: string,
     attachmentInput?: unknown,
-    queuedToken?: symbol
+    queuedToken?: symbol,
+    browserReferenceInput?: unknown
   ): GuiResult {
     const problem = guiPromptProblem(text, 'mensagem', true)
     if (problem) return { ok: false, error: problem }
@@ -2420,6 +2563,11 @@ export class GuiSessionRegistry {
     const messageId = clientMessageId ?? `main-${++this.nextMessageId}`
     const messageIds = entry.messageIds ?? (entry.messageIds = new Set<string>())
     if (messageIds.has(messageId)) return { ok: true }
+    let browserReferences: GuiBrowserReference[]
+    try { browserReferences = this.browserReferences.resolve(paneId, browserReferenceInput) }
+    catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : 'referências do browser inválidas' }
+    }
     const validatedAttachments = validateGuiAttachmentReferences(
       entry.spawn.cwd,
       paneId,
@@ -2427,10 +2575,10 @@ export class GuiSessionRegistry {
       this.attachmentCapabilities
     )
     if (!validatedAttachments.ok) return { ok: false, error: validatedAttachments.error }
-    if (!text.trim() && validatedAttachments.attachments.length === 0) {
+    if (!text.trim() && validatedAttachments.attachments.length === 0 && browserReferences.length === 0) {
       return { ok: false, error: 'mensagem vazia' }
     }
-    const prompt = withGuiAttachmentReferences(text, validatedAttachments.resolved)
+    const prompt = withGuiAttachmentReferences(withGuiBrowserReferences(text, browserReferences), validatedAttachments.resolved)
     const promptProblem = guiPromptProblem(prompt)
     if (promptProblem) return { ok: false, error: 'mensagem e anexos grandes demais' }
     // O BRIEFING VIAJA COLADO NESTA MENSAGEM (ver `pendingBriefing`): o teto é
@@ -2449,7 +2597,7 @@ export class GuiSessionRegistry {
     const trimmed = text.trim()
     const conversationCommand = routeGuiConversationCommand(trimmed)
     if (conversationCommand) {
-      if (validatedAttachments.attachments.length === 0 && conversationCommand === 'reset')
+      if (validatedAttachments.attachments.length === 0 && browserReferences.length === 0 && conversationCommand === 'reset')
         return this.clearConversation(entry)
       return { ok: false, error: GUI_NEW_CONVERSATION_USAGE }
     }
@@ -2458,6 +2606,12 @@ export class GuiSessionRegistry {
       const oldest = messageIds.values().next().value
       if (oldest) messageIds.delete(oldest)
     }
+    // A work round begins only with an accepted owner message while the
+    // parent is idle. Steers/answers during work retain that round; local slash
+    // commands and background helper mail do not pretend to be a new edit.
+    if (!trimmed.startsWith('/') && entry.session.turnActive !== true &&
+      !(entry.session instanceof MaestroSession && entry.session.backgroundActive) &&
+      !this.helperCards.hasLiveHelpers(paneId)) this.beginUsageRound(entry)
     entry.sink({
       type: 'user-message',
       id: messageId,
@@ -2465,11 +2619,13 @@ export class GuiSessionRegistry {
       ...(validatedAttachments.attachments.length > 0
         ? { attachments: validatedAttachments.attachments }
         : {}),
+      ...(browserReferences.length > 0 ? { browserReferences } : {}),
       at: Date.now()
     })
     entry.sink({ type: 'turn-started' })
     if (
       validatedAttachments.attachments.length === 0 &&
+      browserReferences.length === 0 &&
       trimmed.startsWith('/') &&
       this.routeSlash(entry, trimmed)
     )
@@ -2489,7 +2645,10 @@ export class GuiSessionRegistry {
       pendingInteraction: this.pendingInteractionOf(entry),
       text: prompt
     })
-    if (this.routeOwnerSteer(paneId, entry, messageId, prompt, steer)) return { ok: true }
+    if (this.routeOwnerSteer(paneId, entry, messageId, prompt, steer)) {
+      if (browserReferences.length) this.consumeBrowserReferences(paneId, browserReferences.map(reference => reference.id))
+      return { ok: true }
+    }
     // AQUI, e não antes: o `/clear` e os slash roteados voltam acima sem
     // alcançar o modelo — soltar o briefing neles seria queimá-lo num comando
     // que o agente nunca vê.
@@ -2504,6 +2663,9 @@ export class GuiSessionRegistry {
     // 01/09 provou é que ser LIDO no meio do turno não é ser OBEDECIDO — por
     // isso o steering deixou de ser a rota principal da fala do dono.
     entry.session.send(briefing ? guiBriefedPrompt(briefing, prompt) : prompt)
+    // Delivery is already accepted. A failing draft commit must not report a
+    // failed send or duplicate a turn; renderer can retry this idempotent consume.
+    if (browserReferences.length) this.consumeBrowserReferences(paneId, browserReferences.map(reference => reference.id))
     return { ok: true }
   }
 
@@ -2697,6 +2859,7 @@ export class GuiSessionRegistry {
     if (!entry || !entry.token.alive) return
     const evt = guiOwnerMessageStateEvent(messageId, state, Date.now())
     this.deps.push({ paneId, seq: entry.ring.push(evt), evt })
+    this.saveTranscript(paneId, entry.ring)
   }
 
   /**
@@ -2840,27 +3003,53 @@ export class GuiSessionRegistry {
   }
 
   /**
-   * O RECONCILIADOR (R22.4) — nenhum passo depende de entrega única.
+   * CANCELAR É CONTRAORDEM, nunca corte (ordem do dono, 2026-09-16: "quando eu
+   * cancelar, a minha mensagem some e nada avisa que o turno foi interrompido
+   * — parecer que cancelou sem afetar nada").
    *
-   * A carona é a entrega rápida, mas ela só existe se o agente chamar mais
-   * alguma tool. Se o turno FECHAR com o pote cheio (ele respondeu ao dono e
-   * parou, ou o ■ derrubou o turno), o fecho entrega pelo caminho de sempre: a
-   * fala do dono vai ao CLI como a mensagem de usuário que sempre foi, sem
-   * bolha nova (a bolha saiu no envio) e sem embrulho de harness.
-   *
-   * Roda também no NASCIMENTO do pane, e é isso que fecha os dois buracos
-   * sondados: o respawn (troca de modo, `/clear`, ⚡) mata o turno sem nunca
-   * fechá-lo, e o boot devolve do disco o que o app não entregou antes de morrer.
-   *
-   * Recusa transitória NUNCA consome: o pote é devolvido inteiro, na ordem, e o
-   * próximo fecho (ou a próxima abertura) tenta de novo.
-   *
-   * R39 — quando o pote traz fala MARCADA (ela PAROU o turno), o que sai não é
-   * a fala crua: é o ENVELOPE DE RETOMADA, que diz que ele foi parado, nomeia o
-   * passo cortado e manda responder antes de retomar. E a DÍVIDA (D4) é armada
-   * aqui também — no caso medido de 01/09 a entrega funcionou e a obediência é
-   * que faltou.
+   * A fala JÁ está na fila do CLI (R39.1 entrega na hora) e o único
+   * cancelamento nativo é um interrupt com `cancel_queued` — ele mata a tool
+   * em voo e reinicia a rodada: o "turno interrompido" que o dono não quer
+   * ver. Então o registro NÃO pede nada ao CLI: apaga a cópia durável (nenhum
+   * reconciliador a reentrega), tira-a do rastreio de recibos (recibo tardio
+   * do CLI morre calado), some com a bolha (`cancelled` apaga o item no
+   * renderer) e manda atrás dela um bilhete de bastidor que chega junto na
+   * próxima fronteira, dizendo ao modelo para ignorá-la. Limite honesto: o
+   * texto ainda passa pelos olhos do modelo — não dá para des-enviar; ele só
+   * não é obedecido. Uma fala já LIDA não se cancela: a recusa diz isso.
    */
+  cancelOwnerMessage(paneId: string, messageId: string): GuiResult {
+    const entry = this.panes.get(paneId)
+    if (!entry || !entry.session.alive) return { ok: false, error: 'esta conversa não tem sessão aberta' }
+    if (entry.ring.snapshot().some(raw => {
+      const event = guiEventRecord(raw)
+      return event?.['type'] === 'owner-message-state' && event['id'] === messageId && event['state'] === 'cancelled'
+    })) return { ok: true }
+    if (!this.ownerSteer.pendingSteered(paneId).some(note => note.messageId === messageId)) {
+      return { ok: false, error: 'a mensagem já foi lida ou não está mais pendente' }
+    }
+    // O pote primeiro: sem a cópia durável fora, o fecho do turno a reentregaria.
+    const copy = this.ownerMail.removeById(paneId, messageId)
+    if (!copy) {
+      return { ok: false, error: 'não foi possível gravar o cancelamento; a mensagem foi preservada para não perder sua orientação' }
+    }
+    this.ownerSteer.takeRead(paneId, messageId)
+    this.publishOwnerState(paneId, messageId, 'cancelled')
+    let counterOrdered = true
+    try {
+      entry.session.send(guiOwnerCancelText(copy.text))
+    } catch {
+      // O motor estourou: a bolha já sumiu e a cópia já saiu do pote; o modelo
+      // pode obedecer a fala retirada — o diário conta que a contraordem não foi.
+      counterOrdered = false
+    }
+    this.deps.record?.('gui-owner-cancelled', { paneId, projectId: entry.spawn.projectId }, { messageId, counterOrdered })
+    return { ok: true }
+  }
+
+  /** Reconcile unread mail at a terminal or a new session, without another
+   * user bubble. Native receipts retain individual message identities; forced
+   * handoffs carry the existing resumption envelope and response debt. */
   private flushOwnerMail(
     paneId: string,
     reason: string,
@@ -2875,6 +3064,30 @@ export class GuiSessionRegistry {
     // A mensagem da fila saindo e a troca de executor em voo seguram o envio
     // pelo MESMO motivo do despertador (`paneBusyReason`).
     if (this.paneBusyReason(paneId, entry)) return
+    const pending = this.ownerMail.peek(paneId).filter(mail => opts.skipSteered !== true || !mail.steered)
+    // Native negative receipts can return several messages to our mailbox.
+    // Recover each with its own read identity; a batch marked "delivered"
+    // would remove Cancel from the surviving unread messages again.
+    if (entry.session.supportsSteerReceipt && pending.length && pending.every(mail => !mail.handoff)) {
+      let forwarded = 0
+      for (const mail of pending) {
+        if (!this.ownerMail.markSteered(paneId, mail.messageId)) continue
+        this.ownerSteer.noteSteered(paneId, mail.messageId, mail.at)
+        try {
+          const sent = this.deliverBackstage(paneId, mail.text, 'mensagem do dono', mail.messageId)
+          if (!sent.ok) throw new Error('message was not accepted')
+          this.publishOwnerState(paneId, mail.messageId, 'unread')
+          forwarded += 1
+        } catch {
+          this.ownerMail.releaseSteered(paneId, mail.messageId)
+          this.ownerSteer.takeRead(paneId, mail.messageId)
+          break
+        }
+      }
+      this.deps.record?.('gui-owner-mail-flushed', { paneId, projectId: entry.spawn.projectId },
+        { messages: forwarded, reason, awaitingReadReceipt: true })
+      return
+    }
     const lastStep = opts.lastStep !== undefined ? opts.lastStep : this.ownerSteer.lastStepOf(paneId)
     // R39.1 D3' — O FECHO DE TURNO PULA A CÓPIA `steered`: o CLI já está com
     // essa fala (ela foi steerada), e entregá-la de novo faria o dono falar duas
@@ -2968,8 +3181,8 @@ export class GuiSessionRegistry {
    * `deliverBackstage`, SEM `turn-started`: nenhum turno começa agora. O CLI
    * enfileira o comando e o executa sozinho ao fim do turno corrente (mini-turno
    * próprio), e a skill passa a valer para `Skill`/catálogo/chip ❖ do turno
-   * seguinte em diante. O `result` desse mini-turno é RECIBO — a marca abaixo é o
-   * que o distingue do turno do agente.
+   * seguinte em diante. O motor identifica o recibo pelos metadados do comando,
+   * sem consumir a geração de resposta do agente.
    *
    * CODEX: NO-OP dito. A thread enxerga a pasta no próximo turno sem recarga
    * (sondado), e mandar um slash por ali viraria prompt e queimaria tokens.
@@ -2985,19 +3198,17 @@ export class GuiSessionRegistry {
     if (entry.spawn.cli === 'codex') {
       return { ok: true, detail: 'o codex enxerga a pasta no próximo turno, sem recarga' }
     }
-    // UM pedido por vez: duas skills puxadas no mesmo turno não precisam de duas
-    // recargas (a do fim do turno cobre as duas), e um segundo recibo sem marca
-    // apareceria no fio como fim de turno fantasma.
+    if (!('reloadSkills' in entry.session)) {
+      return { ok: false, detail: 'este motor não oferece recarga; leia o SKILL.md diretamente' }
+    }
+    // One outstanding command covers skills pulled together in the same turn.
     const pending = this.skillReloads.get(paneId)
-    if (pending && Date.now() - pending.at < GUI_SKILL_RELOAD_TTL_MS) {
+    if (pending !== undefined && Date.now() - pending < GUI_SKILL_RELOAD_TTL_MS) {
       return { ok: true, detail: 'a recarga deste turno já está na fila do CLI' }
     }
-    this.skillReloads.set(paneId, {
-      pendingAgentResults: entry.session.turnActive === true ? 1 : 0,
-      at: Date.now()
-    })
+    this.skillReloads.set(paneId, Date.now())
     try {
-      entry.session.send(GUI_SKILL_RELOAD_COMMAND)
+      entry.session.reloadSkills()
     } catch (error) {
       this.skillReloads.delete(paneId)
       return {
@@ -3020,26 +3231,11 @@ export class GuiSessionRegistry {
    * O RECIBO DA RECARGA, se este `result` for ele. Devolve a linha para o fio (e
    * o `result` NÃO segue adiante), ou `undefined` quando o evento é do agente.
    *
-   * A régua é ESTRUTURAL, nunca o texto do recibo: o contador da marca sabe
-   * quantos `result` ainda pertencem ao turno do agente. Heurística sobre
-   * conteúdo é proibida na casa — e aqui ela também erraria, porque o recibo do
-   * CLI é uma frase dele que pode mudar em qualquer update.
+   * Somente a identificação do motor prova a origem. Resultados comuns sempre
+   * seguem para apresentação, recibos do dono e encerramento do turno.
    */
   private takeSkillReloadReceipt(paneId: string, evt: SessionEvent): string | undefined {
-    if (evt.type !== 'result') return undefined
-    const mark = this.skillReloads.get(paneId)
-    if (!mark) return undefined
-    if (Date.now() - mark.at >= GUI_SKILL_RELOAD_TTL_MS) {
-      // O CLI nunca executou o comando (processo trocado, comando removido do
-      // binário): a marca morre CALADA e o `result` segue como turno do agente.
-      // Engolir o fecho de um turno futuro seria muito pior que perder a nota.
-      this.skillReloads.delete(paneId)
-      return undefined
-    }
-    if (mark.pendingAgentResults > 0) {
-      mark.pendingAgentResults -= 1
-      return undefined
-    }
+    if (evt.type !== 'result' || evt.localCommand !== 'reload-skills') return undefined
     this.skillReloads.delete(paneId)
     this.deps.record?.(
       'gui-skill-reload-done',
@@ -3076,6 +3272,18 @@ export class GuiSessionRegistry {
     return { ok: true }
   }
 
+  /** Only the authenticated pane may publish its own model-authored speech. */
+  commentary(identity: GuiCommentaryIdentity, value: unknown): GuiCommentaryDelivery {
+    const entry = this.panes.get(identity.paneId)
+    if (!entry || entry.spawn.projectId !== identity.projectId || !entry.session.alive)
+      return { ok: false, error: 'esta conversa não está aberta; escreva a atualização como texto normal no chat' }
+    const text = guiPublicCommentaryText(value)
+    if (!text) return { ok: false, error: 'envie uma atualização com 1 a 2000 caracteres' }
+    if (entry.session instanceof MaestroSession) entry.session.publishCommentary(text)
+    else entry.sink({ type: 'text', text })
+    return { ok: true }
+  }
+
   /**
    * Entrega transacional da unica mensagem em fila. A fotografia de permissao,
    * modelo e effort e aplicada no main antes do envio; o mesmo id atravessa
@@ -3094,13 +3302,16 @@ export class GuiSessionRegistry {
       return { ok: true }
     }
     if (!current.session.alive) return { ok: false, error: 'a sessão deste pane encerrou' }
-    if (current.session.turnActive) {
-      return { ok: false, error: 'a resposta anterior ainda não terminou' }
+    // Validate canonical ownership before the queue is allowed to respawn or
+    // change an executor. The send boundary resolves again after those awaits.
+    try { this.browserReferences.resolve(paneId, input.browserReferences) }
+    catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : 'referências do browser inválidas' }
     }
     const existing = this.queuedDeliveries.get(paneId)
     if (existing) {
       if (existing.id === input.id) return existing.promise
-      return { ok: false, error: 'outra entrega da fila já está em andamento' }
+      return { ok: false, retryable: true, error: 'outra entrega da fila já está em andamento' }
     }
 
     const token = Symbol(`queued:${paneId}`)
@@ -3123,6 +3334,16 @@ export class GuiSessionRegistry {
     if (!entry || !entry.session.alive) {
       return { ok: false, error: 'a sessão deste pane encerrou' }
     }
+    const busy = this.paneBusyReason(paneId, entry, token)
+    if (busy) return { ok: false, retryable: true, error: busy }
+    if (entry.session.turnActive) {
+      if (!canSteerGuiQueuedMessage(entry.spawn, input)) {
+        return { ok: false, retryable: true, error: 'a resposta anterior ainda não terminou' }
+      }
+      const sent = this.send(paneId, input.text, input.id, input.attachments, token, input.browserReferences)
+      if (sent.ok) this.rememberQueuedDeliveryReceipt(paneId, input.id)
+      return sent
+    }
 
     const permissionMode = input.options.permissionMode as GuiPermissionMode
     if ((entry.spawn.permissionMode ?? 'default') !== permissionMode) {
@@ -3144,10 +3365,13 @@ export class GuiSessionRegistry {
     if (!configured.ok) return configured
 
     entry = this.panes.get(paneId)
-    if (!entry || !entry.session.alive || entry.session.turnActive) {
+    if (!entry || !entry.session.alive) {
       return { ok: false, error: 'a conversa mudou antes do envio da fila' }
     }
-    const sent = this.send(paneId, input.text, input.id, input.attachments, token)
+    if (entry.session.turnActive) {
+      return { ok: false, retryable: true, error: 'a resposta anterior ainda não terminou' }
+    }
+    const sent = this.send(paneId, input.text, input.id, input.attachments, token, input.browserReferences)
     if (sent.ok) this.rememberQueuedDeliveryReceipt(paneId, input.id)
     return sent
   }
@@ -3695,8 +3919,20 @@ export class GuiSessionRegistry {
       { paneId, projectId: entry.spawn.projectId },
       { turn: turnStopped, helpers, wakes }
     )
-    if (!turnStopped && helpers === 0)
-      return { ok: false, error: 'não há turno ativo para interromper' }
+    if (!turnStopped && helpers === 0) {
+      if (!entry.session.alive) return { ok: false, error: 'a sessão já foi encerrada' }
+      if (
+        entry.session.turnActive ||
+        (entry.session instanceof MaestroSession && entry.session.backgroundActive) ||
+        this.helperCards.hasLiveHelpers(paneId)
+      ) return { ok: false, error: 'o motor não confirmou a interrupção; tente parar novamente' }
+      // A click can race the final receipt, or come from a stale renderer.
+      // Close through the canonical event path; an IPC reply must never
+      // overwrite a newer turn that may already be on its way to the UI.
+      entry.flushPendingTerminal?.()
+      entry.sink({ type: 'turn-continuation', continues: false })
+      return { ok: true, alreadyIdle: true }
+    }
     return { ok: true }
   }
 
@@ -3722,9 +3958,13 @@ export class GuiSessionRegistry {
   }
 
   /** A resposta MCP atravessa o CLI antes do fecho que remove seu cwd. */
-  afterIntegrationReply(paneId: string, text: string, finish: () => Promise<string>): void {
+  afterIntegrationReply(
+    paneId: string, text: string, finish: () => Promise<string>, recoveryCwd?: () => string | undefined,
+    phase: IntegrationReplyPhase = 'merge'
+  ): void {
     const entry = this.panes.get(paneId)
     const generation = entry?.token ?? {}
+    if (entry && recoveryCwd) this.pendingIntegrationRecovery.set(paneId, entry.token)
     const events = entry?.ring.snapshot() ?? this.restoreTranscript(paneId)?.snapshot() ?? []
     // O fecho mata os processos antes de remover a pasta. A nota final precisa
     // alcançar também o transcript já fechado, com o MESMO cursor monotônico.
@@ -3746,12 +3986,34 @@ export class GuiSessionRegistry {
       pendingIntegrationTool(events.filter(isGuiPersistedEvent)),
       text,
       emit,
-      finish
+      finish,
+      () => {
+        if (this.pendingIntegrationRecovery.get(paneId) === generation)
+          this.pendingIntegrationRecovery.delete(paneId)
+        if (!entry || this.cancelledIntegrationRecovery.has(entry.token)) return undefined
+        const current = this.panes.get(paneId)
+        // An owner-created generation takes precedence over this late callback.
+        if (current && current !== entry) return undefined
+        const cwd = recoveryCwd?.()
+        if (!cwd) return undefined
+        const spawn = this.inheritConversation({ ...entry.spawn, cwd, firstPrompt: undefined }, entry)
+        const resumed = this.create(spawn)
+        this.deps.record?.('gui-integration-recovery', { paneId, projectId: spawn.projectId }, { resumed: resumed.ok })
+        if (!resumed.ok) throw new Error('integration recovery unavailable')
+        // create notifies on a closed pane. A live dev moved out of the
+        // source is a respawn and needs the same durable-ticket wake.
+        if (current) this.integration?.paneOpened(paneId, spawn.projectId)
+        // A geração retomada HERDA a rodada do dono (ver guiIntegrationReply).
+        return this.panes.get(paneId)?.token
+      },
+      phase
     )
     if (!entry?.session.alive) this.integrationReply.disposed(generation)
   }
 
   kill(paneId: string): GuiResult {
+    const pending = this.pendingIntegrationRecovery.get(paneId)
+    if (pending) this.cancelledIntegrationRecovery.add(pending)
     if (!this.panes.has(paneId)) return { ok: true }
     this.dispose(paneId, 'kill')
     return { ok: true }
@@ -3819,6 +4081,8 @@ export class GuiSessionRegistry {
 
   /** Encerramento do app: nenhum CLI filho sobrevive ao quit. */
   killAll(): void {
+    for (const generation of this.pendingIntegrationRecovery.values())
+      this.cancelledIntegrationRecovery.add(generation)
     for (const paneId of [...this.panes.keys()]) this.dispose(paneId, 'quit')
   }
 
@@ -3892,9 +4156,8 @@ export class GuiSessionRegistry {
       )
     }
     // claude: persona ao nível de SISTEMA e por arquivo (teto de argv).
-    const file = persona
-      ? this.deps.systemPromptFile(`gui-${spawn.paneId}.system.md`, persona)
-      : undefined
+    const file = this.deps.systemPromptFile(`gui-${spawn.paneId}.system.md`,
+      [persona, CLAUDE_PUBLIC_PROGRESS_STYLE].filter(Boolean).join('\n\n'))
     // R39 (2026-09-02) — a dívida de resposta ao dono alcança TODA tool deste
     // pane (nativas inclusive) por um hook PreToolUse que lê a bandeira dele em
     // disco (`guiOwnerDebtHook`, forma sondada no binário). `undefined` enquanto
@@ -3905,6 +4168,11 @@ export class GuiSessionRegistry {
         ...opts,
         resumeSessionId: spawn.resumeSessionId,
         systemPromptFile: file,
+        ...(debtFlag ? {
+          publicProgressFile: `${debtFlag}.progress.txt`,
+          recordPublicProgress: (detail) => this.deps.record?.('gui-claude-public-progress',
+            { paneId: spawn.paneId, projectId: spawn.projectId }, { ...detail })
+        } : {}),
         ...(debtFlag ? { settings: guiOwnerDebtHookSettings(debtFlag) } : {})
       },
       sink
@@ -3942,6 +4210,8 @@ export class GuiSessionRegistry {
   private dispose(paneId: string, reason: string, preserveRing = false): void {
     const entry = this.panes.get(paneId)
     if (!entry) return
+    if (reason === 'kill' || reason === 'quit' || reason === 'clear')
+      this.cancelledIntegrationRecovery.add(entry.token)
     // Última barreira antes de apagar a geração: inclui deltas parciais que
     // ainda não tinham alcançado um checkpoint semântico.
     entry.flushPendingTerminal?.()
@@ -3987,7 +4257,7 @@ export class GuiSessionRegistry {
   private restoreTranscript(paneId: string): GuiEventRing | null {
     const transcript = this.doc.transcripts?.[paneId]
     if (!transcript) return null
-    const events = transcript.events.filter(isGuiPersistedEvent)
+    const events = transcript.events.filter(event => isGuiPersistedEvent(event) || isGuiOwnerMessageStateEvent(event))
     if (events.length === 0) return null
     // A fotografia não guarda cada seq (só a barreira terminal), mas o cursor
     // permite recolocar a janela no mesmo intervalo e manter o próximo evento
@@ -4073,11 +4343,26 @@ export class GuiSessionRegistry {
    * - Falha de disco não derruba nada: o acumulado em memória (o documento)
    *   continua correto e o próximo checkpoint tenta persistir de novo.
    */
+  private beginUsageRound(entry: GuiPaneEntry): void {
+    const previous = this.doc.panes[entry.spawn.paneId]
+    if (!previous) return
+    const base = isGuiRequestUsageState(previous.requestUsage)
+      ? previous.requestUsage : createGuiRequestUsage(previous.conversationUsage)
+    this.doc.panes[entry.spawn.paneId] = { ...previous,
+      requestUsage: beginGuiUsageRound(base, randomUUID()), updatedAt: new Date().toISOString() }
+    if (this.deps.storeFile) {
+      try { persistJsonStore(this.deps.storeFile, this.doc) } catch { /* Next checkpoint retries. */ }
+    }
+    const snapshot = guiContextSnapshotFromRecord(previous)
+    entry.sink({ type: 'context-usage', contextTokens: snapshot?.contextTokens ?? null,
+      contextWindow: snapshot?.contextWindow ?? null })
+  }
+
   private meterConversation(
     spawn: GuiPaneSpawn,
     event: Extract<SessionEvent, { type: 'context-usage' }>
-  ): { event: SessionEvent; note?: string } {
-    const { call, ...visible } = event
+  ): { event: SessionEvent } {
+    const { call, sample, ...visible } = event
     const previous = this.doc.panes[spawn.paneId]
     // Sem record (a conversa ainda não foi anunciada) não há onde somar: o
     // evento segue exatamente como o motor o emitiu, sem odômetro inventado.
@@ -4086,7 +4371,17 @@ export class GuiSessionRegistry {
     const stored = isGuiConversationUsage(previous.conversationUsage)
       ? previous.conversationUsage
       : undefined
-    const usage = call ? guiAddApiCall(stored, call) : stored
+    const storedRequest = isGuiRequestUsageState(previous.requestUsage) ? previous.requestUsage : undefined
+    const requestUsage = sample ? recordGuiUsageSample(storedRequest ?? createGuiRequestUsage(stored), sample)
+      : sample === null && call ? markGuiUsageUnattributed(storedRequest ?? createGuiRequestUsage(stored),
+        this.panes.get(spawn.paneId)?.session.turnActive === true) : storedRequest
+    const meters = requestUsage ? guiUsageMeters(requestUsage) : undefined
+    // Legacy call-only engines remain readable. New engines explicitly mark
+    // unidentified observations with null so repeated frames cannot create
+    // fake request counts. Complete identified totals can refresh the old
+    // odometer for compatibility without summing that same call a second time.
+    const usage = sample === undefined && call ? guiAddApiCall(stored, call)
+      : isGuiConversationUsage(meters?.conversation) ? meters.conversation : stored
 
     // R25.3a — O MARCO SEGUE O CONTEXTO: sobe anunciando (cruzou 150k, 300k…)
     // e desce CALADO quando o contexto cai. É essa descida que re-arma o aviso
@@ -4101,10 +4396,11 @@ export class GuiSessionRegistry {
     const announce = milestone !== null && (stamped === undefined || milestone > stamped)
     const nextStamp = milestone ?? undefined
 
-    if (usage !== stored || nextStamp !== stamped) {
+    if (usage !== stored || requestUsage !== storedRequest || nextStamp !== stamped) {
       const next: GuiSessionRecord = { ...previous, updatedAt: new Date().toISOString() }
       if (usage) next.conversationUsage = usage
       else delete next.conversationUsage
+      if (requestUsage) next.requestUsage = requestUsage
       if (nextStamp === undefined) delete next.heavyContextMilestone
       else next.heavyContextMilestone = nextStamp
       this.doc.panes[spawn.paneId] = next
@@ -4133,16 +4429,14 @@ export class GuiSessionRegistry {
     return {
       event: {
         ...visible,
+        ...(meters ? { usage: meters } : {}),
         ...(usage
           ? {
               convCalls: usage.apiCalls,
               convWeightTokens: guiConversationWeightTokens(usage)
             }
           : {})
-      },
-      ...(announce && typeof visible.contextTokens === 'number'
-        ? { note: guiHeavyConversationNote(visible.contextTokens) }
-        : {})
+      }
     }
   }
 
@@ -4150,10 +4444,11 @@ export class GuiSessionRegistry {
    *  `/clear` passa por `guiSessionWithoutResume`, que apaga os mesmos campos. */
   private forgetConversationUsage(paneId: string): void {
     const previous = this.doc.panes[paneId]
-    if (!previous || (!previous.conversationUsage && previous.heavyContextMilestone === undefined))
+    if (!previous || (!previous.conversationUsage && !previous.requestUsage && previous.heavyContextMilestone === undefined))
       return
     const next = { ...previous, updatedAt: new Date().toISOString() }
     delete next.conversationUsage
+    delete next.requestUsage
     delete next.heavyContextMilestone
     this.doc.panes[paneId] = next
     if (!this.deps.storeFile) return
@@ -4240,6 +4535,8 @@ export class GuiSessionRegistry {
       sameConversation && isGuiConversationUsage(previous?.conversationUsage)
         ? previous.conversationUsage
         : undefined
+    const rememberedRequestUsage = (sameConversation || (sameIdentity && !previous?.sessionId)) &&
+      isGuiRequestUsageState(previous?.requestUsage) ? previous.requestUsage : undefined
     const rememberedMilestone =
       sameConversation &&
       typeof previous?.heavyContextMilestone === 'number' &&
@@ -4295,6 +4592,7 @@ export class GuiSessionRegistry {
           }
         : {}),
       ...(rememberedUsage ? { conversationUsage: rememberedUsage } : {}),
+      ...(rememberedRequestUsage ? { requestUsage: rememberedRequestUsage } : {}),
       ...(rememberedMilestone !== undefined
         ? { heavyContextMilestone: rememberedMilestone }
         : {}),

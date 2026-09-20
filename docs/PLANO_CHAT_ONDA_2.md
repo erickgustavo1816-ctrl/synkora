@@ -137,7 +137,7 @@ e chip de download para arquivo comum.
 
 **Como implementar:**
 - **Metade do caminho JÁ EXISTE**: `gui:attach` grava em
-  `<cwd>/.synkora/attachments` e devolve o caminho absoluto (teto 10MB, nome
+  `<cwd>/.synkora/attachments` e devolve o caminho absoluto (teto 50MB, nome
   único, git-invisível). Falta a UI: dropzone na área do chat, `onPaste` de
   imagem, cartões de anexo acima da bolha da mensagem e o lightbox.
 - Descritores durável no estado do pane (para o anexo sobreviver à fila do P1).

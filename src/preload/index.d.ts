@@ -1,4 +1,7 @@
 import type { SynkoraApi, SynkoraOverlayApi, SynkoraProgressOverlayApi } from './index'
+import type { MobilePhoneApi } from '../shared/mobileSimulator'
+export type { MobileApi, MobileAction, MobileFrame, MobileSession, MobileState, MobileVideoPacket } from '../shared/mobileSimulator'
+export type { MobileExpoProject, MobileExpoState, MobileExpoStartRequest } from '../shared/mobileExpo'
 
 /** SKILLS 2.0 — o contrato que a tela de Ajustes ▸ Skills consome. Espelho
  *  declarado de `src/main/skillsKit.ts` (kit) e `src/main/ipc/skills.ts`
@@ -36,6 +39,7 @@ declare global {
     synkora: SynkoraApi
     synkoraOverlay: SynkoraOverlayApi
     synkoraProgressOverlay: SynkoraProgressOverlayApi
+    synkoraMobilePhone: MobilePhoneApi
   }
 }
 

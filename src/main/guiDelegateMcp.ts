@@ -28,7 +28,9 @@ import type { GuiPlannerMcp, GuiPlannerMcpDeps } from './guiPlannerMcp'
 import { guiMissionRoleOf, missionTypeOf } from './guiMissionContracts'
 import { LSP_TOOL_NAMES } from './guiLspTools'
 import { BROWSER_TOOL_NAMES } from './guiBrowserTools'
+import { MOBILE_TOOL_NAMES } from './guiMobileTools'
 import { SKILL_TOOL_NAMES } from './guiSkillKit'
+import { CONTEXT_TOOL_NAMES } from './projectContextKit'
 
 /** A cerca anti-subagente-nativo do claude (sonda 2026-08-18: cerca de 1-2
  *  nomes NÃO basta — o modelo desvia por RemoteTrigger etc.; esta lista de 12
@@ -171,16 +173,22 @@ export const GUI_HELPER_TOOL_NAMES: readonly string[] = [
 ]
 
 export const GUI_DELEGATE_CLAUDE_ALLOWED_TOOLS: readonly string[] = [
+  'mcp__synkora__commentary',
+  ...CONTEXT_TOOL_NAMES.map((tool) => `mcp__synkora__${tool}`),
   ...GUI_HELPER_TOOL_NAMES.map((tool) => `mcp__synkora__${tool}`),
   // R9 — o AGENTE é o integrador. Sem a pré-sanção, o ⇪ do dono levantaria um
   // card de permissão para ele aprovar a ferramenta que ele mesmo acabou de
   // acionar com o clique.
   'mcp__synkora__integration_status',
   'mcp__synkora__integration_run',
+  'mcp__synkora__mission_summary',
   // R10 — o chat de RELEASE. Mesma doutrina: o botão do dono abriu a conversa;
   // um card de permissão sobre a ferramenta do próprio gesto seria atrito puro.
   'mcp__synkora__release_status',
+  'mcp__synkora__release_target',
   'mcp__synkora__release_run',
+  'mcp__synkora__release_save',
+  'mcp__synkora__release_push',
   // R38 — o FECHO do release. Ele nasce pré-sancionado pelo mesmo motivo dos
   // irmãos: o dono não aprova o app terminando o próprio trabalho, e um card de
   // permissão no instante do fecho seria exatamente onde a conversa trava.
@@ -197,6 +205,7 @@ export const GUI_DELEGATE_CLAUDE_ALLOWED_TOOLS: readonly string[] = [
   // permissão para o dono — no gesto em que ele pediu justamente para não
   // precisar olhar. Verificar a própria tela não decide nada.
   ...BROWSER_TOOL_NAMES.map((tool) => `mcp__synkora__${tool}`),
+  ...MOBILE_TOOL_NAMES.map((tool) => `mcp__synkora__${tool}`),
   // SKILLS 3.0 (2026-09-08) — as TRÊS `skill_*`, derivadas da MESMA fonte que o
   // catálogo registra. Montar o harness é a primeira coisa que o agente faz num
   // turno de trabalho (ADR-0009): um card de permissão ali pararia a conversa
@@ -225,6 +234,8 @@ export const GUI_PLAN_TOOL_NAMES: readonly string[] = [
  * release e sem browser MCP: o ajudante de pesquisa dele é quem navega.
  */
 export const GUI_PLANNER_CLAUDE_ALLOWED_TOOLS: readonly string[] = [
+  'mcp__synkora__commentary',
+  ...CONTEXT_TOOL_NAMES.map((tool) => `mcp__synkora__${tool}`),
   ...GUI_PLAN_TOOL_NAMES.map((tool) => `mcp__synkora__${tool}`),
   ...GUI_HELPER_TOOL_NAMES.map((tool) => `mcp__synkora__${tool}`),
   ...LSP_TOOL_NAMES.map((tool) => `mcp__synkora__${tool}`),

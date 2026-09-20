@@ -4,11 +4,13 @@ export type GuiQueuedDeliveryResult =
   | { status: 'empty' }
   | { status: 'sent'; message: GuiQueuedMessage }
   | { status: 'pending-ack'; message: GuiQueuedMessage }
+  | { status: 'deferred'; message: GuiQueuedMessage }
   | { status: 'failed'; message: GuiQueuedMessage; error: string }
 
 export interface GuiMessageDeliveryResult {
   ok: boolean
   error?: string
+  retryable?: boolean
   /** No authoritative reply reached the renderer. The main may already have
    * accepted the exact message ID; keep its claim until receipt reconciliation. */
   deliveryUncertain?: boolean
@@ -23,9 +25,8 @@ interface GuiQueuedDeliveryDeps {
   restore: (message: GuiQueuedMessage, error: string) => void
 }
 
-/** Decide quando o dispatcher pode tentar. Claim vencida é exceção deliberada:
- * mesmo pane morto/ocupado precisa consultar o recibo do main e destravar o
- * envelope por ACK ou falha autoritativa. */
+/** The main decides whether to steer, start a turn, or defer. Renderer
+ * activity can include helpers and is not authority to hold an owner's text. */
 export function shouldAttemptGuiQueuedDelivery(
   status: string,
   ready: boolean,
@@ -38,7 +39,7 @@ export function shouldAttemptGuiQueuedDelivery(
       message.deliveryClaimedUntil !== undefined &&
       message.deliveryClaimedUntil <= now
   )
-  return (status === 'idle' && ready) || expiredClaim
+  return (ready && (status === 'idle' || status === 'working')) || expiredClaim
 }
 
 export async function dispatchOneGuiQueuedMessage(
@@ -59,8 +60,36 @@ export async function dispatchOneGuiQueuedMessage(
       ? { status: 'sent', message }
       : { status: 'pending-ack', message }
   }
+  if (result.retryable) {
+    deps.restore(message, '')
+    return { status: 'deferred', message }
+  }
 
   const reason = result.error?.trim() || 'a sessão não confirmou o envio'
   deps.restore(message, reason)
   return { status: 'failed', message, error: reason }
+}
+
+/** A read-now gesture must first win the queue and get an authoritative send
+ * receipt. A failed force never restores an already delivered message. */
+export async function forceOneGuiQueuedMessage(
+  deps: GuiQueuedDeliveryDeps & {
+    force: (messageId: string) => Promise<{ ok: boolean; error?: string }>
+    onForceError: (error: string) => void
+  }
+): Promise<GuiQueuedDeliveryResult> {
+  return dispatchOneGuiQueuedMessage({
+    ...deps,
+    deliver: async (message) => {
+      const result = await deps.deliver(message)
+      if (!result.ok || result.deliveryUncertain) return result
+      try {
+        const forced = await deps.force(message.id)
+        if (!forced.ok) deps.onForceError(forced.error || 'a sessão não confirmou a leitura forçada')
+      } catch {
+        deps.onForceError('a sessão não confirmou a leitura forçada')
+      }
+      return result
+    }
+  })
 }

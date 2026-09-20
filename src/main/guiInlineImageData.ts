@@ -41,7 +41,7 @@ import type { GuiFileResolveReason } from './guiFileResolver'
 /**
  * Teto do que o chat exibe inline. É a régua do PREVIEW dos anexos de
  * propósito — a mesma que já mede "data URL que atravessa o IPC e vira nó no
- * DOM" —, e não a do anexo bruto (10 MB) nem a do painel de arquivos (5 MB,
+ * DOM" —, e não a do anexo bruto (50 MB) nem a do painel de arquivos (5 MB,
  * `GUI_FILE_PREVIEW_IMAGE_MAX_BYTES`): o painel mostra UMA imagem por vez, o
  * fio do chat carrega todas as que o agente citou na conversa inteira. Quando a
  * régua dos anexos mudar, esta muda junto, sem ninguém lembrar de nada.

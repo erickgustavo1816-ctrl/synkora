@@ -62,7 +62,8 @@ export default function WorkspacePanel({ id, summary, children }: {
         </WorkspacePanelVisibility.Provider>
       </div>
       {context.drag.active?.target?.panel === id && <div className={`workspace-drop-target ${context.drag.active.target.edge}${context.drag.active.valid ? '' : ' is-full'}`} aria-hidden="true">
-        {context.drag.active.valid ? ({ left: 'Nova coluna', right: 'Nova coluna', above: 'Acima', below: 'Abaixo' }[context.drag.active.target.edge]) : 'Até 2 painéis por coluna'}
+        {context.drag.active.valid ? ({ left: 'Nova coluna', right: 'Nova coluna', above: 'Acima', below: 'Abaixo' }[context.drag.active.target.edge])
+          : context.drag.active.id === 'mobile' || id === 'mobile' ? 'Mobile ocupa uma coluna exclusiva' : 'Até 2 painéis por coluna'}
       </div>}
     </section>
   )

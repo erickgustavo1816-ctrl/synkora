@@ -2,6 +2,7 @@ import { app } from 'electron'
 import { join } from 'path'
 import { randomUUID } from 'crypto'
 import { loadJsonStore, persistJsonStore } from './jsonStore'
+import { redactSensitiveText } from './securityRedaction'
 
 // BACKLOG DE PRODUTO (F3.9 redesenhada): versões são CONTAINERS DE
 // PLANEJAMENTO (v1.0 "MVP"…) e itens são as mudanças desejadas. O fluxo:
@@ -18,6 +19,9 @@ export interface VersionDelivery {
   missionId: string
   /** título da missão integrada */
   title: string
+  /** Agent-written result copied from Mission.summary; absent in old records.
+   *  Mirror: renderer/src/store.ts VersionDelivery.summary. */
+  summary?: string
   at: string
 }
 
@@ -39,6 +43,8 @@ export interface Version {
   branch?: string
   /** worktree da branch da versão (alvo dos merges das missões) */
   worktree?: string
+  /** Explicit destination chosen for this release, independent of dev checkout. */
+  releaseTargetBranch?: string
   createdAt: string
   updatedAt: string
 }
@@ -331,6 +337,15 @@ export class BacklogStore {
     this.commit({ ...this.data, versions })
   }
 
+  setVersionReleaseTarget(id: string, branch: string): boolean {
+    const index = this.data.versions.findIndex(version => version.id === id && version.status === 'aberta')
+    if (index < 0) return false
+    const versions = [...this.data.versions]
+    versions[index] = { ...versions[index], releaseTargetBranch: branch, updatedAt: new Date().toISOString() }
+    this.commit({ ...this.data, versions })
+    return true
+  }
+
   /**
    * Commit lógico único do release: nunca persiste o estado intermediário
    * "aberta, mas sem branch/worktree". Isso torna uma queda entre o cleanup
@@ -356,20 +371,26 @@ export class BacklogStore {
   }
 
   /** Missão da versão INTEGROU na branch da versão → entrega registrada. */
-  addDelivery(versionId: string, missionId: string, title: string): Version | undefined {
+  addDelivery(versionId: string, missionId: string, title: string, summary?: string): Version | undefined {
     const index = this.data.versions.findIndex((version) => version.id === versionId)
     if (index < 0) return undefined
     const current = this.data.versions[index]
-    // idempotente: reintegração da mesma missão não duplica a entrega
-    if (current.deliveries.some((delivery) => delivery.missionId === missionId)) return current
+    const cleanSummary = summary?.trim() ? redactSensitiveText(summary.trim()) : undefined
+    const existing = current.deliveries.find((delivery) => delivery.missionId === missionId)
+    // Reconciliation can fill or refresh the summary without duplicating the
+    // delivery or rewriting its original completion date.
+    if (existing && (!cleanSummary || existing.summary === cleanSummary)) return current
     const version: Version = {
       ...current,
-      deliveries: [
+      deliveries: existing ? current.deliveries.map((delivery) =>
+        delivery.missionId === missionId ? { ...delivery, summary: cleanSummary } : delivery
+      ) : [
         ...current.deliveries,
         {
           id: randomUUID(),
           missionId,
           title,
+          ...(cleanSummary ? { summary: cleanSummary } : {}),
           at: new Date().toISOString()
         }
       ],

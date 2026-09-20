@@ -33,6 +33,7 @@ import type { BlackboxEventInput } from './blackbox'
 import type { BrowserPopoutHost, BrowserViewHost } from './browserPaneHost'
 import type { BrowserTabOwner } from './browserTabOwner'
 import type { BrowserViewportMode } from './browserViewport'
+import type { BrowserElementSnapshot } from './guiBrowserReferenceTypes'
 
 /**
  * Teto de abas por missão (D5.1/H1; subiu de 8 para 12 em 2026-09-01 — D5).
@@ -135,7 +136,7 @@ export interface BrowserTabView {
  *  Viaja DENTRO do state — mensagem durável com recibo, nunca um pulso que se
  *  perde se o painel ainda não estava montado. */
 export interface BrowserNotice {
-  kind: 'download-blocked' | 'tab-cap' | 'permission-denied' | 'load-failed' | 'crashed'
+  kind: 'download-blocked' | 'tab-cap' | 'permission-denied' | 'load-failed' | 'crashed' | 'reference-failed'
   text: string
   at: string
 }
@@ -207,18 +208,26 @@ export interface BrowserPaneDeps {
   /** As janelas do pop-out. Ausente = app sem pop-out (o gesto recusa com
    *  receita em vez de estourar) — é assim que o gate roda sem janela. */
   popouts?: BrowserPopoutHost
+  /** Freeze the visible chat of this mission when the native picker selects a node. */
+  prepareReference?(missionId: string, projectId: string):
+    ((tabId: string, snapshot: BrowserElementSnapshot) => { ok: boolean; error?: string }) | undefined
   now?(): number
 }
 
 /** O que o IPC e o gate consomem — o contrato do design MAIS a superfície do
  *  dono. A H2 pode continuar tipando pelo `BrowserManager` estreito. */
 export interface BrowserPaneManager extends BrowserManager {
+  /** Read-only lookup for an owner reference already authorized by the main. */
+  tabById(missionId: string, tabId: string): MissionBrowserTab | undefined
   /** Navigation authority of the app renderer; null revokes every dock view.
    * Does not create a browser or revive cached visible geometry. */
   setDockMission(missionId: string | null): void
   state(missionId: string): BrowserMissionState
   navigate(missionId: string, url: string): Promise<BrowserGestureResult>
   newTab(missionId: string, projectId: string, url?: string): Promise<BrowserGestureResult>
+  /** Main-only owner action for a bounded local artifact. Uses a private,
+   * non-persistent session; no IPC payload can choose an Electron partition. */
+  newArtifactTab(missionId: string, projectId: string, url: string): Promise<BrowserGestureResult>
   goBack(missionId: string): boolean
   goForward(missionId: string): boolean
   reload(missionId: string): boolean

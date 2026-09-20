@@ -413,14 +413,14 @@ select {
 }
 
 .tb-usage-menu {
-  position: absolute;
-  top: calc(100% + 4px);
-  right: 0;
+  position: fixed;
   z-index: 500;
-  min-width: 320px;
-  max-width: 460px;
+  width: max-content;
+  min-width: min(320px, calc(100vw - 16px));
+  max-width: min(460px, calc(100vw - 16px));
   max-height: 70vh;
   overflow-y: auto;
+  -webkit-app-region: no-drag;
   padding: 8px 14px;
   animation: rise 150ms ease both;
 }
@@ -9514,18 +9514,11 @@ body.pane-docking .pane-bar.draggable {
 }
 
 /* R27 — o trilho PRÓPRIO do release: quem ele é e o que faz, nada de fila/
-   arquivar. Onda B do RIGHTDOCK (2026-08-22): ele veste a MESMA moldura do
-   dock da missão (dock-head + seções) — .release-rail-head/-version morreram
-   com o cabeçalho cru. */
-.release-rail.dock {
-  display: flex;
-  flex-direction: column;
-  background: var(--card);
-  border: 1.5px solid var(--line-strong);
-  border-radius: 10px;
-  overflow: hidden;
-}
-
+   arquivar. Onda B do RIGHTDOCK (2026-08-22) vestiu nele a moldura do dock;
+   em 2026-09-09 (ordem do dono: "não quero que seja uma coisa, outro outra")
+   ele virou o GÊMEO do trilho da missão — raiz .delivery-rail.dock, uma seção
+   que vira janela do WorkspacePanels (o painel "Release") e o descarte na
+   cabeça do palco. Aqui mora só o MIOLO da janela. */
 .release-rail-flow {
   font-size: 12px;
   color: var(--accent);
@@ -9538,17 +9531,21 @@ body.pane-docking .pane-bar.draggable {
   color: var(--ink-2);
 }
 
-/* A SAIDA DA SUBIDA (2026-08-27): o passo armado empilha a verdade daquele
-   estado e as duas escolhas. Sem cor nova - a recusa veste --err, a mesma
-   linguagem do resto da casa. */
-.release-rail-discard {
+/* a ÚLTIMA SUBIDA dentro da mesma janela: rótulo miúdo em caixa alta (a mesma
+   régua do cabeçalho da fila, .dr-queue-head) e o retrato por baixo */
+.release-rail-last {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 4px;
+  margin-top: 4px;
 }
-.release-rail-discard-acts {
-  display: flex;
-  gap: 6px;
+
+.release-rail-label {
+  font-size: 9px;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-3);
 }
 
 /* o RETRATO da última subida (mockup: margem verde à esquerda — o release que
@@ -15295,6 +15292,8 @@ body.synvoice-overlay-page #root {
 
 .gui-owner-state {
   display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   align-items: center;
   gap: 6px;
   padding-right: 2px;
@@ -16093,22 +16092,9 @@ body.synvoice-overlay-page #root {
   user-select: text;
 }
 
-.gui-thinking {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  color: var(--ink-3);
-  font-size: 11.5px;
-  font-style: italic;
-}
-
-.gui-thinking-label {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+/* O indicador "o agente está pensando" (.gui-thinking) virou o PULSO do
+   agente — components/GuiAgentPulse.css (mockup aprovado em 2026-09-16). As
+   bolinhas continuam aqui porque o trabalho de fundo as usa. */
 
 .gui-dots {
   display: inline-flex;
@@ -16178,8 +16164,7 @@ body.synvoice-overlay-page #root {
    a animação; o que só esta regra garante é o estado de REPOUSO legível — o
    keyframe começa em opacity .25 e um dia alguém pode carimbar isso na base. */
 @media (prefers-reduced-motion: reduce) {
-  .gui-background-work .gui-dots i,
-  .gui-thinking .gui-dots i {
+  .gui-background-work .gui-dots i {
     animation: none;
     opacity: 1;
     transform: none;
@@ -18499,6 +18484,16 @@ details.gui-error-line {
   outline-offset: 1px;
 }
 
+/* R25.3b — a conversa cruzou o limiar de contexto pesado: o chip muda de FORMA
+   (moldura tracejada, o mesmo "atenção sem alarme" do pulso do agente) e a
+   receita mora no tooltip e no painel. Nada de nota no fio (ordem do dono,
+   2026-09-16). O hover continua sendo o hover de sempre. */
+.gui-context-trigger.heavy {
+  border-style: dashed;
+  border-color: var(--gui-line-strong);
+  color: var(--ink);
+}
+
 .gui-context-trigger-bar {
   width: 24px;
   height: 4px;
@@ -18515,13 +18510,15 @@ details.gui-error-line {
   background: var(--accent);
 }
 
-.gui-context-popover {
+.gui-context-popover.gui-menu-host {
   position: absolute;
-  right: 0;
-  bottom: calc(100% + 9px);
   z-index: 45;
-  width: min(272px, calc(100cqw - 32px));
+  box-sizing: border-box;
+  width: 272px;
   min-width: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
   padding: 10px 11px;
   border: 1px solid var(--gui-line-strong);
   border-radius: 7px;
@@ -18531,6 +18528,10 @@ details.gui-error-line {
 }
 
 .gui-context-popover-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--card);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -18574,9 +18575,10 @@ details.gui-error-line {
 
 .gui-context-metrics > div {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   justify-content: space-between;
-  gap: 12px;
+  gap: 2px 12px;
 }
 
 .gui-context-metrics dt {
@@ -18587,6 +18589,8 @@ details.gui-error-line {
 
 .gui-context-metrics dd {
   margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
   color: var(--ink);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
@@ -18656,6 +18660,20 @@ details.gui-error-line {
   margin: 9px 0 0;
   padding-top: 8px;
   border-top: 1px solid var(--gui-line);
+  color: var(--ink-2);
+  font-size: 10px;
+  line-height: 1.45;
+  text-wrap: pretty;
+}
+
+/* R25.3b — a receita da conversa pesada dentro do painel: mesma família da
+   nota de escopo (frase para ler, --ink-2 10px), com a moldura tracejada que
+   o chip veste lá fora — a FORMA liga os dois. */
+.gui-context-heavy {
+  margin: 9px 0 0;
+  padding: 6px 8px;
+  border: 1px dashed var(--gui-line-strong);
+  border-radius: 6px;
   color: var(--ink-2);
   font-size: 10px;
   line-height: 1.45;
@@ -18941,7 +18959,42 @@ details.gui-error-line {
 }
 
 .gui-msg-attachments {
+  justify-content: flex-end;
+  max-width: 100%;
   margin: 3px 0 6px;
+}
+
+.gq-quick-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.gq-quick-options .gq-quick-option {
+  min-height: 44px;
+  overflow-wrap: anywhere;
+}
+
+.gq-quick-options .gq-quick-option:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.gq-quick-footer,
+.gq-quick-custom {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.gq-quick-custom .gq-custom {
+  flex: 1 1 180px;
+  min-width: 0;
+}
+
+.gq-quick-footer .gq-hint {
+  flex-basis: 100%;
 }
 
 .gui-msg.user .gui-attachment-chip {
@@ -19390,12 +19443,12 @@ details.gui-error-line {
   font-size: 13px;
   line-height: 1.55;
   padding: 6px 7px 3px;
-  /* A caixa CRESCE em vez de ganhar barra de rolagem (ordem do dono): o teto
-     é alto e a barra é invisível — quem escreve texto longo vê o texto, não
-     um trilho cinza. O JS grampeia a altura no mesmo valor. */
+  /* Cresce até o teto; depois a barra da casa indica o texto fora de vista.
+     A calha estável é espelhada no overlay para o texto e o caret manterem
+     a mesma largura, com ou sem rolagem. O JS usa o mesmo teto de altura. */
   max-height: 300px;
   overflow-y: auto;
-  scrollbar-width: none;
+  scrollbar-gutter: stable;
   user-select: text;
   /* Explícito, apesar de ser o padrão de textarea: é o PAR da política de
      quebra do .gui-mention-overlay — os dois lados do espelho declarados. */
@@ -19411,6 +19464,9 @@ details.gui-error-line {
   min-height: 46px;
   max-height: 300px;
   overflow: hidden;
+  /* A mesma calha do textarea; overflow hidden mantém só a barra editável
+     visível e continua permitindo espelhar scrollTop programaticamente. */
+  scrollbar-gutter: stable;
   padding: 6px 7px 3px;
   color: var(--ink);
   font-family: var(--mono);
@@ -19444,10 +19500,6 @@ details.gui-error-line {
 .gui-mention-token {
   color: hsl(var(--hue-back) 68% 42%);
   font-weight: 700;
-}
-
-.gui-input::-webkit-scrollbar {
-  display: none;
 }
 
 .gui-composer-surface .gui-input:focus {
@@ -19522,6 +19574,8 @@ details.gui-error-line {
 
 .gui-attach-error {
   grid-column: 1 / -1;
+  min-width: 0;
+  overflow-wrap: anywhere;
   color: var(--err);
   font-size: 10.5px;
   line-height: 1.35;
@@ -22328,6 +22382,13 @@ details.gui-error-line {
    não pisca de papel para preto. */
 .dock-browser-page.live {
   background: var(--panel);
+}
+
+/* Fractional native bounds leave a subpixel inset. Match the chrome there so
+   resizing does not reveal a second, dark border. Empty/hidden messages and
+   device mattes keep their own dark surface. */
+.dock-browser-page.live:not(:has(.dock-browser-empty, .dock-browser-bands)) {
+  background: var(--card);
 }
 
 /* ——— as faixas da MOLDURA DE DISPOSITIVO ———

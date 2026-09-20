@@ -28,6 +28,10 @@
   color: var(--ink-2);
 }
 .workspace-mission-actions { display: inline-flex; align-items: center; gap: 2px; margin-right: 4px; }
+/* The release's discard arms first and confirms second: the armed state is the
+   stage pills' "fechar?" pattern, in the toolbar's own height. */
+.workspace-mission-actions .is-confirming { width: auto; padding: 0 7px; border: 1.5px solid var(--err); color: var(--err); font: 700 10px/1 var(--mono); text-transform: lowercase; }
+.workspace-toolbar .is-confirming:hover:not(:disabled) { background: transparent; color: var(--err); }
 .workspace-toolbar button:disabled { opacity: .35; cursor: default; }
 .workspace-toolbar .is-pending, .workspace-toolbar .is-running { color: var(--ink); }
 .workspace-toolbar .is-pending::after, .workspace-toolbar .is-running::after { content: ''; position: absolute; width: 3px; height: 3px; border-radius: 50%; background: currentColor; right: 2px; bottom: 2px; }

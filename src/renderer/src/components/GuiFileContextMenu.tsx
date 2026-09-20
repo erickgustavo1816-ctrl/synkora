@@ -182,7 +182,8 @@ export interface FileContextMenuController {
  */
 export function useFileContextMenu(
   openInApp: (target: FileContextTarget) => void,
-  opener: FileMenuOpener = runFileOpen
+  opener: FileMenuOpener = runFileOpen,
+  openBrowser?: (target: FileContextTarget) => void
 ): FileContextMenuController {
   const [menu, setMenu] = useState<FileContextMenuState | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
@@ -244,6 +245,11 @@ export function useFileContextMenu(
       setMenu(null)
       if (!current) return
       anchorRef.current?.focus({ preventScroll: true })
+      if (action === 'open-browser') {
+        if (openBrowser) openBrowser(current.target)
+        else setNotice('Abra este arquivo pelo link no chat para usar o browser do Synkora.')
+        return
+      }
       if (action === 'open-in-app') {
         openInApp(current.target)
         return
@@ -254,7 +260,7 @@ export function useFileContextMenu(
         }
       )
     },
-    [menu, openInApp, opener]
+    [menu, openInApp, opener, openBrowser]
   )
 
   return { menu, notice, openFromPointer, openFromKeyboard, openFromAnchor, choose, dismiss }

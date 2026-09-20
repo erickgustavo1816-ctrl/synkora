@@ -34,6 +34,15 @@ export interface GuiClaudeTask extends GuiClaudeTaskMeta {
   status?: string
 }
 
+/** SDKTaskStartedMessage distinguishes local_bash (background commands and
+ * persistent Monitor watches) from agents. A live process can outlast a final
+ * answer without keeping the model working. Unknown/legacy types retain the
+ * conservative agent lifecycle until the CLI supplies stronger evidence.
+ * Source: https://code.claude.com/docs/en/agent-sdk/typescript#sdktaskstartedmessage */
+export function guiClaudeTaskBlocksTurn(task: GuiClaudeTaskMeta): boolean {
+  return task.taskType !== 'local_bash'
+}
+
 function guiClaudeRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -66,11 +75,21 @@ export class GuiClaudeTaskRegistry {
   private readonly tasks = new Map<string, GuiClaudeTask>()
   private readonly byToolUse = new Map<string, string>()
   private readonly settledIds = new Set<string>()
+  private readonly settledProcessIds = new Set<string>()
 
-  /** Quantas tarefas de fundo continuam vivas — é o que segura o `continues`
-   *  do `result` raiz (e, por tabela, o plim do turno). */
+  /** All native background tasks, including long-lived local processes. */
   get size(): number {
     return this.tasks.size
+  }
+
+  /** Only native agent work keeps a logical chat turn open after its result. */
+  liveAgentTaskIds(): string[] {
+    return [...this.tasks.values()].filter(guiClaudeTaskBlocksTurn).map(task => task.taskId)
+  }
+
+  isBackgroundProcess(id: unknown): boolean {
+    const key = guiClaudeTaskId(id)
+    return Boolean(key && (this.taskFor(key)?.taskType === 'local_bash' || this.settledProcessIds.has(key)))
   }
 
   liveToolUseIds(): string[] {
@@ -125,10 +144,15 @@ export class GuiClaudeTaskRegistry {
     if (!key) return null
     const taskId = this.tasks.has(key) ? key : this.byToolUse.get(key)
     const task = taskId ? this.tasks.get(taskId) : undefined
-    if (!taskId || !task) return null
+    if (!taskId || !task) {
+      // A terminal can arrive before its delayed start/ACK. Its identity is
+      // still authoritative; forgetting it would resurrect completed work.
+      this.rememberSettled(key)
+      return null
+    }
     this.tasks.delete(taskId)
     if (task.toolUseId) this.byToolUse.delete(task.toolUseId)
-    this.rememberSettled(taskId)
+    this.rememberSettled(taskId, task.taskType)
     const next = guiClaudeTaskStatus(status)
     return next ? { ...task, status: next } : task
   }
@@ -145,8 +169,15 @@ export class GuiClaudeTaskRegistry {
     const live = new Set<string>()
     if (Array.isArray(tasks)) {
       for (const entry of tasks) {
-        const id = guiClaudeTaskId(guiClaudeRecord(entry)?.['task_id'])
-        if (id) live.add(id)
+        const record = guiClaudeRecord(entry)
+        const id = guiClaudeTaskId(record?.['task_id'])
+        if (id) {
+          live.add(id)
+          const taskType = guiClaudeTaskStatus(record?.['task_type'])
+          // Snapshots enrich only an existing identity. This repairs an
+          // earlier untyped shell start without adopting unknown work.
+          if (taskType && this.tasks.has(id)) this.noteStarted(id, undefined, { taskType })
+        }
       }
     }
     const missing: GuiClaudeTask[] = []
@@ -160,17 +191,21 @@ export class GuiClaudeTaskRegistry {
    *  processo levou os agentes junto. */
   settleAll(): GuiClaudeTask[] {
     const drained = [...this.tasks.values()]
-    for (const task of drained) this.rememberSettled(task.taskId)
+    for (const task of drained) this.rememberSettled(task.taskId, task.taskType)
     this.tasks.clear()
     this.byToolUse.clear()
     return drained
   }
 
-  private rememberSettled(taskId: string): void {
-    if (this.settledIds.size >= GUI_CLAUDE_SETTLED_MEMORY) {
+  private rememberSettled(taskId: string, taskType?: string): void {
+    if (!this.settledIds.has(taskId) && this.settledIds.size >= GUI_CLAUDE_SETTLED_MEMORY) {
       const oldest = this.settledIds.values().next()
-      if (!oldest.done) this.settledIds.delete(oldest.value)
+      if (!oldest.done) {
+        this.settledIds.delete(oldest.value)
+        this.settledProcessIds.delete(oldest.value)
+      }
     }
     this.settledIds.add(taskId)
+    if (taskType === 'local_bash') this.settledProcessIds.add(taskId)
   }
 }

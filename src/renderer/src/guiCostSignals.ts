@@ -6,9 +6,9 @@
  * São duas réguas diferentes, e este módulo cuida da segunda — as três leituras
  * que o painel de contexto e os menus passam a mostrar:
  *
- * - o ODÔMETRO da conversa (chamadas × peso), acumulado pelo MAIN;
+ * - registros de uso legados e parcelas/rodada, acumulados pelo MAIN;
  * - a COTA REAL do seat desta conversa, lida do cache que o poller já mantém;
- * - a nota da TROCA CARA, quando mudar modelo/effort/⚡ vai re-escrever cache.
+ * - uma nota de possível impacto no cache ao mudar modelo/effort/⚡.
  *
  * Módulo PURO (nada de React, nada de `window`): é o que deixa cada número ser
  * provado em node cru, em vez de conferido no olho dentro do componente.
@@ -17,6 +17,7 @@
 // este módulo é FOLHA de propósito: a suíte o roda como `.ts` cru (strip-types),
 // onde import de runtime entre módulos do renderer não resolve.
 import type { SeatUsage } from '../../preload/index'
+import type { GuiUsageMeters, GuiUsageParcels, GuiUsageTotals } from '../../shared/guiUsage'
 
 /** ESPELHO DECLARADO: o par é `compactTokens` em `guiComposerPresentation.ts`,
  *  a voz compacta do medidor de janela. O odômetro fala IGUAL a ele — dois
@@ -32,8 +33,7 @@ function compactTokens(value: number): string {
  * ESPELHO DECLARADO: o par é `GUI_HEAVY_CONTEXT_TOKENS` em
  * `src/main/guiConversationOdometer.ts`, que decide quando o app ABRE A BOCA no
  * fio. Aqui ele decide quando a tela muda de tom e quando o menu avisa — as
- * duas metades do mesmo limiar medido (o `/usage` reportou 46–67% do uso do dia
- * em conversas acima de 150k).
+ * duas metades do mesmo limiar operacional. Não é uma fórmula de cota.
  */
 export const GUI_HEAVY_CONTEXT_TOKENS = 150_000
 
@@ -63,7 +63,7 @@ export function guiMeterTone(severity: number): GuiCostTone {
 export interface GuiOdometerPresentation {
   calls: number
   weightTokens: number
-  /** `139 chamadas · ~3.6 mi tokens-peso` */
+  /** Legacy events count usage records, not verified provider request IDs. */
   valueLabel: string
   /** A FÍSICA em uma frase — sem ela o número não explica nada. */
   hint: string
@@ -79,12 +79,8 @@ function wholeCount(value: unknown): number | undefined {
  * O ODÔMETRO, pronto para a tela. `null` = o main ainda não contou nada (ou a
  * conversa acabou de nascer): a UI ESCONDE a linha em vez de escrever zero.
  *
- * O TOM sai da mesma régua dos medidores, aplicada à COTA e não à janela: o
- * denominador é o limiar da conversa pesada, não `contextWindow`. Uma conversa
- * de 190k num modelo de 1M ocupa 19% da janela e mesmo assim é a mais cara da
- * casa — foi exatamente esse número que comeu 70% da cota do dia na auditoria.
- * Como a régua fica "quente" em 85%, o sinal esquenta um pouco ANTES de o app
- * abrir a boca no fio (150k): a cor avisa, e só depois vêm as palavras.
+ * O tom legado indica contexto grande contra o limiar operacional. Ele não
+ * mede cobrança nem permite inferir o percentual da assinatura consumido.
  */
 export function guiOdometerPresentation(
   convCalls: number | null | undefined,
@@ -94,9 +90,9 @@ export function guiOdometerPresentation(
   const calls = wholeCount(convCalls)
   const weightTokens = wholeCount(convWeightTokens)
   if (!calls || weightTokens === undefined) return null
-  const valueLabel = `${calls} ${calls === 1 ? 'chamada' : 'chamadas'} · ~${compactTokens(
+  const valueLabel = `${calls} ${calls === 1 ? 'registro de uso' : 'registros de uso'} · ~${compactTokens(
     weightTokens
-  )} tokens-peso`
+  )} tokens-peso (estimativa)`
   const measured = typeof contextTokens === 'number' && Number.isFinite(contextTokens)
     ? Math.max(0, contextTokens)
     : 0
@@ -104,9 +100,64 @@ export function guiOdometerPresentation(
     calls,
     weightTokens,
     valueLabel,
-    hint: 'cada mensagem re-processa o contexto inteiro',
+    hint: 'tokens-peso é uma estimativa ponderada; não é cache bruto nem a fórmula da cota da assinatura.',
     tone: guiMeterTone(Math.min(1, measured / GUI_HEAVY_CONTEXT_TOKENS)),
-    tooltip: `esta conversa: ${valueLabel}`
+    tooltip: `total da conversa: ${valueLabel}`
+  }
+}
+
+export interface GuiUsageGroupPresentation {
+  label: string
+  valueLabel: string
+  weightLabel: string | null
+  parcels: Array<{ key: keyof GuiUsageParcels; label: string; value: string }>
+  scopeNote: string
+}
+
+export interface GuiUsageMetersPresentation {
+  conversation: GuiUsageGroupPresentation | null
+  round: GuiUsageGroupPresentation | null
+  hint: string
+}
+
+const parcelLabels: Array<{ key: keyof GuiUsageParcels; label: string }> = [
+  { key: 'inputTokens', label: 'entrada nova' },
+  { key: 'cacheWriteTokens', label: 'cache escrito' },
+  { key: 'cacheReadTokens', label: 'cache lido' },
+  { key: 'outputTokens', label: 'saída' }
+]
+const exactUsageNumber = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 0 })
+
+function usageGroup(label: string, usage: GuiUsageTotals | null, scopeNote: string, partial = false): GuiUsageGroupPresentation {
+  const calls = wholeCount(usage?.apiCalls)
+  // Mirrored fixed heuristic from main/guiConversationOdometer.ts. This is not
+  // a model price table and cannot establish subscription quota consumption.
+  const complete = usage && parcelLabels.every(({ key }) => wholeCount(usage[key]) !== undefined)
+  const weight = complete
+    ? Math.round(usage.inputTokens! + usage.cacheWriteTokens! * 1.25 + usage.cacheReadTokens! * 0.1 + usage.outputTokens! * 5)
+    : null
+  return {
+    label,
+    valueLabel: (!usage ? 'aguardando medição' : calls === undefined ? 'chamadas não informadas'
+      : `${calls} ${calls === 1 ? 'chamada registrada' : 'chamadas registradas'}`) + (partial ? ' · parcial' : ''),
+    weightLabel: weight !== null && Number.isSafeInteger(weight)
+      ? `~${compactTokens(weight)} tokens-peso (estimativa)` : null,
+    parcels: usage ? parcelLabels.map(({ key, label: parcelLabel }) => ({ key, label: parcelLabel,
+      value: wholeCount(usage[key]) === undefined ? 'não informado' : exactUsageNumber.format(usage[key]!) })) : [],
+    scopeNote: partial ? `${scopeNote} Medição parcial: há uso sem informação completa do motor.` : scopeNote
+  }
+}
+
+/** Main supplies complete snapshots. Rendering never adds numbers on replay,
+ * and old events lacking this additive field retain the legacy odometer. */
+export function guiUsageMetersPresentation(meters: GuiUsageMeters | null | undefined): GuiUsageMetersPresentation | null {
+  if (!meters) return null
+  return {
+    conversation: meters.conversation ? usageGroup('total da conversa', meters.conversation,
+      'Acumulado do agente principal nesta conversa, incluindo rodadas anteriores.', meters.partial) : null,
+    round: meters.round ? usageGroup('rodada mais recente', meters.round.usage,
+      'Uma rodada reúne o pedido e as mensagens recebidas enquanto o agente trabalha.', meters.round.partial) : null,
+    hint: 'Parcelas em tokens brutos do agente principal; ajudantes não incluídos. Tokens-peso é estimativa, não a fórmula da cota da assinatura.'
   }
 }
 
@@ -158,14 +209,13 @@ export function guiSeatQuotaPresentation(
     valueLabel,
     ...(stale ? { ageLabel: stale } : {}),
     tone: guiMeterTone(meter.severity),
-    tooltip: `conta: ${meter.label} ${valueLabel}${stale ? ` · medido ${stale}` : ''}`
+    tooltip: `cota compartilhada da conta: ${meter.label} ${valueLabel}${stale ? ` · medido ${stale}` : ''}`
   }
 }
 
 /**
- * A NOTA DA TROCA CARA (R25.3b). Armadilha documentada e agora MEDIDA: modelo,
- * effort e ⚡ entram na chave do prompt-cache, então trocar no meio de uma
- * conversa grande re-escreve o contexto inteiro.
+ * Nota de possível impacto no reaproveitamento. O efeito depende de provedor,
+ * modelo e versão; uma troca não prova reescrita de uma quantidade de cache.
  *
  * É ADVISORY e nada mais: só o número que o odômetro já tem na mão, ao lado do
  * clique que continua livre. `null` abaixo do limiar — em conversa pequena a
@@ -174,5 +224,26 @@ export function guiSeatQuotaPresentation(
 export function guiExpensiveSwitchNote(contextTokens: number | null | undefined): string | null {
   if (typeof contextTokens !== 'number' || !Number.isFinite(contextTokens)) return null
   if (contextTokens < GUI_HEAVY_CONTEXT_TOKENS) return null
-  return `trocar agora re-escreve ~${Math.round(contextTokens / 1_000)}k de cache`
+  return `a troca pode afetar o reaproveitamento de ~${Math.round(contextTokens / 1_000)}k tokens de contexto`
+}
+
+/**
+ * O AVISO DA CONVERSA PESADA — no MEDIDOR, não no fio (ordem do dono,
+ * 2026-09-16: a nota no chat "é feia; um aviso em tooltip seria melhor").
+ *
+ * Mesma receita de sempre, com as três saídas REAIS e executáveis deste chat:
+ * fechar a missão (a entrega vira briefing da próxima — R16), `/compact`
+ * (régua de slash da casa, vai cru ao binário — R22) e seguir ciente do custo.
+ * O main continua carimbando o marco no diário (`gui-heavy-conversation`);
+ * aqui é só a voz da tela, derivada do contexto medido — some sozinha quando
+ * um /compact ou /clear derruba o contexto abaixo do limiar.
+ */
+export function guiHeavyConversationTip(contextTokens: number | null | undefined): string | null {
+  if (typeof contextTokens !== 'number' || !Number.isFinite(contextTokens)) return null
+  if (contextTokens < GUI_HEAVY_CONTEXT_TOKENS) return null
+  return (
+    `esta conversa re-lê ~${Math.round(contextTokens / 1_000)}k tokens a cada mensagem — ` +
+    'fechar a missão leva o conhecimento adiante (a entrega vira briefing da próxima), ' +
+    '/compact compacta a conversa aqui mesmo, ou siga ciente do custo.'
+  )
 }

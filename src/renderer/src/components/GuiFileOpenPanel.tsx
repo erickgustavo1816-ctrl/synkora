@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useRef } from 'react'
 import FileMarkdownContent from './FileMarkdownContent'
-import type { GuiFileOpenResult } from '../guiApi'
+import type { GuiFileOpenMode, GuiFileOpenResult } from '../guiApi'
 import {
   isChatFileTarget,
   runGuiChatFileOpen,
@@ -22,7 +22,7 @@ interface Props {
   busy: boolean
   onChoose: (path: string) => void
   /** reler ESTA folha (o "abrir no app" quando aqui já é onde ele está) */
-  onReopen: (reference: string, selectedPath: string) => void
+  onReopen: (reference: string, selectedPath: string, mode?: GuiFileOpenMode) => void
   onClose: () => void
 }
 
@@ -60,10 +60,15 @@ export default function GuiFileOpenPanel({
   // leitura honesta de "abrir aqui" quando aqui já é onde ele está.
   const reopenHere = useCallback((menuTarget: FileContextTarget): void => {
     if (!isChatFileTarget(menuTarget) || !menuTarget.selectedPath) return
-    onReopen(menuTarget.reference, menuTarget.selectedPath)
+    onReopen(menuTarget.reference, menuTarget.selectedPath, 'preview')
   }, [onReopen])
 
-  const fileMenu = useFileContextMenu(reopenHere, runGuiChatFileOpen)
+  const openBrowser = useCallback((menuTarget: FileContextTarget): void => {
+    if (!isChatFileTarget(menuTarget) || !menuTarget.selectedPath) return
+    onReopen(menuTarget.reference, menuTarget.selectedPath, 'browser')
+  }, [onReopen])
+
+  const fileMenu = useFileContextMenu(reopenHere, runGuiChatFileOpen, openBrowser)
   const menuOpen = Boolean(fileMenu.menu)
 
   useEffect(() => {
@@ -154,10 +159,7 @@ export default function GuiFileOpenPanel({
                 type="button"
                 aria-haspopup="menu"
                 aria-expanded={menuOpen}
-                title={
-                  'Onde abrir este arquivo: aqui na folha, no programa padrão do '
-                  + 'sistema (.html vai para o navegador) ou mostrando na pasta.'
-                }
+                title="Escolha onde abrir este arquivo."
                 aria-label="Onde abrir este arquivo"
                 onClick={() => fileMenu.openFromAnchor(menuButtonRef.current, openTarget)}
               >
@@ -209,7 +211,7 @@ export default function GuiFileOpenPanel({
 
   // Aqui só chegam os dois desfechos SEM folha: o recado do `reveal` e a recusa
   // (o preview já voltou acima). Quem separa é o `action`, não o `ok`.
-  const message = result.ok ? (result.action === 'reveal' ? result.message : '') : result.error
+  const message = result.ok ? (result.action === 'reveal' || result.action === 'browser' ? result.message : '') : result.error
 
   return (
     <section

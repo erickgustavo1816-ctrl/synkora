@@ -57,8 +57,10 @@ const LSP_TOOLS = Object.freeze([
 /** O kit do BROWSER EMBUTIDO (2026-08-29): entrou no catálogo do ajudante e
  *  do dev — verificar a própria tela não é autoridade, e o QA delegado é o
  *  caso real do design. Literal e ordenável, pelo mesmo contrato dos irmãos. */
+const MOBILE_TOOLS = Object.freeze(['mobile_action', 'mobile_expo', 'mobile_screenshot', 'mobile_start', 'mobile_status', 'mobile_stop'])
 const BROWSER_TOOLS = Object.freeze([
   'browser_act',
+  'browser_check',
   'browser_console',
   'browser_eval',
   'browser_find',
@@ -75,6 +77,8 @@ const BROWSER_TOOLS = Object.freeze([
  *  dev, do planejador e do ajudante. O REVIEWER fica fora, pela mesma cerca do
  *  browser — o contrato dele é ler diff, não montar harness. */
 const SKILL_TOOLS = Object.freeze(['skill_discard', 'skill_pull', 'skill_search'])
+const CONTEXT_READ = ['context_read', 'context_search', 'context_status']
+const CONTEXT_WRITE = [...CONTEXT_READ, 'context_record']
 
 const PLANNER_TOOLS = Object.freeze([
   'delete_plan',
@@ -96,7 +100,7 @@ const INTEGRATION_TOOLS = Object.freeze(['integration_run', 'integration_status'
 // R38 (2026-08-29): o `release_done` entrou no catálogo do gui-release — o
 // fecho da conversa virou decisão do AGENTE (a subida fechava sozinha, e o
 // instalador que o dono pediu deixava de existir).
-const RELEASE_TOOLS = Object.freeze(['release_done', 'release_run', 'release_status'])
+const RELEASE_TOOLS = Object.freeze(['release_done', 'release_push', 'release_run', 'release_save', 'release_status', 'release_target'])
 
 const sorted = (...groups) => Object.freeze([...groups.flat()].sort())
 
@@ -462,7 +466,7 @@ function hubIn(t) {
   return { hub, root }
 }
 
-async function serverIn(t, hub, { lsp = true } = {}) {
+async function serverIn(t, hub, { lsp = true, context } = {}) {
   const served = []
   const calls = []
   const kit = lsp
@@ -506,6 +510,7 @@ async function serverIn(t, hub, { lsp = true } = {}) {
     releaseStatus: () => 'release',
     releaseRun: async () => 'SUBIU',
     noteCatalogServed: (id, tools) => served.push({ role: id.role, paneId: id.paneId, tools }),
+    context,
     ...kit
   })
   t.after(() => handle.close())
@@ -546,6 +551,44 @@ function textOf(result) {
   return block.text
 }
 
+test('project context: mission exposes history queries independently of LSP', async (t) => {
+  const { hub, root } = hubIn(t)
+  const { url } = await serverIn(t, hub, { lsp: false })
+  register(hub, 'context-catalog-test', { ...IDENTITY, cwd: root })
+  const names = await toolNames(url, 'context-catalog-test', 'context-catalog')
+  for (const name of ['context_status', 'context_search', 'context_read', 'context_record']) {
+    assert.ok(names.includes(name), `mission cannot discover ${name}`)
+  }
+})
+
+test('project context: HTTP binds history to the authenticated mission and delivers change notices', async (t) => {
+  const { hub, root } = hubIn(t)
+  const identity = { ...IDENTITY, cwd: root }
+  const calls = []
+  let changed = false
+  const context = {
+    status: async (authenticated) => { calls.push(authenticated); changed = false; return 'current mission context' },
+    notice: (authenticated) => {
+      assert.equal(authenticated.missionId, identity.missionId)
+      return changed ? 'Context changed; call context_status.' : undefined
+    }
+  }
+  const { url } = await serverIn(t, hub, { context })
+  register(hub, 'context-http-test', identity)
+  const client = await clientFor(t, url, 'context-http-test', 'context-http')
+  const status = await client.callTool({ name: 'context_status', arguments: {} })
+  assert.equal(textOf(status), 'current mission context')
+  assert.equal(calls[0].projectId, identity.projectId)
+  assert.equal(calls[0].missionId, identity.missionId)
+  changed = true
+  const result = await client.callTool({ name: 'lsp_diagnostics', arguments: {} })
+  assert.equal(result.content.length, 2)
+  assert.match(result.content[1].text, /context_status/u)
+  await client.callTool({ name: 'context_status', arguments: {} })
+  const fresh = await client.callTool({ name: 'lsp_diagnostics', arguments: {} })
+  assert.equal(fresh.content.length, 1)
+})
+
 test('o AJUDANTE recebe o kit de código E SÓ ELE — frota não abre frota, mecanicamente', async (t) => {
   const { hub, root } = hubIn(t)
   const { url, served } = await serverIn(t, hub)
@@ -563,13 +606,13 @@ test('o AJUDANTE recebe o kit de código E SÓ ELE — frota não abre frota, me
   // de código — o QA delegado é o caso real do design, e nenhuma das duas
   // famílias é autoridade sobre nada. A cerca que este teste existe para
   // provar segue intacta logo abaixo: NADA de delegate/integração/release.
-  assert.deepEqual(tools, [...LSP_TOOLS, ...BROWSER_TOOLS, ...SKILL_TOOLS].sort())
-  for (const forbidden of [...DELEGATOR_TOOLS, ...INTEGRATION_TOOLS, ...RELEASE_TOOLS, ...PLANNER_TOOLS]) {
+  assert.deepEqual(tools, [...LSP_TOOLS, ...BROWSER_TOOLS, ...MOBILE_TOOLS, ...SKILL_TOOLS, ...CONTEXT_READ].sort())
+  for (const forbidden of [...DELEGATOR_TOOLS, ...INTEGRATION_TOOLS, ...RELEASE_TOOLS, ...PLANNER_TOOLS, 'mission_summary', 'commentary']) {
     assert.equal(tools.includes(forbidden), false, `o ajudante enxergou ${forbidden}`)
   }
   const receipt = served.find((entry) => entry.paneId === 'gui-helper-abcd1234-2')
   assert.equal(receipt?.role, 'ajudante')
-  assert.deepEqual([...receipt.tools].sort(), [...LSP_TOOLS, ...BROWSER_TOOLS, ...SKILL_TOOLS].sort())
+  assert.deepEqual([...receipt.tools].sort(), [...LSP_TOOLS, ...BROWSER_TOOLS, ...MOBILE_TOOLS, ...SKILL_TOOLS, ...CONTEXT_READ].sort())
 })
 
 test('os TRÊS chats ganham o kit de código sem perder o que já tinham', async (t) => {
@@ -607,11 +650,11 @@ test('os TRÊS chats ganham o kit de código sem perder o que já tinham', async
     await toolNames(url, 'token-planner', 'kit-planner'),
     // 2026-08-30: o planejador delega — o kit de ajudantes entrou no catálogo
     // dele (a lista canônica por papel é do `test:gui-delegate-mcp`).
-    sorted(PLANNER_TOOLS, DELEGATOR_TOOLS, LSP_TOOLS, SKILL_TOOLS)
+    sorted(['commentary'], PLANNER_TOOLS, DELEGATOR_TOOLS, LSP_TOOLS, SKILL_TOOLS, CONTEXT_WRITE)
   )
   assert.deepEqual(
     await toolNames(url, 'token-dev', 'kit-dev'),
-    sorted(DELEGATOR_TOOLS, INTEGRATION_TOOLS, LSP_TOOLS, BROWSER_TOOLS, SKILL_TOOLS)
+    sorted(['commentary'], DELEGATOR_TOOLS, INTEGRATION_TOOLS, LSP_TOOLS, BROWSER_TOOLS, MOBILE_TOOLS, SKILL_TOOLS, CONTEXT_WRITE, ['mission_summary'])
   )
   // A cerca do integrador (R9) continua sendo o PAPEL DO ENDEREÇO: o kit de
   // código não pode ter carregado nada mais junto. E desde o browser
@@ -619,11 +662,11 @@ test('os TRÊS chats ganham o kit de código sem perder o que já tinham', async
   // não roda o produto — nenhuma `browser_*` no catálogo dele.
   assert.deepEqual(
     await toolNames(url, 'token-reviewer', 'kit-rev'),
-    sorted(DELEGATOR_TOOLS, LSP_TOOLS)
+    sorted(['commentary'], DELEGATOR_TOOLS, LSP_TOOLS, CONTEXT_READ)
   )
   assert.deepEqual(
     await toolNames(url, 'token-release', 'kit-release'),
-    sorted(RELEASE_TOOLS, LSP_TOOLS)
+    sorted(['commentary'], RELEASE_TOOLS, LSP_TOOLS, CONTEXT_READ)
   )
 })
 
@@ -748,7 +791,7 @@ test('sem o kit ligado as quatro tools CONTINUAM no catálogo e recusam com a re
   // e recusam com BROWSER_ENGINE_OFF; a suíte delas prova a frase.)
   assert.deepEqual(
     await toolNames(url, 'token-ajudante', 'lista-desligada'),
-    [...LSP_TOOLS, ...BROWSER_TOOLS, ...SKILL_TOOLS].sort()
+    [...LSP_TOOLS, ...BROWSER_TOOLS, ...MOBILE_TOOLS, ...SKILL_TOOLS, ...CONTEXT_READ].sort()
   )
   for (const [name, args] of [
     ['lsp_diagnostics', {}],
@@ -775,7 +818,7 @@ test('as descrições ENSINAM a base, o confinamento e os tetos reais', async (t
   const client = await clientFor(t, url, 'token-ajudante', 'descricoes')
   const tools = new Map((await client.listTools()).tools.map((tool) => [tool.name, tool]))
 
-  assert.deepEqual([...tools.keys()].sort(), [...LSP_TOOLS, ...BROWSER_TOOLS, ...SKILL_TOOLS].sort())
+  assert.deepEqual([...tools.keys()].sort(), [...LSP_TOOLS, ...BROWSER_TOOLS, ...MOBILE_TOOLS, ...SKILL_TOOLS, ...CONTEXT_READ].sort())
   // Descrição que mente sobre o próprio limite é pior que descrição ausente: os
   // números saem do módulo que os APLICA.
   const diagnostics = tools.get('lsp_diagnostics')

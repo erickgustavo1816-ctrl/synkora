@@ -28,6 +28,8 @@ export type MissionStatus = 'ativa' | 'integrando' | 'concluida' | 'arquivada'
  */
 export interface MissionDelivery {
   capturedAt: string
+  /** Durable source commit, captured before worktree cleanup; legacy entries omit it. */
+  sourceHead?: string
   /** assuntos de commit, mais novos primeiro (teto: COMMITS_CAP) */
   commits: string[]
   /** arquivos tocados, relativos à raiz do repo (teto: FILES_CAP) */
@@ -60,6 +62,7 @@ function deliveryLine(value: string): string {
  */
 export function missionDeliveryFrom(input: {
   capturedAt: string
+  sourceHead?: string
   /** assuntos, mais novos primeiro */
   commits: readonly string[]
   files: readonly string[]
@@ -87,6 +90,7 @@ export function missionDeliveryFrom(input: {
       : undefined
   return {
     capturedAt: input.capturedAt,
+    ...(input.sourceHead && /^[a-f0-9]{40,64}$/u.test(input.sourceHead) ? { sourceHead: input.sourceHead } : {}),
     ...kept,
     ...(truncated ? { truncated } : {})
   }
@@ -142,6 +146,9 @@ export interface Mission {
   /** Momento real da conclusão. `updatedAt` pode mudar depois por manutenção
    *  e não deve fazer uma missão antiga parecer recém-concluída no radar. */
   completedAt?: string
+  /** Agent-written, plain-language result; separate from the Git evidence.
+   *  Mirror: renderer/src/store.ts Mission.summary. */
+  summary?: string
   /** R16 — o que esta missão ENTREGOU, capturado na conclusão (ver
    *  MissionDelivery). Ausente em missão antiga, em projeto sem git e quando a
    *  leitura falhou: quem lê nunca pode tratar ausência como "não entregou". */
@@ -315,6 +322,7 @@ export class MissionStore {
         // `update` que zera branch/worktree. Duas escritas deixariam uma
         // janela em que a missão está concluída e a entrega ainda não pousou.
         | 'delivery'
+        | 'summary'
       >
     >
   ): Mission | undefined {

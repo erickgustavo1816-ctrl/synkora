@@ -134,7 +134,7 @@ export function BrowserPopoutView({
     const mission = missionId
 
     const measure = (): void => {
-      const box = browserRect(el.getBoundingClientRect())
+      const box = browserRect(el.getBoundingClientRect(), 'inward')
       lastRectRef.current = box
       const clipped = clipBrowserRect(box, [viewportRect()])
       if (!rectHasArea(clipped) || !elementIsPainted(el)) {

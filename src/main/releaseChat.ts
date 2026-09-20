@@ -23,6 +23,8 @@
 import { missionTypeOf } from './guiMissionContracts.ts'
 // @ts-expect-error Node strip-types exige a extensão; o bundler também a aceita.
 import { releasePublishStatusLine, type ReleasePublishSignal } from './releasePublish.ts'
+import type { ReleaseChangesSignal } from '../shared/releaseChanges'
+import type { ReleaseTargetProbe } from './releaseTarget'
 
 /** O mínimo de VERSÃO que este módulo lê (espelho do backlog.Version). */
 export interface ReleaseChatVersion {
@@ -69,6 +71,15 @@ export type EnsureReleaseMissionResult =
  */
 export function ensureReleaseMission(deps: EnsureReleaseMissionDeps): EnsureReleaseMissionResult {
   const { version } = deps
+  const existing = deps.missions.find(
+    (mission) =>
+      mission.projectId === version.projectId &&
+      mission.versionId === version.id &&
+      missionTypeOf(mission) === 'release' &&
+      mission.status !== 'arquivada' &&
+      mission.status !== 'concluida'
+  )
+  if (existing) return { ok: true, missionId: existing.id, created: false }
   if (version.status === 'lancada')
     return { ok: false, error: `a versão ${version.name} já subiu para a main — não há release a operar` }
   if (!version.branch || !version.worktree)
@@ -76,19 +87,11 @@ export function ensureReleaseMission(deps: EnsureReleaseMissionDeps): EnsureRele
       ok: false,
       error: `a versão ${version.name} ainda não tem branch/worktree próprios — crie uma missão nela primeiro (o isolamento nasce com a primeira missão)`
     }
-  const existing = deps.missions.find(
-    (mission) =>
-      mission.versionId === version.id &&
-      missionTypeOf(mission) === 'release' &&
-      mission.status !== 'arquivada' &&
-      mission.status !== 'concluida'
-  )
-  if (existing) return { ok: true, missionId: existing.id, created: false }
   const created = deps.create({
-    title: `Subir ${version.name} para a main`,
+    title: `Publicar ${version.name}`,
     goal:
       `Operar o release da versão ${version.name}: conferir as travas, subir a branch da versão ` +
-      'para a principal pelas ferramentas de release e contar o desfecho ao dono.',
+      'para o destino autorizado pelo dono, usando as ferramentas de release, e conferir a publicação solicitada.',
     versionId: version.id,
     missionType: 'release'
   })
@@ -102,6 +105,7 @@ export interface ReleaseStatusInput {
   version: ReleaseChatVersion
   /** branch principal do projeto (a MESMA autoridade do release mecânico). */
   mainBranch?: string
+  target?: ReleaseTargetProbe
   /** heads REAIS, lidos por quem tem git (o index injeta gitHead). */
   versionHead?: string
   mainHead?: string
@@ -121,6 +125,7 @@ export interface ReleaseStatusInput {
   /** R29 — a sonda de publicação do produto (script `release` + versões).
    *  Ausente = projeto sem package.json: a linha nem existe. */
   publish?: ReleasePublishSignal
+  changes?: ReleaseChangesSignal
 }
 
 function shortSha(sha: string | undefined): string {
@@ -130,7 +135,20 @@ function shortSha(sha: string | undefined): string {
 /** A RECEITA do próximo passo — uma frase, sempre acionável. */
 export function releaseNextStep(input: ReleaseStatusInput): string {
   if (input.releaseIntentPending)
-    return 'há um journal de release de uma tentativa anterior no disco: peça ao dono para reiniciar o Synkora (o boot reconcilia com segurança) antes de tentar de novo.'
+    return 'há uma finalização de release pendente: chame release_run para recuperar a tentativa anterior. O Synkora verifica o Git e continua a limpeza sem repetir uma integração já gravada.'
+  if (input.target?.error) return input.target.error
+  if (input.changes?.error) return input.changes.error
+  if (input.changes?.pending)
+    return 'há um recibo de correção pendente: repita release_save com o mesmo requestId e argumentos para reconciliar.'
+  if (input.changes?.dirty)
+    return 'revise e valide os arquivos locais; registre as correções com release_save (arquivos, resumo, motivo e validação). Artefatos e dados privados devem ficar nas exclusões locais do projeto.'
+  if (input.changes?.pendingPush)
+    return 'há correções salvas com envio pendente; use release_push antes de encerrar com release_done.'
+  if (input.version.status === 'lancada') {
+    if (input.remote && input.remote.ahead !== 0)
+      return 'a versão já subiu; use release_push para enviar a principal ao origin e conferir o envio.'
+    return 'a versão já subiu; confira a entrega, inclusive o instalador quando solicitado, e chame release_done quando tudo estiver concluído.'
+  }
   if (input.integrationPending.length > 0)
     return 'espere a fila de integração esvaziar (missão subindo vem antes da versão) — acompanhe e avise o dono se algo travar.'
   if (input.pendingMissions.length > 0)
@@ -138,15 +156,22 @@ export function releaseNextStep(input: ReleaseStatusInput): string {
   if (input.openBacklogItems.length > 0)
     return 'os itens de backlog abertos da versão precisam virar missão (e concluir) ou ser excluídos antes da subida.'
   if (input.planLockMessage) return 'a trava do plano mestre está de pé — leia a mensagem dela acima e fale com o dono ("ou eu excluo ou eu faço").'
-  return 'tudo livre: chame release_run.'
+  return input.target?.needsSwitch
+    ? `tudo livre: chame release_run; o Synkora abrirá ${input.target.branch} na pasta do projeto antes de integrar e enviar ao origin.`
+    : 'tudo livre: chame release_run.'
 }
 
 export function releaseStatusText(input: ReleaseStatusInput): string {
   const { version } = input
   const lines = [
     `RELEASE DA VERSÃO ${version.name} → ${input.mainBranch ?? 'a branch principal'}.`,
+    `ETAPA: ${version.status === 'lancada' ? 'versão já subida; entrega e correções finais' : 'preparação da subida'}.`,
     `BRANCHES: versão ${version.branch ?? '(sem branch)'} em ${shortSha(input.versionHead)} · principal ${input.mainBranch ?? '?'} em ${shortSha(input.mainHead)}.`
   ]
+  if (input.target) lines.push(
+    `DESTINO: ${input.target.branch ?? '(não definido)'}. PASTA DO PROJETO: ${input.target.currentBranch ?? '(não comprovada)'}.`,
+    `BRANCHES DISPONÍVEIS: ${input.target.branches.join(', ') || '(nenhuma)'}. Para escolher ou alterar o destino autorizado pelo dono, use release_target; não peça uma configuração manual que o app não oferece.`
+  )
   lines.push(
     input.integrationPending.length > 0
       ? `FILA DE INTEGRAÇÃO: ${input.integrationPending
@@ -176,12 +201,13 @@ export function releaseStatusText(input: ReleaseStatusInput): string {
         : input.remote.ahead === 0
           ? 'em dia com a base local'
           : `base local ${input.remote.ahead} commit(s) à frente`
-    lines.push(`REMOTE: origin ${input.remote.url} · ${ahead} — o push acompanha a subida.`)
+    lines.push(`REMOTE: origin ${input.remote.url} · ${ahead} — ${version.status === 'lancada' ? 'release_push envia a principal sem repetir a subida' : 'o push acompanha a subida'}.`)
   }
   // R29 — a caixa entra na fotografia: o agente sabe ANTES do release_run se
   // a subida termina no push (só código) ou na publicação (pipeline
   // declarado). A frase mora no módulo de publicação, provada em node puro.
-  if (input.publish) lines.push(releasePublishStatusLine(input.publish))
+  if (input.publish) lines.push(releasePublishStatusLine(input.publish, version.status === 'lancada'))
+  if (input.changes?.text) lines.push(input.changes.text)
   if (input.releaseIntentPending)
     lines.push('ATENÇÃO: existe um journal de release pendente de uma tentativa anterior.')
   lines.push(`PRÓXIMO PASSO: ${releaseNextStep(input)}`)
@@ -237,6 +263,8 @@ export async function runReleaseForChat(
         ]
       : []),
     'CONTE AO DONO o desfecho em uma ou duas linhas.',
+    'Se o pedido inclui PROD, confira o deploy na hospedagem e seu resultado. Enviar código ao origin não comprova publicação em produção, mesmo sem script release no package.json.',
+    'Se corrigir código/testes durante a entrega, valide e use release_save para registrar os arquivos; depois release_push. O histórico fica ligado a esta versão, sem commit manual na principal.',
     'A conversa fecha quando VOCÊ chamar release_done, depois de entregar TUDO que o dono pediu.'
   ].join('\n')
 }
@@ -261,6 +289,7 @@ export interface ReleaseDoneInput {
    * main sem inventar heurística. Ausência vira ADVISORY, nunca recusa.
    */
   boxConfirmed?: boolean
+  changes?: ReleaseChangesSignal
 }
 
 export interface ReleaseDoneDecision {
@@ -297,6 +326,15 @@ export function releaseDoneDecision(input: ReleaseDoneInput): ReleaseDoneDecisio
         'RECEITA: leia release_status e, com a fotografia livre, chame release_run; ' +
         'release_done só fecha uma subida que já pousou.'
     }
+  if (input.changes?.error || input.changes?.pending || input.changes?.dirty)
+    return {
+      ok: false,
+      text: input.changes.error ?? (input.changes.pending
+        ? 'há um recibo pendente: leia release_status e repita release_save com o mesmo requestId antes de release_done.'
+        : 'há alterações locais sem registro: revise/valide, use release_save e release_push; depois repita release_done. Artefatos e dados privados devem ficar nas exclusões locais do projeto.')
+    }
+  if (input.changes?.pendingPush)
+    return { ok: false, text: 'há correções salvas com envio pendente; leia release_status, use release_push e depois repita release_done.' }
   const advisory =
     input.publishRequired && input.boxConfirmed !== true ? RELEASE_DONE_BOX_ADVISORY : undefined
   return {

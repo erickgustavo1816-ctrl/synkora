@@ -46,11 +46,14 @@ test('fleet opens for new and resumed helpers, not each activity update', () => 
   assert.deepEqual(workspaceActivityPanels(undefined, b), [], 'initial fleet state restores without auto-opening')
 })
 
-test('new commits reveal history; working changes reveal work without reopening on every poll', () => {
+test('new commits reveal history; file edits never open the work panel', () => {
   const a = empty()
   const edited = { ...a, workspace: { ...a.workspace, insertions: 5, files: [{ path: 'example.ts', status: 'M' }] } }
-  assert.deepEqual(workspaceActivityPanels(a, edited), ['trabalho'])
+  assert.deepEqual(workspaceActivityPanels(a, edited), [])
   assert.deepEqual(workspaceActivityPanels(edited, edited), [])
+  const editedAgain = { ...edited, workspace: { ...edited.workspace, insertions: 12,
+    files: [...edited.workspace.files, { path: 'second.ts', status: 'A' }] } }
+  assert.deepEqual(workspaceActivityPanels(edited, editedAgain), [])
   const committed = { ...edited, workspace: { ...edited.workspace, ahead: 1 } }
   assert.deepEqual(workspaceActivityPanels(edited, committed), ['historico'])
   assert.deepEqual(workspaceActivityPanels(undefined, committed), [], 'initial history is a baseline')
@@ -75,6 +78,13 @@ test('real controller keeps manual dismissal and sizes across background updates
   await act(() => { controller.setColumnWidth(680); controller.closePanel('browser') })
   await update({ activity: structuredClone(state) })
   assert.deepEqual(controller.preference.panels, [], 'repeat state respects the close button')
+  await act(() => controller.openPanel('trabalho'))
+  assert.deepEqual(controller.preference.panels, ['trabalho'], 'work still opens manually')
+  await act(() => { controller.setColumnWidth(680); controller.closePanel('trabalho') })
+  const edit = { ...state, workspace: { ...state.workspace, insertions: 8,
+    files: [{ path: 'synthetic.ts', status: 'M' }] } }
+  await update({ activity: edit })
+  assert.deepEqual(controller.preference.panels, [], 'editing cannot undo a manual close of work')
   const fleet = { ...state, helpers: [{ id: 'helper-1', status: 'running' }] }
   await update({ activity: fleet, visible: false })
   assert.deepEqual(controller.preference.panels, [], 'background mission cannot seize the workspace')

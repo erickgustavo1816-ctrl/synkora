@@ -45,6 +45,15 @@ const chatTarget = (patch = {}) => ({
   ...patch
 })
 
+test('o botão direito de um artefato do chat oferece o browser do Synkora', () => {
+  const options = fileContextOptions(chatTarget())
+  assert.equal(options[0]?.action, 'open-browser')
+  assert.equal(options[0]?.label, 'Abrir no browser do Synkora')
+  assert.equal(options[1]?.label, 'Ler código no app')
+  assert.equal(fileContextOptions(chatTarget({ path: 'src/app.ts', reference: 'src/app.ts' }))
+    .some(option => option.action === 'open-browser'), false)
+})
+
 /** Ponte falsa: guarda TODA chamada que chegaria ao `files:openExternal`. */
 function stubBridge(impl) {
   const calls = []
@@ -297,14 +306,15 @@ test('o preload publica a ponte com o tipo do MAIN (fonte única, sem espelho to
  * `paneId + referência` (a autoridade é o `cwd` do pane, como todo o resto do
  * fio já é).
  */
-test('o token do fio tem o MESMO menu de três saídas, no dialeto do pane', () => {
+test('o token do fio oferece browser e leitura de código, preservando as saídas externas', () => {
   const options = fileContextOptions(chatTarget())
   assert.deepEqual(
     options.map((option) => option.action),
-    ['open-in-app', 'open-default', 'reveal']
+    ['open-browser', 'open-in-app', 'open-default', 'reveal']
   )
   assert.deepEqual(options.map((option) => option.label), [
-    'abrir no app',
+    'Abrir no browser do Synkora',
+    'Ler código no app',
     'abrir com o programa padrão',
     'mostrar na pasta'
   ])
@@ -457,8 +467,9 @@ test('o token do chat abre o menu no botão direito e pelo teclado', async () =>
     markdown.includes("closest('button[data-gui-file-token]')"),
     'o menu tem que nascer do TOKEN, não da mensagem inteira'
   )
-  // O CLIQUE ESQUERDO continua exatamente o de sempre.
-  assert.match(markdown, /guiApi\.fileOpen\(paneId, reference, selectedPath\)/u)
+  // O main escolhe browser/leitor; a escolha ambígua preserva o modo pedido.
+  assert.ok(markdown.includes('guiApi.fileOpen(paneId, reference, selectedPath, mode)'))
+  assert.ok(markdown.includes('openFileReference(reference, path, fileModeRef.current)'))
   assert.match(markdown, /aria-haspopup/u, 'o token não anuncia que tem menu')
   for (const forbidden of ['window.confirm', 'window.alert', 'Menu.popup']) {
     assert.equal(markdown.includes(forbidden), false, `superfície nativa no fio: ${forbidden}`)

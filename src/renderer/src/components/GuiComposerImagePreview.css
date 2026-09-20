@@ -1,0 +1,150 @@
+.gui-attachment-chip:has(.gui-attachment-draft-preview) {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+.gui-attachment-draft-preview {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: zoom-in;
+}
+.gui-attachment-draft-preview .gui-attachment-kind { flex-shrink: 0; }
+.gui-attachment-draft-preview:hover .gui-attachment-name { text-decoration: underline; }
+.gui-attachment-draft-preview:focus-visible,
+.gui-composer-image-preview button:focus-visible {
+  outline: 2px solid var(--accent-deep, #a84b27);
+  outline-offset: 2px;
+}
+
+.gui-composer-image-preview {
+  position: fixed;
+  z-index: 1300;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--gui-line-strong, #9b9384);
+  border-radius: 8px;
+  background: var(--paper, #efe9dc);
+  color: var(--ink, #26241f);
+  box-shadow: 0 8px 28px #26241f30;
+  font-family: inherit;
+}
+.gui-composer-image-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  padding: 8px;
+  border-bottom: 1px solid var(--gui-line, #c8c0b2);
+  background: var(--card, #f6f1e7);
+}
+.gui-composer-image-head button { color: inherit; font-family: inherit; }
+.gui-composer-image-move {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  padding: 2px;
+  background: transparent;
+  text-align: left;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+.gui-composer-image-move:active { cursor: grabbing; }
+.gui-composer-image-grip { color: var(--ink-2, #625e56); font-size: 20px; }
+.gui-composer-image-title { display: grid; gap: 4px; min-width: 0; }
+.gui-composer-image-title > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.gui-composer-image-help { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+.gui-composer-image-close {
+  flex-shrink: 0;
+  min-height: 28px;
+  border: 1px solid var(--gui-line-strong, #9b9384);
+  border-radius: 4px;
+  padding: 4px 7px;
+  background: transparent;
+  font-size: 10px;
+  cursor: pointer;
+}
+.gui-composer-image-close { width: 28px; font-size: 18px; line-height: 1; }
+.gui-composer-image-preview button:disabled { opacity: 0.5; cursor: default; }
+.gui-composer-image-body {
+  flex: 1;
+  min-height: 0;
+  display: block;
+  position: relative;
+  overflow: auto;
+  overscroll-behavior: contain;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.gui-composer-image-canvas { position: relative; width: 100%; height: 100%; }
+/* Symmetric space around an enlarged bitmap allows panning even when only
+   one of its dimensions overflows. Fit mode has no extra scroll area. */
+.gui-composer-image-canvas img {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  display: block;
+  max-width: none;
+  max-height: none;
+  object-fit: contain;
+}
+.gui-composer-image-body.is-enlarged { cursor: grab; touch-action: none; user-select: none; }
+.gui-composer-image-body.is-enlarged:active { cursor: grabbing; }
+.gui-composer-image-body > [role='status'] { display: grid; place-items: center; height: 100%; }
+.gui-composer-image-error { color: var(--err, #b54036); padding: 14px; }
+.gui-composer-image-controls {
+  display: flex;
+  align-items: center;
+  align-self: center;
+  gap: 3px;
+  flex-shrink: 0;
+  margin: 0 24px 10px;
+  padding: 3px;
+  border: 1px solid var(--gui-line, #c8c0b2);
+  border-radius: 20px;
+  background: var(--card, #f6f1e7);
+}
+.gui-composer-image-controls button {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 18px;
+  cursor: pointer;
+}
+.gui-composer-image-controls button:hover { background: var(--gui-fill, #e7e0d3); }
+.gui-composer-image-controls .gui-composer-image-zoom-percent { width: 48px; border-radius: 4px; font-size: 11px; }
+.gui-composer-image-resize {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-top-left-radius: 5px;
+  background: var(--card, #f6f1e7);
+  color: var(--ink-2, #625e56);
+  cursor: nwse-resize;
+  touch-action: none;
+}

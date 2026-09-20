@@ -1,7 +1,11 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
-import { guiApi, type GuiFileOpenResult } from '../guiApi'
+import { guiApi, type GuiFileOpenMode, type GuiFileOpenResult } from '../guiApi'
+import { browserApi } from './BrowserChrome'
+import { presentGuiFileBrowser } from '../guiFileBrowserPresentation'
+import { useStore } from '../store'
+import { WorkspacePanelContext } from '../workspace/WorkspacePanelContext'
 import { applyGuiStableMarkdown } from '../guiStableMarkdownPatch'
 import {
   GUI_INLINE_IMAGE_OPEN_ATTR,
@@ -11,8 +15,10 @@ import {
   type GuiInlineImageState
 } from '../guiInlineImageHtml'
 import { findGuiFileTokens, guiInlineCodeFileToken } from '../guiFileTokens'
+import { prepareGuiMarkdownFileLinks } from '../guiMarkdownFileLinks'
 import {
   isChatFileTarget,
+  fileOpenFamily,
   runGuiChatFileOpen,
   type ChatFileContextTarget,
   type FileContextTarget
@@ -44,17 +50,30 @@ function normalizedExternalHref(href: string | null): string | null {
   }
 }
 
-function routeChatLinksExternally(html: string): string {
+function routeChatLinksExternally(html: string, fileReferences: ReadonlyMap<string, string>): string {
   const template = document.createElement('template')
   template.innerHTML = html
 
   for (const link of template.content.querySelectorAll('a')) {
     if (!(link instanceof HTMLAnchorElement)) continue
 
+    const reference = fileReferences.get(link.getAttribute('href') ?? '')
+    if (reference) {
+      const button = fileButton(reference)
+      // Keep the agent's sanitized label (including emphasis) and the exact
+      // destination separately; scanning only the label loses download links.
+      // Image previews/checkboxes cannot become controls nested in this button.
+      for (const image of link.querySelectorAll('img')) image.replaceWith(image.alt)
+      for (const input of link.querySelectorAll('input')) input.remove()
+      if (link.textContent?.trim()) button.replaceChildren(...Array.from(link.childNodes))
+      link.replaceWith(button)
+      continue
+    }
+
     const href = normalizedExternalHref(link.getAttribute('href'))
     if (!href) {
-      // O main só encaminha HTTPS ao navegador externo. Mantemos os demais
-      // destinos como texto em vez de criar uma navegação privilegiada local.
+      // Unsupported destinations remain text. Local files above use the
+      // existing main-process resolver, never privileged renderer navigation.
       link.replaceWith(...Array.from(link.childNodes))
       continue
     }
@@ -72,9 +91,10 @@ function fileButton(token: string): HTMLButtonElement {
   button.type = 'button'
   button.className = 'gui-file-link'
   button.dataset.guiFileToken = token
-  // Rodada 7-D: o clique continua lendo aqui; o botão direito (e a tecla de
-  // menu) abre ONDE ABRIR — inclusive fora do app.
-  button.title = `Abrir ${token} no Synkora · botão direito: onde abrir`
+  const family = fileOpenFamily(token)
+  button.title = family === 'plain' || family === 'document'
+    ? `Abrir ${token} no Synkora · botão direito: onde abrir`
+    : `Abrir ${token} no browser do Synkora · botão direito: onde abrir`
   button.setAttribute('aria-label', `Abrir arquivo ${token}`)
   button.setAttribute('aria-haspopup', 'menu')
   button.textContent = token
@@ -169,9 +189,13 @@ export default function GuiMarkdown({
   text: string
   className?: string
 }): React.JSX.Element {
+  const workspaceContext = useContext(WorkspacePanelContext)
+  const workspaceRef = useRef(workspaceContext)
+  workspaceRef.current = workspaceContext
   const html = useMemo(() => {
     const raw = marked.parse(text, { async: false, gfm: true, breaks: true })
-    const sanitized = DOMPurify.sanitize(raw, {
+    const fileLinks = prepareGuiMarkdownFileLinks(raw)
+    const sanitized = DOMPurify.sanitize(fileLinks.html, {
       // Só a estrutura que o próprio Markdown gera. HTML cru não pode trazer
       // classes/estilos do app, containers fechados ou conteúdo visualmente
       // oculto que reapareceria apenas ao copiar.
@@ -182,7 +206,7 @@ export default function GuiMarkdown({
     // bytes das tags `<img>` de caminho local mudam, e o placeholder que sai
     // daqui é sempre o mesmo para a mesma entrada (é isso que deixa o patch de
     // prefixo da R35 reconhecer os blocos já escritos durante o streaming).
-    return rewriteGuiInlineImages(linkifyGuiFileReferences(routeChatLinksExternally(sanitized)))
+    return rewriteGuiInlineImages(linkifyGuiFileReferences(routeChatLinksExternally(sanitized, fileLinks.references)))
   }, [text])
 
   // R35 — O CONTEÚDO NÃO É MAIS ENTREGUE AO REACT COMO STRING. Com
@@ -264,6 +288,7 @@ export default function GuiMarkdown({
   const fileBusyRef = useRef(false)
   const fileTriggerRef = useRef<HTMLButtonElement | null>(null)
   const fileReferenceRef = useRef<string | null>(null)
+  const fileModeRef = useRef<GuiFileOpenMode>('auto')
   const [fileBusy, setFileBusy] = useState(false)
   const [fileOpeningLabel, setFileOpeningLabel] = useState<string | null>(null)
   const [fileResult, setFileResult] = useState<GuiFileOpenResult | null>(null)
@@ -330,7 +355,8 @@ export default function GuiMarkdown({
 
   const openFileReference = useCallback(async (
     reference: string,
-    selectedPath?: string
+    selectedPath?: string,
+    mode: GuiFileOpenMode = 'auto'
   ): Promise<void> => {
     if (fileBusyRef.current) return
     fileBusyRef.current = true
@@ -340,9 +366,25 @@ export default function GuiMarkdown({
     fileTriggerRef.current?.setAttribute('aria-busy', 'true')
     if (selectedPath === undefined) setFileResult(null)
     fileReferenceRef.current = reference
+    fileModeRef.current = mode
     const request = ++fileRequestRef.current
-    const result = await guiApi.fileOpen(paneId, reference, selectedPath)
+    const result = await guiApi.fileOpen(paneId, reference, selectedPath, mode)
     if (request !== fileRequestRef.current) return
+    if (result.ok && result.action === 'browser') {
+      const context = workspaceRef.current
+      const presentation = await presentGuiFileBrowser(result, context ? {
+        projectId: context.projectId,
+        visible: context.visible,
+        selectedMissionId: useStore.getState().missionTabByProject[result.projectId],
+        openPanel: context.controller.openPanel
+      } : null, browserApi()?.popOut)
+      if (request !== fileRequestRef.current) return
+      if (!presentation.ok) {
+        clearFileBusy()
+        setFileResult({ ok: false, reason: 'unavailable', error: presentation.error ?? 'Abra o painel Browser para ver a prévia.' })
+        return
+      }
+    }
     clearFileBusy()
     setFileResult(result)
   }, [clearFileBusy, paneId])
@@ -351,19 +393,17 @@ export default function GuiMarkdown({
    *  gesto — quando ele já saiu do fio (mensagem substituída), a leitura segue
    *  mesmo assim, só sem o pisca do botão e sem foco de volta. */
   const readFileHere = useCallback(
-    (trigger: HTMLButtonElement | null, reference: string): void => {
+    (trigger: HTMLButtonElement | null, reference: string, mode: GuiFileOpenMode = 'auto'): void => {
       if (fileBusyRef.current) return
       fileTriggerRef.current?.classList.remove('gui-file-opening')
       fileTriggerRef.current = trigger
-      void openFileReference(reference)
+      void openFileReference(reference, undefined, mode)
     },
     [openFileReference]
   )
 
-  // ONDE ABRIR O ARQUIVO DO FIO (rodada 7, C1 — a metade do CHAT). O clique
-  // ESQUERDO no TOKEN não muda uma vírgula: lê aqui, na folha de código. O botão
-  // direito (e a tecla de menu) abre as outras duas saídas do dono — programa
-  // padrão do sistema e mostrar na pasta —, que atravessam o canal do PANE.
+  // The default click lets the main choose browser or reader. The context
+  // menu retains an explicit inert source reader and an explicit browser.
   //
   // Images use the left click to enlarge in a portal; right click keeps the
   // existing authorized file actions, and never opens a tab automatically.
@@ -372,10 +412,16 @@ export default function GuiMarkdown({
   const openFromMenu = useCallback((menuTarget: FileContextTarget): void => {
     if (!isChatFileTarget(menuTarget)) return
     const anchor = menuAnchorRef.current
-    readFileHere(anchor?.isConnected ? anchor : null, menuTarget.reference)
+    readFileHere(anchor?.isConnected ? anchor : null, menuTarget.reference, 'preview')
   }, [readFileHere])
 
-  const fileMenu = useFileContextMenu(openFromMenu, runGuiChatFileOpen)
+  const openBrowserFromMenu = useCallback((menuTarget: FileContextTarget): void => {
+    if (!isChatFileTarget(menuTarget)) return
+    const anchor = menuAnchorRef.current
+    readFileHere(anchor?.isConnected ? anchor : null, menuTarget.reference, 'browser')
+  }, [readFileHere])
+
+  const fileMenu = useFileContextMenu(openFromMenu, runGuiChatFileOpen, openBrowserFromMenu)
   // O controlador é um objeto novo a cada render; os gestos dependem só das
   // funções dele, que são estáveis.
   const { openFromPointer, openFromKeyboard } = fileMenu
@@ -491,9 +537,9 @@ export default function GuiMarkdown({
           busy={fileBusy}
           onChoose={(path) => {
             const reference = fileReferenceRef.current
-            if (reference) void openFileReference(reference, path)
+            if (reference) void openFileReference(reference, path, fileModeRef.current)
           }}
-          onReopen={(reference, selectedPath) => void openFileReference(reference, selectedPath)}
+          onReopen={(reference, selectedPath, mode) => void openFileReference(reference, selectedPath, mode)}
           onClose={() => closeFilePanel(true)}
         />
       )}

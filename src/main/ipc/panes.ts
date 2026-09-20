@@ -31,7 +31,7 @@ import type { PaneLifecycleEngine } from '../paneLifecycle'
 export interface PanesIpcExtras {
   engine: PaneLifecycleEngine
   /** missionEngine — worktree provado antes do servidor de teste. */
-  ensureMissionWorktree(missionId: string): Mission | undefined
+  ensureMissionWorktree(missionId: string): Promise<Mission | undefined>
 }
 
 export function registerPanesIpc(ctx: MainContext, extras: PanesIpcExtras): void {
@@ -41,12 +41,12 @@ export function registerPanesIpc(ctx: MainContext, extras: PanesIpcExtras): void
 
   ipcMain.handle(
     'panes:testServerSpec',
-    (
+    async (
       e,
       projectId: string,
       target: { missionId?: string; versionId?: string },
       port?: number
-    ): {
+    ): Promise<{
       ok: boolean
       msg?: string
       paneId?: string
@@ -55,7 +55,7 @@ export function registerPanesIpc(ctx: MainContext, extras: PanesIpcExtras): void
       title?: string
       missionId?: string
       versionId?: string
-    } => {
+    }> => {
       const project = projects.get(projectId)
       if (!project || !existsSync(project.path))
         return { ok: false, msg: 'projeto indisponível — a pasta existe?' }
@@ -63,7 +63,7 @@ export function registerPanesIpc(ctx: MainContext, extras: PanesIpcExtras): void
       let label = ''
       let missionId: string | undefined
       if (target.missionId) {
-        const mission = ensureMissionWorktree(target.missionId)
+        const mission = await ensureMissionWorktree(target.missionId)
         if (!mission || mission.projectId !== projectId)
           return { ok: false, msg: 'missão não encontrada' }
         cwd = mission.worktree

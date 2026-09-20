@@ -28,6 +28,11 @@ import type { MissionBadge } from './missionPresentation'
  *  importa. Espelho declarado de src/main/integrationQueue.ts, via preload. */
 export type IntegrationTicketSignal = MissionIntegrationQueueView
 
+/** The server additionally proves the saved intent and the merge before cleanup. */
+export function canRetryIntegrationFinalization(ticket?: IntegrationTicketSignal): boolean {
+  return ticket?.state === 'blocked' && ticket.owner === 'orchestrator'
+}
+
 /** O que o card/lista precisa saber de uma missão para achar o lugar dela. */
 export interface IntegrationQueueMission {
   id: string
@@ -83,7 +88,7 @@ export function integrationQueueNote(ticket: IntegrationTicketSignal): string {
   if (ticket.state === 'merging') return 'integrando agora — o merge está em curso'
   if (ticket.state === 'blocked')
     return ticket.owner === 'orchestrator'
-      ? 'fila pausada — reparo seguro do destino pendente'
+      ? 'finalização pendente — o agente pode retomar o reparo; acompanhe pelo chat'
       : 'fila pausada — decisão pendente'
   if (ticket.state === 'sync_required') return 'sincronizando antes de integrar'
   if (agentIsResolving(ticket))

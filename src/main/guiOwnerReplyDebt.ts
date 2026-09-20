@@ -15,7 +15,8 @@
  * metade MECÂNICA: enquanto houver fala do dono entregue e não respondida, as
  * tools RECUSAM, e a recusa nomeia a receita (fale UMA linha no chat) e
  * re-cita a fala pendente. Falar destrava — a saída sancionada existe e é a
- * única.
+ * única. A ferramenta autenticada commentary também publica essa fala e deve
+ * permanecer disponível durante a cobrança.
  *
  * O QUE A R39 MUDOU, e por quê (medido em 01/09, missão 86a05c06): a guarda da
  * R32 morava só no nosso servidor MCP, e o modelo simplesmente TROCOU DE TOOL —
@@ -47,6 +48,7 @@ import { mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
 import { guiOwnerDebtFlagPath, guiOwnerDebtHookPayload } from './guiOwnerDebtHook'
+import { GUI_OWNER_REPLY_PROGRESS } from './guiPublicCommentary'
 
 /** Teto da citação re-entregue na recusa. A fala original já viajou inteira
  *  na carona; aqui é lembrete, não segunda entrega. */
@@ -200,9 +202,9 @@ function quoted(text: string): string {
 
 /**
  * A RECUSA QUE COBRA. Quatro coisas obrigatórias, na ordem que destravam: o
- * MOTIVO (o dono falou e não ouviu resposta), o ALCANCE (TODAS as tools —
+ * MOTIVO (o dono falou e não ouviu resposta), o ALCANCE (as tools de trabalho —
  * nativas e do Synkora — e trocar de tool dá na mesma), a RECEITA exata (uma
- * ou duas linhas de texto normal, fora de tool) e a FALA re-citada.
+ * ou duas linhas por commentary ou texto normal) e a FALA re-citada.
  *
  * O alcance é a emenda da R39 e não é retórica: o texto velho dizia "Esta tool
  * só destrava…", e em 01/09 o modelo leu isso como convite e tentou outras
@@ -219,11 +221,10 @@ export function guiOwnerReplyRefusal(texts: readonly string[]): string {
       ? `"${quoted(texts[0] ?? '')}"`
       : texts.map((text, index) => `${index + 1}. "${quoted(text)}"`).join('\n')
   return (
-    'PARE: o DONO falou no meio deste turno e ainda não ouviu resposta. TODAS as suas tools ' +
+    'PARE: o DONO falou no meio deste turno e ainda não ouviu resposta. TODAS as suas tools de trabalho ' +
     '— as NATIVAS (Bash, Read, Edit, AskUserQuestion…) e as do Synkora — estão bloqueadas até ' +
-    'você responder, e pedir outra tool devolve exatamente esta mesma recusa. A saída é uma só: ' +
-    'escreva AGORA, como TEXTO no chat (fora de qualquer tool), uma ou duas linhas dizendo o que ' +
-    'entendeu e o que muda; feito isso tudo destrava e você retoma de onde parou. O que ele disse:\n' +
+    'você responder, e pedir outra tool de trabalho devolve esta mesma recusa. A resposta destrava o trabalho. ' +
+    GUI_OWNER_REPLY_PROGRESS + '\nO que ele disse:\n' +
     body
   )
 }

@@ -13,8 +13,8 @@
 //     `missionWorkspace.ts`: cast estreito resolvido A CADA CHAMADA, porque o
 //     namespace do preload pode nascer depois deste módulo ser importado.
 //
-// Browser embutido NÃO mora aqui (é a 4ª etapa do roadmap do dono): "abrir com
-// o programa padrão" entrega o arquivo ao sistema e acabou.
+// Browser artifacts in the chat have their own owner-gesture action. Source
+// reading and the two external actions keep their independent destinations.
 //
 // RODADA 7-D (esclarecimento do dono): a superfície que ele queria é o CHAT —
 // "quando o agente cita um `.html` e eu clico, abre o painelzinho de código;
@@ -33,7 +33,7 @@ import type {
 } from '../../preload/index'
 
 /** As três saídas do menu, na ordem em que o dono as pediu. */
-export type FileContextAction = 'open-in-app' | 'open-default' | 'reveal'
+export type FileContextAction = 'open-browser' | 'open-in-app' | 'open-default' | 'reveal'
 
 /** O que o main faz com o arquivo: `default` = programa padrão do sistema;
  *  `reveal` = mostrar na pasta. ESPELHO de `FileExternalOpenMode`
@@ -95,6 +95,7 @@ export interface FileOpenOutcome {
 
 /** UI em PT-BR; identificadores em inglês (regra da casa). */
 export const FILE_CONTEXT_LABELS: Readonly<Record<FileContextAction, string>> = {
+  'open-browser': 'Abrir no browser do Synkora',
   'open-in-app': 'abrir no app',
   'open-default': 'abrir com o programa padrão',
   reveal: 'mostrar na pasta'
@@ -102,6 +103,7 @@ export const FILE_CONTEXT_LABELS: Readonly<Record<FileContextAction, string>> = 
 
 /** Glifos do vocabulário que o app já usa: folha, seta que SAI, pasta. */
 export const FILE_CONTEXT_GLYPHS: Readonly<Record<FileContextAction, string>> = {
+  'open-browser': '◎',
   'open-in-app': '▤',
   'open-default': '↗',
   reveal: '▱'
@@ -110,11 +112,12 @@ export const FILE_CONTEXT_GLYPHS: Readonly<Record<FileContextAction, string>> = 
 /** Para ONDE o sistema manda este arquivo. A família não muda a ação (é sempre
  *  o programa padrão do Windows), muda o que a dica PROMETE — dizer "abre no
  *  navegador" para um `.png` seria mentira. */
-export type FileOpenFamily = 'page' | 'image' | 'document' | 'plain'
+export type FileOpenFamily = 'page' | 'image' | 'document' | 'media' | 'plain'
 
 const PAGE_EXTENSIONS = new Set(['html', 'htm', 'xhtml', 'svg'])
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'avif', 'ico'])
 const DOCUMENT_EXTENSIONS = new Set(['pdf'])
+const MEDIA_EXTENSIONS = new Set(['mp3', 'wav', 'ogg', 'm4a', 'mp4', 'webm', 'ogv'])
 
 export function fileOpenFamily(path: string): FileOpenFamily {
   const name = path.replace(/\\/g, '/').split('/').at(-1) ?? ''
@@ -123,6 +126,7 @@ export function fileOpenFamily(path: string): FileOpenFamily {
   if (PAGE_EXTENSIONS.has(extension)) return 'page'
   if (IMAGE_EXTENSIONS.has(extension)) return 'image'
   if (DOCUMENT_EXTENSIONS.has(extension)) return 'document'
+  if (MEDIA_EXTENSIONS.has(extension)) return 'media'
   return 'plain'
 }
 
@@ -130,6 +134,7 @@ const DEFAULT_TIP: Readonly<Record<FileOpenFamily, string>> = {
   page: 'Abre no seu navegador padrão — a página renderizada, não o código.',
   image: 'Abre no visualizador de imagens do sistema.',
   document: 'Abre no leitor de PDF do sistema.',
+  media: 'Abre no player de áudio ou vídeo do sistema.',
   plain: 'Abre no programa padrão do sistema para este tipo de arquivo.'
 }
 
@@ -241,15 +246,22 @@ export function fileContextOptions(target: FileContextTarget): FileContextOption
     : fileContextRequest(target)
   if (!accepted) return []
   const family = fileOpenFamily(target.path)
+  const browserArtifact = isChatFileTarget(target) && (family === 'page' || family === 'image' || family === 'media')
   return [
-    {
-      action: 'open-in-app',
-      label: FILE_CONTEXT_LABELS['open-in-app'],
+    ...(browserArtifact ? [{
+      action: 'open-browser' as const,
+      label: FILE_CONTEXT_LABELS['open-browser'],
+      glyph: FILE_CONTEXT_GLYPHS['open-browser'],
+      tip: 'Mostra o arquivo renderizado em uma aba sua no browser desta missão.'
+    }] : []),
+    ...(!browserArtifact || family === 'page' || family === 'image' ? [{
+      action: 'open-in-app' as const,
+      label: browserArtifact && family === 'page' ? 'Ler código no app' : FILE_CONTEXT_LABELS['open-in-app'],
       glyph: FILE_CONTEXT_GLYPHS['open-in-app'],
       tip: target.current
         ? 'Já está aberto aqui — recarrega a leitura desta folha.'
         : 'Lê aqui dentro do Synkora, na bancada de papel (somente leitura).'
-    },
+    }] : []),
     {
       action: 'open-default',
       label: FILE_CONTEXT_LABELS['open-default'],

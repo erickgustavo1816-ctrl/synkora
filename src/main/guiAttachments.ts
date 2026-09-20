@@ -14,9 +14,9 @@
  */
 import { basename, extname, join } from 'node:path'
 
-/** Teto por anexo. Acima disso o composer recusa ANTES de alocar o buffer —
- *  base64 de 10MB já são ~13MB de string vindos pelo IPC. */
-export const GUI_ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024
+/** Teto por anexo, espelhado no composer e na persistência do renderer.
+ * A string base64 é limitada antes de decodificar: 50 MB viram ~67 MB no IPC. */
+export const GUI_ATTACHMENT_MAX_BYTES = 50 * 1024 * 1024
 /** Uma mensagem do composer não pode virar uma árvore de arquivos disfarçada. */
 export const GUI_ATTACHMENT_MAX_FILES = 20
 export const GUI_ATTACHMENT_MAX_TOTAL_BYTES = 50 * 1024 * 1024
@@ -438,10 +438,41 @@ const UNSAFE_OPEN_EXTENSIONS = new Set([
   '.vbs'
 ])
 
+/** Only the native .txt association gets the legacy-encoding fallback. Keep
+ * persisted MIME classification stable so previously issued capabilities still
+ * validate. Bytes must come from main's physical attachment revalidation. */
+function readablePlainText(bytes: Uint8Array): boolean {
+  if (bytes.length === 0 || bytes.length > GUI_ATTACHMENT_MAX_BYTES) return false
+  let text: string
+  try {
+    const littleEndian = bytesStartWith(bytes, [0xff, 0xfe])
+    const bigEndian = bytesStartWith(bytes, [0xfe, 0xff])
+    if (littleEndian || bigEndian) {
+      text = new TextDecoder(littleEndian ? 'utf-16le' : 'utf-16be', { fatal: true }).decode(bytes)
+    } else {
+      try {
+        text = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+      } catch {
+        // Validate the single-byte Windows-1252 repertoire directly: decoding
+        // is unnecessary when opening the original in the associated app.
+        return bytes.every(value => value === 9 || value === 10 || value === 13 ||
+          (value >= 0x20 && value !== 0x7f && value !== 0x81 && value !== 0x8d &&
+            value !== 0x8f && value !== 0x90 && value !== 0x9d))
+      }
+    }
+  } catch { return false }
+  // NUL, binary control bytes and undefined Windows-1252 characters fail
+  // closed; tabs and ordinary line endings are valid text.
+  return text.length > 0 && !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/u.test(text)
+}
+
 /** Abrir usa o aplicativo associado do SO; binário, atalho e conteúdo ativo
  * ficam apenas com a ação explícita de baixar uma cópia. */
-export function guiAttachmentOpenProblem(name: string, mime: string): string | undefined {
-  if (UNSAFE_OPEN_EXTENSIONS.has(extname(name).toLowerCase()) || mime === 'application/octet-stream') {
+export function guiAttachmentOpenProblem(name: string, mime: string, bytes?: Uint8Array): string | undefined {
+  const extension = extname(name).toLowerCase()
+  const legacyText = extension === '.txt' && mime === 'application/octet-stream' &&
+    bytes !== undefined && readablePlainText(bytes)
+  if (UNSAFE_OPEN_EXTENSIONS.has(extension) || (mime === 'application/octet-stream' && !legacyText)) {
     return 'este tipo de arquivo só pode ser baixado como cópia'
   }
   return undefined
@@ -514,13 +545,13 @@ export function uniqueAttachmentPath(
  *  no renderer — o prefixo cai aqui em vez de virar bytes corrompidos. */
 export function stripDataUrlPrefix(value: string): string {
   const trimmed = value.trim()
-  if (!trimmed.toLowerCase().startsWith('data:')) return trimmed
+  if (trimmed.slice(0, 5).toLowerCase() !== 'data:') return trimmed
   const comma = trimmed.indexOf(',')
   if (comma < 0 || comma > GUI_ATTACHMENT_DATA_URL_PREFIX_MAX_CHARS) return trimmed
   return /;base64$/iu.test(trimmed.slice(0, comma)) ? trimmed.slice(comma + 1).trim() : trimmed
 }
 
-const STRICT_BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u
+const INVALID_BASE64_DATA = /[^A-Za-z0-9+/]/u
 
 /** Validação fechada antes de qualquer `Buffer.from`: limita a string crua e
  * recusa caracteres/padding que o decoder permissivo do Node ignoraria. */
@@ -540,10 +571,13 @@ export function attachmentBase64Problem(value: string): string | undefined {
       GUI_ATTACHMENT_MAX_BYTES
     )} por arquivo)`
   }
-  if (body.length % 4 !== 0 || !STRICT_BASE64.test(body)) {
+  // Repeated regex groups exhaust V8's stack on valid large attachments.
+  // Check alphabet and final padding separately with a linear scan.
+  const padding = body.endsWith('==') ? 2 : body.endsWith('=') ? 1 : 0
+  if (body.length % 4 !== 0 || INVALID_BASE64_DATA.test(body.slice(0, body.length - padding))) {
     return 'anexo em formato base64 inválido'
   }
-  const bytes = base64ByteLength(body)
+  const bytes = (body.length / 4) * 3 - padding
   return bytes > GUI_ATTACHMENT_MAX_BYTES ? attachmentTooLargeError(bytes) : undefined
 }
 

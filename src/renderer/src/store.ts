@@ -1,11 +1,16 @@
 import { create } from 'zustand'
+import { isGuiBrowserReferenceList, type GuiBrowserReference } from '../../shared/guiBrowserReferences'
+import { guiParentTurnActivity } from './guiParentTurnActivity'
+import { guiContextCompaction } from './guiContextCompaction'
+import { guiPublicSilenceSince, guiWorkTarget } from './guiWorkProgress'
 import {
   asGuiEvent,
   guiApi,
   type GuiCliCaps,
   type GuiPermBehavior,
   type GuiQuestion,
-  type GuiSessionEvent
+  type GuiSessionEvent,
+  type GuiUsageMeters
 } from './guiApi'
 import type { PlanDraft } from './planContract'
 import type {
@@ -253,6 +258,8 @@ export interface Mission {
   updatedAt: string
   /** carimbo da transição para 'concluida' — a data honesta de "integrada em" */
   completedAt?: string
+  /** Mirror of main/missions.ts Mission.summary: agent-written product notes. */
+  summary?: string
 }
 
 /** O que o modal de missão manda para o main ao criar uma missão. */
@@ -283,6 +290,8 @@ export interface VersionDelivery {
   id: string
   missionId: string
   title: string
+  /** Mirror of main/backlog.ts VersionDelivery.summary. */
+  summary?: string
   at: string
 }
 
@@ -300,6 +309,7 @@ export interface Version {
   /** branch version/<nome> que acumula as missões até o release */
   branch?: string
   worktree?: string
+  releaseTargetBranch?: string
   createdAt: string
   updatedAt: string
 }
@@ -308,6 +318,9 @@ export interface Version {
  *  `VersionReleaseRecord` — o par declarado): o RETRATO de uma subida que a
  *  aba Versões lê. Nasce no sucesso do release; o renderer só consome. */
 export interface VersionReleaseRecord {
+  /** Shared receipt also consumed by main/releasesStore.ts and preload/index.ts. */
+  changes?: import('../../shared/releaseChanges').ReleaseChangeRecord[]
+  branch?: string
   id: string
   projectId: string
   versionId: string
@@ -403,6 +416,7 @@ export type GuiItem =
       text: string
       /** Metadados já validados pelo main; caminhos nunca são renderizados. */
       attachments?: GuiAttachmentDescriptor[]
+      browserReferences?: GuiBrowserReference[]
       at: number
       /** D6 (2026-09-02) — o que ACONTECEU com esta fala: ela ainda NÃO FOI
        *  LIDA (R39.1: foi ao CLI e espera a fronteira — o único estado com
@@ -436,6 +450,8 @@ export type GuiItem =
       kind: 'tool'
       name: string
       summary: string
+      /** Short file reference from explicit tool fields, never raw commands. */
+      progressTarget?: string
       toolUseId?: string
       /** Relação explícita recebida do Claude. Ausente continua sendo uma tool
        *  comum (inclusive no Codex); o renderer não infere subagente. */
@@ -523,12 +539,17 @@ export type GuiPendingInteraction =
     }
 
 export interface GuiPaneState {
+  /** Main parent activity, independent from helpers keeping status working. */
+  turnActive?: boolean
   items: GuiItem[]
   /** turno em curso: deltas acumulados até o `text` final fechar a mensagem */
   stream: string
   /** item assistant estável alimentado pelos deltas do turno */
   activeAssistantId: string | null
   thinking: boolean
+  /** Last observed public text, or the beginning of the current silent turn. */
+  publicSilenceSince?: number | null
+  contextCompacting: boolean
   /** delta do raciocínio, quando o backend fornece (campo aditivo do contrato) */
   thinkingText: string
   /** Fila canônica por requestId; os campos escalares abaixo são apenas a
@@ -577,6 +598,8 @@ export interface GuiPaneState {
    */
   convCalls: number | null
   convWeightTokens: number | null
+  /** Complete numeric snapshots from main; never accumulated in the renderer. */
+  usage: GuiUsageMeters | null
   /** handshake concluído (evento `ready` com as caps reais do CLI) */
   ready: boolean
   /** versão monotônica dos eventos reais do backend; operações assíncronas
@@ -625,6 +648,8 @@ export const EMPTY_GUI_PANE: GuiPaneState = {
   stream: '',
   activeAssistantId: null,
   thinking: false,
+  publicSilenceSince: null,
+  contextCompacting: false,
   thinkingText: '',
   interactionQueue: [],
   interactionSubmitting: null,
@@ -648,6 +673,7 @@ export const EMPTY_GUI_PANE: GuiPaneState = {
   costUsd: null,
   convCalls: null,
   convWeightTokens: null,
+  usage: null,
   ready: false,
   eventRevision: 0,
   sendBatch: null,
@@ -672,6 +698,10 @@ function safeGuiItemAttachments(value: unknown): GuiAttachmentDescriptor[] | und
     capabilities.add(attachment.capability)
   }
   return attachments
+}
+
+function safeGuiItemBrowserReferences(value: unknown): GuiBrowserReference[] | undefined {
+  return isGuiBrowserReferenceList(value) ? structuredClone(value) : undefined
 }
 
 function guiInteractionPatch(
@@ -930,7 +960,8 @@ function reduceGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState
         // se desfaz. Uma fotografia sem medição (a compactação zera os dois
         // números acima) conserva o total que o main já contou.
         convCalls: evt.convCalls ?? state.convCalls,
-        convWeightTokens: evt.convWeightTokens ?? state.convWeightTokens
+        convWeightTokens: evt.convWeightTokens ?? state.convWeightTokens,
+        usage: evt.usage === undefined ? state.usage : evt.usage
       }
 
     case 'session-id':
@@ -990,6 +1021,7 @@ function reduceGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState
           // zera, porque odômetro de outra conversa na tela seria mentira.
           convCalls: quiet ? state.convCalls : null,
           convWeightTokens: quiet ? state.convWeightTokens : null,
+          usage: quiet ? state.usage : null,
           activityText: null,
           sendBatch: null,
           error: null,
@@ -1062,16 +1094,28 @@ function reduceGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState
       }
     }
 
-    case 'thinking':
+    case 'context-compaction':
+      return { ...state, ...(evt.active ? guiStatusPatch(state, busy(state)) : {}) }
+
+    case 'thinking': {
+      const base = finalizeGuiStream(state)
       return {
-        ...state,
+        ...base,
         thinking: true,
-        thinkingText: evt.text ? state.thinkingText + evt.text : state.thinkingText,
-        ...guiStatusPatch(state, busy(state))
+        thinkingText: evt.text ? base.thinkingText + evt.text : base.thinkingText,
+        ...guiStatusPatch(base, busy(base))
       }
+    }
 
     case 'user-message': {
-      if (state.items.some((item) => item.kind === 'user' && item.id === evt.id)) return state
+      const browserReferences = safeGuiItemBrowserReferences(evt.browserReferences)
+      if (state.items.some((item) => item.kind === 'user' && item.id === evt.id)) {
+        // O eco do main traz a fotografia canônica, mesmo quando a bolha já
+        // foi desenhada de forma otimista pelo renderer que fez o envio.
+        if (!browserReferences) return state
+        return { ...state, items: state.items.map(item => item.kind === 'user' && item.id === evt.id
+          ? { ...item, browserReferences } : item) }
+      }
       const attachments = safeGuiItemAttachments(evt.attachments)
       return {
         ...state,
@@ -1080,6 +1124,7 @@ function reduceGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState
           kind: 'user',
           text: evt.text,
           ...(attachments ? { attachments } : {}),
+          ...(browserReferences?.length ? { browserReferences } : {}),
           at: evt.at
         })
       }
@@ -1159,6 +1204,7 @@ function reduceGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState
           kind: 'tool',
           name: evt.name,
           summary,
+          progressTarget: guiWorkTarget(evt.name, evt.input, fileDiffs?.[0]?.path),
           toolUseId: evt.toolUseId,
           parentToolUseId: evt.parentToolUseId,
           ...(subagent ? { subagent } : {}),
@@ -1577,15 +1623,18 @@ function reduceGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState
     }
 
     case 'turn-continuation': {
+      const base = evt.continues ? state : finalizeGuiStream(state)
       const status = guiCommandCompletionStatus(
-        state.status,
+        base.status,
         evt.continues,
-        evt.continues ? blocks(state) : halted(state)
+        evt.continues ? blocks(base) : halted(base)
       )
       return {
-        ...state,
-        activityText: evt.continues ? state.activityText : null,
-        ...guiStatusPatch(state, status)
+        ...base,
+        thinking: evt.continues ? base.thinking : false,
+        thinkingText: evt.continues ? base.thinkingText : '',
+        activityText: evt.continues ? base.activityText : null,
+        ...guiStatusPatch(base, status)
       }
     }
 
@@ -1653,7 +1702,14 @@ function reduceGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState
  */
 export function applyGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState {
   let next = reduceGuiEvent(state, evt)
+  const contextCompacting = guiContextCompaction(state.contextCompacting, evt)
+  if (contextCompacting !== next.contextCompacting) next = { ...next, contextCompacting }
+  const publicSilenceSince = guiPublicSilenceSince(state.publicSilenceSince, evt, Date.now(),
+    state.status === 'working' && state.turnActive !== false)
+  if (publicSilenceSince !== next.publicSilenceSince) next = { ...next, publicSilenceSince }
   if (next === state) return state
+  const turnActive = guiParentTurnActivity(state.turnActive, evt)
+  if (turnActive !== next.turnActive) next = { ...next, turnActive }
   // O TIMER DE RODADA (R11, ordem do dono): a régua do início/fim já era a do
   // `startedAt` — arma no working, PRESERVA esperando o dono (a espera é parte
   // da rodada), zera no fecho LÓGICO (o mesmo instante do plim; um result que
@@ -1951,7 +2007,8 @@ interface SynkoraState {
     paneId: string,
     text: string,
     options: GuiQueuedOptions,
-    attachments?: readonly GuiAttachmentDescriptor[]
+    attachments?: readonly GuiAttachmentDescriptor[],
+    browserReferences?: readonly GuiBrowserReference[]
   ) => GuiQueuedMessage | null
   discardGuiQueuedMessage: (paneId: string, expectedId?: string) => boolean
   claimGuiQueuedMessage: (paneId: string, ownerToken: string) => GuiQueuedMessage | null
@@ -1978,7 +2035,8 @@ interface SynkoraState {
      *  transporte aqui é UX — o `dead`/`starting` do renderer ainda pode estar
      *  no ar, e a autoridade é do main: `gui.send` recusa honesto se a sessão
      *  não tiver nascido, e a recusa cai no caminho de falha de sempre. */
-    revived?: boolean
+    revived?: boolean,
+    browserReferences?: readonly GuiBrowserReference[]
   ) => Promise<boolean>
   answerGuiPerm: (
     projectId: string,
@@ -2560,6 +2618,8 @@ export const useStore = create<SynkoraState>((set, get) => ({
           ready: false,
           caps: null,
           startedAt: null,
+          contextCompacting: false,
+          publicSilenceSince: null,
           activityText: null,
           sendBatch: null,
           error: null,
@@ -2626,13 +2686,15 @@ export const useStore = create<SynkoraState>((set, get) => ({
       return { guiPanes: { ...s.guiPanes, [paneId]: { ...prev, items } } }
     }),
 
-  queueGuiMessage: (paneId, text, options, attachmentInput = []) => {
+  queueGuiMessage: (paneId, text, options, attachmentInput = [], browserReferenceInput = []) => {
     const message = text.trim()
     const attachments = safeGuiItemAttachments(attachmentInput) ?? []
     if (attachmentInput.length !== attachments.length) return null
+    const browserReferences = safeGuiItemBrowserReferences(browserReferenceInput)
+    if (!browserReferences) return null
     const before = get().guiPanes[paneId]
     if (
-      (!message && attachments.length === 0) ||
+      (!message && attachments.length === 0 && browserReferences.length === 0) ||
       (before?.status !== 'working' && before?.status !== 'waiting-you') ||
       before.queued
     )
@@ -2642,7 +2704,8 @@ export const useStore = create<SynkoraState>((set, get) => ({
       text: message,
       at: Date.now(),
       options,
-      attachments
+      attachments,
+      ...(browserReferences.length > 0 ? { browserReferences } : {})
     }
     if (!writeGuiQueuedMessage(paneId, queued)) return null
     let accepted = false
@@ -2781,11 +2844,12 @@ export const useStore = create<SynkoraState>((set, get) => ({
     })
   },
 
-  sendGuiMessage: async (paneId, text, messageId, attachmentInput = [], revived = false) => {
+  sendGuiMessage: async (paneId, text, messageId, attachmentInput = [], revived = false, browserReferenceInput = []) => {
     const message = text.trim()
     const attachments = safeGuiItemAttachments(attachmentInput) ?? []
     if (attachmentInput.length !== attachments.length) return false
-    if (!message && attachments.length === 0) return false
+    const browserReferences = safeGuiItemBrowserReferences(browserReferenceInput)
+    if (!browserReferences || (!message && attachments.length === 0 && browserReferences.length === 0)) return false
     const before = get().guiPanes[paneId]
     // O composer pode receber texto enquanto abre, mas o transporte só existe
     // depois do `ready`. Enviar antes dele criava um falso "pane morto".
@@ -2816,6 +2880,7 @@ export const useStore = create<SynkoraState>((set, get) => ({
               kind: 'user',
               text: message,
               ...(attachments.length > 0 ? { attachments } : {}),
+              ...(browserReferences.length > 0 ? { browserReferences } : {}),
               at: sentAt
             }),
             // backend ocupado enfileira/steera sozinho — a UI nunca trava o input
@@ -2833,7 +2898,7 @@ export const useStore = create<SynkoraState>((set, get) => ({
         }
       }
     })
-    const result = await guiApi.send(paneId, message, userItemId, attachments)
+    const result = await guiApi.send(paneId, message, userItemId, attachments, browserReferences)
     set((s) => {
       const prev = s.guiPanes[paneId]
       if (!prev) return {}
@@ -3044,6 +3109,7 @@ export const useStore = create<SynkoraState>((set, get) => ({
       eventRevision: before.eventRevision,
       startedAt: before.startedAt
     }
+    const interruptNoteId = guiItemId()
     set((s) => {
       const prev = s.guiPanes[paneId]
       if (!prev) return {}
@@ -3053,7 +3119,7 @@ export const useStore = create<SynkoraState>((set, get) => ({
           [paneId]: {
             ...prev,
             items: pushGuiItem(prev.items, {
-              id: guiItemId(),
+              id: interruptNoteId,
               kind: 'note',
               text: 'interrupção pedida',
               at: Date.now()
@@ -3063,6 +3129,19 @@ export const useStore = create<SynkoraState>((set, get) => ({
       }
     })
     const result = await guiApi.interrupt(paneId)
+    if (result.ok && result.alreadyIdle) {
+      set((s) => {
+        const prev = s.guiPanes[paneId]
+        if (!prev) return {}
+        return { guiPanes: { ...s.guiPanes, [paneId]: {
+          ...prev,
+          items: prev.items.map(item => item.id === interruptNoteId && item.kind === 'note'
+            ? { ...item, text: 'O turno já havia terminado. O estado do chat foi atualizado.' }
+            : item)
+        } } }
+      })
+      return
+    }
     if (result.ok) return
     set((s) => {
       const prev = s.guiPanes[paneId]

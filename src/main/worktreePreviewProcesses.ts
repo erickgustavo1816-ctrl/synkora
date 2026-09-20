@@ -1,5 +1,7 @@
 import { execFile } from 'node:child_process'
 import { win32, join } from 'node:path'
+import { isNextPreviewCommand, nextPreviewEntries } from './worktreeNextPreview'
+import { isLocalServerCommand, LOCAL_SERVER_PROBE_SCRIPT } from './worktreeLocalServer'
 
 /** A proof contains only the allowlisted argv fields, never a raw command line
  * or the environment. Creation time + command hash bind it to one process. */
@@ -9,6 +11,9 @@ export interface WorktreePreviewProcess {
   executablePath: string
   commandHash: string
   argv: string[]
+  cwd?: string
+  /** Present only for a custom script serving exclusively on loopback. */
+  loopbackPorts?: number[]
 }
 
 export interface WorktreePreviewProbe {
@@ -72,9 +77,12 @@ export function isWorktreePreviewProcess(root: string, value: unknown): value is
   if (typeof process.creationTime !== 'string' || !/^\d{1,20}$/u.test(process.creationTime)) return false
   if (typeof process.commandHash !== 'string' || !/^[a-f0-9]{64}$/u.test(process.commandHash)) return false
   const args = process.argv
-  if (!Array.isArray(args) || args.length < 3 || args.length > 16 || !args.every((arg) => typeof arg === 'string')) return false
+  if (!Array.isArray(args) || args.length < 2 || args.length > 16 || !args.every((arg) => typeof arg === 'string')) return false
   const command = args[0].toLowerCase()
   if (command !== 'node' && command !== 'node.exe' && absoluteWindowsPath(args[0]) !== executable) return false
+  if (process.loopbackPorts !== undefined)
+    return absoluteWindowsPath(process.cwd) === targetRoot && isLocalServerCommand(targetRoot, args, process.loopbackPorts)
+  if (absoluteWindowsPath(process.cwd) === targetRoot && isNextPreviewCommand(targetRoot, args, nextPreviewEntries(root))) return true
   if (absoluteWindowsPath(args[1]) !== `${targetRoot}\\${ASTRO_ENTRY}`) return false
   if (args[2] !== 'dev' && args[2] !== 'preview') return false
   return allowedAstroFlags(args.slice(3))
@@ -102,6 +110,35 @@ public static class SynkoraPreviewNative {
   [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern bool QueryFullProcessImageName(IntPtr handle, uint flags, StringBuilder path, ref int size);
   [DllImport("kernel32.dll", SetLastError=true)] static extern bool TerminateProcess(IntPtr handle, uint exitCode);
   [DllImport("kernel32.dll", SetLastError=true)] static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
+  [DllImport("ntdll.dll")] static extern int NtQueryInformationProcess(IntPtr handle, int kind, byte[] info, int size, out int returned);
+  [DllImport("kernel32.dll", SetLastError=true)] static extern bool ReadProcessMemory(IntPtr handle, IntPtr address, byte[] buffer, int size, out IntPtr read);
+  [DllImport("kernel32.dll", SetLastError=true)] static extern bool IsWow64Process(IntPtr handle, out bool wow64);
+  static byte[] Read(IntPtr handle, long address, int size) {
+    byte[] bytes = new byte[size]; IntPtr read;
+    if (address <= 0 || !ReadProcessMemory(handle, new IntPtr(address), bytes, size, out read) || read.ToInt64() != size) return null;
+    return bytes;
+  }
+  static string DirectoryFromHandle(IntPtr handle) {
+    // Read only the bounded CurrentDirectory UNICODE_STRING, never environment
+    // or command-line fields. Unknown architectures/layouts fail closed.
+    bool wow64;
+    if (IntPtr.Size != 8 || !IsWow64Process(handle, out wow64) || wow64) return null;
+    byte[] info = new byte[48]; int returned;
+    if (NtQueryInformationProcess(handle, 0, info, info.Length, out returned) != 0 || returned != info.Length) return null;
+    byte[] parameters = Read(handle, BitConverter.ToInt64(info, 8) + 0x20, 8);
+    if (parameters == null) return null;
+    byte[] directory = Read(handle, BitConverter.ToInt64(parameters, 0) + 0x38, 16);
+    if (directory == null) return null;
+    int length = BitConverter.ToUInt16(directory, 0);
+    if (length < 2 || length > 16384 || length % 2 != 0 || length > BitConverter.ToUInt16(directory, 2)) return null;
+    byte[] text = Read(handle, BitConverter.ToInt64(directory, 8), length);
+    return text == null ? null : Encoding.Unicode.GetString(text);
+  }
+  public static string CurrentDirectory(uint pid) {
+    IntPtr handle = OpenProcess(0x0410, false, pid);
+    if (handle == IntPtr.Zero) return null;
+    try { return DirectoryFromHandle(handle); } finally { CloseHandle(handle); }
+  }
   public static string[] Split(string command) {
     int count;
     IntPtr memory = CommandLineToArgvW(command, out count);
@@ -120,10 +157,10 @@ public static class SynkoraPreviewNative {
       return GetProcessTimes(handle, out created, out exited, out kernel, out user) ? created.ToString(System.Globalization.CultureInfo.InvariantCulture) : null;
     } finally { CloseHandle(handle); }
   }
-  public static string Stop(uint pid, string creationTime, string executablePath, uint timeout) {
+  public static string Stop(uint pid, string creationTime, string executablePath, string expectedDirectory, uint timeout) {
     // The immutable OS handle binds termination to the verified instance,
     // even if the PID is recycled after the final CIM lookup.
-    IntPtr handle = OpenProcess(0x00100000 | 0x1000 | 0x0001, false, pid);
+    IntPtr handle = OpenProcess(0x00100000u | 0x1000u | 0x0001u | (String.IsNullOrEmpty(expectedDirectory) ? 0u : 0x0410u), false, pid);
     if (handle == IntPtr.Zero) return Marshal.GetLastWin32Error() == 87 ? "gone" : "failed";
     try {
       long created, exited, kernel, user;
@@ -133,6 +170,10 @@ public static class SynkoraPreviewNative {
       StringBuilder path = new StringBuilder(size);
       if (!QueryFullProcessImageName(handle, 0, path, ref size)) return "failed";
       if (!String.Equals(path.ToString().Replace('/', '\\'), executablePath.Replace('/', '\\'), StringComparison.OrdinalIgnoreCase)) return "changed";
+      if (!String.IsNullOrEmpty(expectedDirectory)) {
+        string directory = DirectoryFromHandle(handle);
+        if (directory == null || !String.Equals(directory.Replace('/', '\\').TrimEnd('\\'), expectedDirectory, StringComparison.OrdinalIgnoreCase)) return "changed";
+      }
       if (WaitForSingleObject(handle, 0) == 0) return "gone";
       if (!TerminateProcess(handle, 0)) return "failed";
       return WaitForSingleObject(handle, timeout) == 0 ? "stopped" : "failed";
@@ -164,18 +205,70 @@ function Allowed-Flags([string[]] $Values) {
   }
   return $true
 }
+function Allowed-NextFlags([string[]] $Values) {
+  $seen = @{}
+  for ($i = 0; $i -lt $Values.Length; $i++) {
+    $parts = $Values[$i].Split([char[]]'=', 2)
+    $flag = $parts[0]
+    if ($flag -ceq '-p') { $flag = '--port' }
+    if ($flag -ceq '-H') { $flag = '--hostname' }
+    if (@('--port', '--hostname', '--turbo', '--turbopack', '--webpack') -cnotcontains $flag -or $seen.ContainsKey($flag)) { return $false }
+    $seen[$flag] = $true
+    if (@('--turbo', '--turbopack', '--webpack') -ccontains $flag) {
+      if ($parts.Length -ne 1) { return $false }
+      continue
+    }
+    if ($parts.Length -eq 2) { $value = $parts[1] }
+    elseif ($i + 1 -lt $Values.Length) { $i++; $value = $Values[$i] }
+    else { return $false }
+    if ($flag -ceq '--port') {
+      if (!$value -or $value -notmatch '^\d{1,5}$' -or [int]$value -lt 1 -or [int]$value -gt 65535) { return $false }
+    } elseif (!$value -or $value.Length -gt 253 -or $value -notmatch '^[a-z0-9_.:\[\]-]+$') { return $false }
+  }
+  return $true
+}
+function Is-NextCommand([string[]] $Argv) {
+  $entry = $Argv[1].Replace('/', '\')
+  if (!$entry -or $entry -match '[\x00-\x1f]' -or $entry.StartsWith('\\?\') -or $entry.StartsWith('\\.\')) { return $false }
+  try {
+    if (![IO.Path]::IsPathRooted($entry)) { $entry = [IO.Path]::Combine($targetRoot, $entry) }
+    $entry = Absolute-Path ([IO.Path]::GetFullPath($entry))
+  } catch { return $false }
+  if (!$entry) { return $false }
+  if (@($request.nextEntries.server) -contains $entry) { return $Argv.Length -eq 2 }
+  if (@($request.nextEntries.cli) -notcontains $entry -or $Argv.Length -lt 3 -or @('dev', 'start') -cnotcontains $Argv[2]) { return $false }
+  $flags = @()
+  if ($Argv.Length -gt 3) { $flags = $Argv[3..($Argv.Length - 1)] }
+  return Allowed-NextFlags $flags
+}
+${LOCAL_SERVER_PROBE_SCRIPT}
 function Read-Candidate($Item) {
   if ($Item.Name -ine 'node.exe' -or !$Item.CommandLine) { return $null }
   $executable = Absolute-Path $Item.ExecutablePath
   if (!$executable -or [IO.Path]::GetFileName($executable) -ine 'node.exe') { return $null }
   $argv = [SynkoraPreviewNative]::Split($Item.CommandLine)
-  if ($argv.Length -lt 3 -or $argv.Length -gt 16) { return $null }
+  if ($argv.Length -lt 2 -or $argv.Length -gt 16) { return $null }
   if ($argv[0] -ine 'node' -and $argv[0] -ine 'node.exe' -and (Absolute-Path $argv[0]) -ine $executable) { return $null }
-  if ((Absolute-Path $argv[1]) -ine ($targetRoot + '\node_modules\astro\bin\astro.mjs')) { return $null }
-  if ($argv[2] -cne 'dev' -and $argv[2] -cne 'preview') { return $null }
-  $flags = @()
-  if ($argv.Length -gt 3) { $flags = $argv[3..($argv.Length - 1)] }
-  if (!(Allowed-Flags $flags)) { return $null }
+  $cwd = $null
+  $localPorts = @()
+  if (Is-NextCommand $argv) {
+    $cwd = Absolute-Path ([SynkoraPreviewNative]::CurrentDirectory([uint32]$Item.ProcessId))
+    if (!$cwd -or $cwd -ine $targetRoot) { return $null }
+  } elseif ((Absolute-Path $argv[1]) -ieq ($targetRoot + '\node_modules\astro\bin\astro.mjs')) {
+    if ($argv.Length -lt 3 -or ($argv[2] -cne 'dev' -and $argv[2] -cne 'preview')) { return $null }
+    $flags = @()
+    if ($argv.Length -gt 3) { $flags = $argv[3..($argv.Length - 1)] }
+    if (!(Allowed-Flags $flags)) { return $null }
+  } else {
+    if (!(Is-LocalServerCommand $argv)) { return $null }
+    $cwd = Absolute-Path ([SynkoraPreviewNative]::CurrentDirectory([uint32]$Item.ProcessId))
+    if (!$cwd -or $cwd -ine $targetRoot) { return $null }
+    $localPorts = @(Local-ServerPorts ([uint32]$Item.ProcessId))
+    if ($localPorts.Count -eq 0) { return $null }
+    # Arbitrary script arguments may contain secrets. Only executable/entry
+    # leave the probe; the hash still binds the entire original command.
+    $argv = @($argv[0], $argv[1])
+  }
   $creation = [SynkoraPreviewNative]::CreationTime([uint32]$Item.ProcessId)
   if (!$creation) { return $null }
   # CIM and the native handle must describe the same instance. CIM dates have
@@ -187,7 +280,10 @@ function Read-Candidate($Item) {
   $sha = [Security.Cryptography.SHA256]::Create()
   try { $hash = [BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($Item.CommandLine))).Replace('-', '').ToLowerInvariant() }
   finally { $sha.Dispose() }
-  return @{ pid = [int]$Item.ProcessId; creationTime = $creation; executablePath = $Item.ExecutablePath; commandHash = $hash; argv = @($argv) }
+  $candidate = @{ pid = [int]$Item.ProcessId; creationTime = $creation; executablePath = $Item.ExecutablePath; commandHash = $hash; argv = @($argv) }
+  if ($cwd) { $candidate.cwd = $cwd }
+  if ($localPorts.Count -gt 0) { $candidate.loopbackPorts = @($localPorts) }
+  return $candidate
 }
 $targetRoot = Absolute-Path $request.root
 $result = @{ stopped = 0; failed = 0; processes = @() }
@@ -211,10 +307,12 @@ try {
         $processId = [uint32]$proof.pid
         $currentItem = Get-CimInstance Win32_Process -Filter ('ProcessId = ' + $processId) -ErrorAction Stop
         if ($null -eq $currentItem) { continue }
+        $script:localServerListeners = $null
         $current = Read-Candidate $currentItem
         if ($null -eq $current -or $current.creationTime -cne $proof.creationTime -or $current.commandHash -cne $proof.commandHash -or (Absolute-Path $current.executablePath) -ine (Absolute-Path $proof.executablePath)) { $result.failed++; continue }
+        if (($null -ne $proof.loopbackPorts -or $null -ne $current.loopbackPorts) -and (@($proof.loopbackPorts) -join ',' ) -cne (@($current.loopbackPorts) -join ',')) { $result.failed++; continue }
         $remaining = [Math]::Max(1, [Math]::Min(2000, ($deadline - [DateTime]::UtcNow).TotalMilliseconds))
-        $status = [SynkoraPreviewNative]::Stop($processId, $proof.creationTime, $proof.executablePath, [uint32]$remaining)
+        $status = [SynkoraPreviewNative]::Stop($processId, $proof.creationTime, $proof.executablePath, $current.cwd, [uint32]$remaining)
         if ($status -ceq 'stopped') { $result.stopped++ }
         elseif ($status -cne 'gone') { $result.failed++ }
       } catch { $result.failed++ }
@@ -234,18 +332,18 @@ function runWindowsProbe(request: { mode: 'probe' | 'stop'; root: string; proces
   return new Promise((resolve) => {
     const failed = { stopped: 0, failed: 1, processes: [] }
     if (timeout <= 0) { resolve(failed); return }
-    const payload = Buffer.from(JSON.stringify(request), 'utf8').toString('base64')
+    const payload = Buffer.from(JSON.stringify({ ...request, nextEntries: nextPreviewEntries(request.root) }), 'utf8').toString('base64')
     // One Windows environment value is bounded too. Oversized proofs fail
     // closed instead of throwing or truncating a root/process identity.
     if (payload.length > 24_000) { resolve(failed); return }
     const systemRoot = process.env.SystemRoot || 'C:\\Windows'
     const shell = join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
-    try { execFile(shell, ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', Buffer.from(WINDOWS_PREVIEW_SCRIPT, 'utf16le').toString('base64')], {
+    try { execFile(shell, ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', '& ([scriptblock]::Create($env:SYNKORA_PREVIEW_SCRIPT))'], {
       windowsHide: true,
       timeout,
       maxBuffer: 256 * 1024,
       encoding: 'utf8',
-      env: { SystemRoot: systemRoot, TEMP: process.env.TEMP, TMP: process.env.TMP, SYNKORA_PREVIEW_REQUEST: payload }
+      env: { SystemRoot: systemRoot, TEMP: process.env.TEMP, TMP: process.env.TMP, SYNKORA_PREVIEW_REQUEST: payload, SYNKORA_PREVIEW_SCRIPT: WINDOWS_PREVIEW_SCRIPT }
     }, (error, stdout) => {
       // Exceptions/stderr may carry command lines or arbitrary environment
       // data. Only bounded aggregate counts cross this boundary.

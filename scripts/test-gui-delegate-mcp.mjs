@@ -92,10 +92,11 @@ const HELPER_TOOLS = Object.freeze([
 
 /**
  * O KIT DO BROWSER EMBUTIDO (2026-08-29, design DESIGN_BROWSER_EMBUTIDO):
- * as onze `browser_*`, literais — ferramenta nova aqui é decisão de produto e
+ * o catálogo `browser_*`, literal — ferramenta nova aqui é decisão de produto e
  * TEM de quebrar este teste, como nos kits irmãos.
  */
 const BROWSER_TOOLS = Object.freeze([
+  'browser_check',
   'browser_open',
   'browser_read',
   'browser_find',
@@ -116,6 +117,9 @@ const BROWSER_TOOLS = Object.freeze([
  * browser: quem lê diff não puxa skill nenhuma (o reviewer fica fora).
  */
 const SKILL_TOOLS = Object.freeze(['skill_discard', 'skill_pull', 'skill_search'])
+const MOBILE_TOOLS = Object.freeze(['mobile_action', 'mobile_expo', 'mobile_screenshot', 'mobile_start', 'mobile_status', 'mobile_stop'])
+const CONTEXT_READ = ['context_read', 'context_search', 'context_status']
+const CONTEXT_WRITE = [...CONTEXT_READ, 'context_record']
 
 /**
  * Com o browser, os panes do MESMO papel `gui-delegator` DIVERGEM pela
@@ -124,9 +128,9 @@ const SKILL_TOOLS = Object.freeze(['skill_discard', 'skill_pull', 'skill_search'
  * missão verifica a própria tela (com browser, sem integração). As `skill_*`
  * seguem a MESMA divisão (2026-09-08): o reviewer não monta harness.
  */
-const REVIEWER_TOOLS = Object.freeze([...HELPER_TOOLS, ...LSP_TOOLS].sort())
+const REVIEWER_TOOLS = Object.freeze(['commentary', ...HELPER_TOOLS, ...LSP_TOOLS, ...CONTEXT_READ].sort())
 const HELPER_PANE_TOOLS = Object.freeze(
-  [...HELPER_TOOLS, ...LSP_TOOLS, ...BROWSER_TOOLS, ...SKILL_TOOLS].sort()
+  ['commentary', ...HELPER_TOOLS, ...LSP_TOOLS, ...BROWSER_TOOLS, ...SKILL_TOOLS, ...CONTEXT_READ].sort()
 )
 
 /**
@@ -138,7 +142,7 @@ const HELPER_PANE_TOOLS = Object.freeze(
  */
 const INTEGRATION_TOOLS = Object.freeze(['integration_run', 'integration_status'])
 const DEV_MISSION_TOOLS = Object.freeze(
-  [...HELPER_TOOLS, ...LSP_TOOLS, ...BROWSER_TOOLS, ...INTEGRATION_TOOLS, ...SKILL_TOOLS].sort()
+  ['commentary', ...HELPER_TOOLS, ...LSP_TOOLS, ...BROWSER_TOOLS, ...MOBILE_TOOLS, ...INTEGRATION_TOOLS, ...SKILL_TOOLS, ...CONTEXT_WRITE, 'mission_summary'].sort()
 )
 
 /** O KIT DO CHAT DE RELEASE (R10): a conversa que sobe a VERSÃO. O papel
@@ -148,7 +152,7 @@ const DEV_MISSION_TOOLS = Object.freeze(
  *  R38 (2026-08-29): entrou o `release_done` — o FECHO deixou de ser efeito
  *  colateral da subida e virou decisão do agente (a subida fechava a conversa
  *  antes da caixa existir). */
-const RELEASE_TOOLS = Object.freeze(['release_done', 'release_run', 'release_status'])
+const RELEASE_TOOLS = Object.freeze(['commentary', 'release_done', 'release_push', 'release_run', 'release_save', 'release_status', 'release_target'])
 
 const PLAN_TOOLS = Object.freeze([
   'delete_plan',
@@ -162,7 +166,7 @@ const PLAN_TOOLS = Object.freeze([
 // SKILLS 3.0 (2026-09-08): ele TAMBÉM monta harness — o método do planejamento
 // (ADR-0011) é escolhido do mesmo cardápio que o dev usa.
 const PLANNER_TOOLS = Object.freeze(
-  [...PLAN_TOOLS, ...HELPER_TOOLS, ...LSP_TOOLS, ...SKILL_TOOLS].sort()
+  ['commentary', ...PLAN_TOOLS, ...HELPER_TOOLS, ...LSP_TOOLS, ...SKILL_TOOLS, ...CONTEXT_WRITE].sort()
 )
 
 /** Hub REAL com o mínimo que ele exige (o registro de identidade não usa nada
@@ -206,7 +210,7 @@ function armDeps(hub, root, port) {
  * ausentes — é o estado real do app enquanto o motor não está costurado, e o
  * catálogo tem de continuar de pé com recusa legível em vez de estourar.
  */
-async function serverIn(t, hub, { engine = true } = {}) {
+async function serverIn(t, hub, { engine = true, release = false } = {}) {
   const served = []
   const calls = []
   const delegation = engine
@@ -254,9 +258,18 @@ async function serverIn(t, hub, { engine = true } = {}) {
           })
           return 'a fila do universo'
         },
-        integrationRun: async (id) => {
+        missionSummary: (id, summary) => {
+          calls.push({ tool: 'mission_summary', paneId: id.paneId, projectId: id.projectId, missionId: id.missionId, summary })
+          return 'resumo salvo'
+        },
+        commentary: (id, message) => {
+          calls.push({ tool: 'commentary', paneId: id.paneId, projectId: id.projectId, message })
+          return { ok: true }
+        },
+        integrationRun: async (id, summary) => {
           calls.push({
             tool: 'integration_run',
+            ...(summary !== undefined ? { summary } : {}),
             paneId: id.paneId,
             projectId: id.projectId,
             missionId: id.missionId
@@ -273,7 +286,12 @@ async function serverIn(t, hub, { engine = true } = {}) {
     updatePlan: () => 'plano atualizado',
     deletePlan: () => 'plano arquivado',
     noteCatalogServed: (id, tools) => served.push({ role: id.role, paneId: id.paneId, tools }),
-    ...delegation
+    ...delegation,
+    ...(release ? {
+      releaseTarget: async (id, branch) => { calls.push({ tool: 'release_target', id, branch }); return 'destino definido' },
+      releaseSave: async (id, input) => { calls.push({ tool: 'release_save', id, input }); return 'correção salva' },
+      releasePush: async (id, expectedHead) => { calls.push({ tool: 'release_push', id, expectedHead }); return 'envio confirmado' }
+    } : {})
   })
   t.after(() => handle.close())
   return { handle, url: new URL(`http://127.0.0.1:${handle.port}/mcp`), served, calls }
@@ -377,7 +395,7 @@ test('o planejador delega SEM herdar o resto: planos+ajudantes, nunca integraç�
   for (const tool of PLAN_TOOLS) {
     assert.equal(devTools.includes(tool), false, `o delegador enxergou ${tool}`)
   }
-  for (const tool of [...INTEGRATION_TOOLS, ...BROWSER_TOOLS, 'release_status', 'release_run']) {
+  for (const tool of [...INTEGRATION_TOOLS, ...BROWSER_TOOLS, 'mission_summary', 'release_status', 'release_run']) {
     assert.equal(plannerTools.includes(tool), false, `o planejador enxergou ${tool}`)
   }
 })
@@ -402,7 +420,7 @@ test('reviewer e ajudante delegam, mas NUNCA integram: as duas ferramentas são 
   assert.deepEqual(await toolNames(url, helper.token, 'papel-hlp'), HELPER_PANE_TOOLS)
   for (const entry of served) {
     if (entry.paneId.startsWith('gui-dev-')) continue
-    for (const tool of INTEGRATION_TOOLS) {
+    for (const tool of [...INTEGRATION_TOOLS, 'mission_summary']) {
       assert.equal(entry.tools.includes(tool), false, `${entry.paneId} enxergou ${tool}`)
     }
   }
@@ -504,7 +522,7 @@ test('SEM CADEIA: identidade de ajudante NUNCA enxerga delegate — e as mortas,
   const disfarcado = await toolNames(url, 'token-ajudante-com-cara-de-dev', 'ajudante-disfarcado')
   assert.deepEqual(
     disfarcado,
-    [...LSP_TOOLS, ...BROWSER_TOOLS, ...SKILL_TOOLS].sort(),
+    [...LSP_TOOLS, ...BROWSER_TOOLS, ...MOBILE_TOOLS, ...SKILL_TOOLS, ...CONTEXT_READ].sort(),
     'endereço de dev não dá autoridade a um papel que não é gui-delegator'
   )
   for (const forbidden of [...HELPER_TOOLS, ...INTEGRATION_TOOLS, ...RELEASE_TOOLS, ...PLAN_TOOLS]) {
@@ -1029,4 +1047,79 @@ test('o re-arme conhece o release: kind release arma o MCP com o papel gui-relea
     /guiPlannerMcpDepsFor\(ctx\),\s*\n\s*role/u,
     'o papel derivado chega ao armGuiDelegateMcp'
   )
+})
+
+test('mission notes and integration carry the authored summary with the authenticated mission', async (t) => {
+  const { hub, root } = hubIn(t)
+  const { url, calls } = await serverIn(t, hub)
+  const { token } = delegator(hub, root, 4242)
+  const client = await connect(t, url, token, 'mission-summary')
+  const summary = 'A busca voltou a encontrar os itens pelo nome. Os resultados aparecem sem repetir a pesquisa.'
+  assert.equal(textOf(await client.callTool({ name: 'mission_summary', arguments: { summary } })), 'resumo salvo')
+  assert.equal(textOf(await client.callTool({ name: 'integration_run', arguments: { summary } })), 'INTEGRADA')
+  assert.deepEqual(calls, ['mission_summary', 'integration_run'].map(tool => ({
+    tool, summary, paneId: 'gui-dev-abcd1234', projectId: 'universo-1', missionId: 'missao-dev-1'
+  })))
+  for (const invalid of ['', '   ', 'x'.repeat(601)]) {
+    const result = await client.callTool({ name: 'mission_summary', arguments: { summary: invalid } })
+    assert.equal(result.isError, true)
+  }
+  assert.equal(calls.length, 2, 'invalid notes never reach the store')
+})
+
+test('a missing summary engine gives a retry recipe', async (t) => {
+  const { hub, root } = hubIn(t)
+  const { url } = await serverIn(t, hub, { engine: false })
+  const { token } = delegator(hub, root, 4242)
+  const client = await connect(t, url, token, 'mission-summary-off')
+  const result = await client.callTool({ name: 'mission_summary', arguments: { summary: 'A busca foi corrigida.' } })
+  assert.match(textOf(result), /Reinicie.*mission_summary/u)
+})
+
+test('public commentary belongs to the authenticated conversation and rejects empty or oversized messages', async (t) => {
+  const { hub, root } = hubIn(t)
+  const { url, calls } = await serverIn(t, hub)
+  const { token } = delegator(hub, root, 4242)
+  const client = await connect(t, url, token, 'public-commentary')
+  const message = 'Encontrei a causa. Vou conferir o ajuste.'
+  const result = await client.callTool({ name: 'commentary', arguments: {
+    message, paneId: 'another-pane', projectId: 'another-project'
+  } })
+  assert.notEqual(result.isError, true)
+  assert.deepEqual(calls, [{ tool: 'commentary', paneId: 'gui-dev-abcd1234', projectId: 'universo-1', message }])
+  for (const invalid of ['', '  ', 'x'.repeat(2001)])
+    assert.equal((await client.callTool({ name: 'commentary', arguments: { message: invalid } })).isError, true)
+  assert.equal(calls.length, 1)
+})
+
+test('unavailable commentary asks for ordinary public text and never claims delivery', async (t) => {
+  const { hub, root } = hubIn(t)
+  const { url } = await serverIn(t, hub, { engine: false })
+  const { token } = delegator(hub, root, 4242)
+  const client = await connect(t, url, token, 'public-commentary-off')
+  const result = await client.callTool({ name: 'commentary', arguments: { message: 'Vou conferir.' } })
+  assert.equal(result.isError, true)
+  assert.match(textOf(result), /texto normal no chat/u)
+  assert.doesNotMatch(textOf(result), /entregue/u)
+})
+
+test('release_save/release_push: catálogo real, validação de entrada e identidade do bearer', async (t) => {
+  const { hub, root } = hubIn(t)
+  const { url, calls } = await serverIn(t, hub, { release: true })
+  const identity = { paneId: 'gui-dev-aabbccdd', projectId: 'p-release', missionId: 'm-release', role: 'gui-release', cwd: root }
+  hub.registerPane('synthetic-release-token', identity)
+  const client = await connect(t, url, 'synthetic-release-token', 'release-corrections')
+  assert.deepEqual((await client.listTools()).tools.map((tool) => tool.name).sort(), [...RELEASE_TOOLS, ...LSP_TOOLS, ...CONTEXT_READ].sort())
+  const input = { requestId: 'fix-one', expectedHead: 'a'.repeat(40), files: ['src/gate.ts'],
+    summary: 'Repair gate', reason: 'Synthetic bug', validation: 'Focused synthetic test passed' }
+  const invalid = await client.callTool({ name: 'release_save', arguments: { ...input, files: [] } })
+  assert.equal(invalid.isError, true)
+  assert.equal(calls.length, 0)
+  assert.equal(textOf(await client.callTool({ name: 'release_save', arguments: input })), 'correção salva')
+  assert.equal(textOf(await client.callTool({ name: 'release_push', arguments: { expectedHead: input.expectedHead } })), 'envio confirmado')
+  assert.equal((await client.callTool({ name: 'release_target', arguments: { branch: '' } })).isError, true)
+  assert.equal(textOf(await client.callTool({ name: 'release_target', arguments: { branch: 'main' } })), 'destino definido')
+  assert.deepEqual(calls, [{ tool: 'release_save', id: identity, input },
+    { tool: 'release_push', id: identity, expectedHead: input.expectedHead },
+    { tool: 'release_target', id: identity, branch: 'main' }])
 })

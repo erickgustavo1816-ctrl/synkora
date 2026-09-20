@@ -1,0 +1,24 @@
+.rail-mission-dot {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  box-sizing: content-box;
+  width: 9px;
+  height: 9px;
+  border: 3px solid var(--panel);
+  border-radius: 50%;
+}
+.rail-mission-dot[data-activity='running'] {
+  background: var(--ok);
+  animation: rail-mission-pulse 1.6s ease-in-out infinite;
+}
+.rail-mission-dot[data-activity='paused'] { background: var(--warn); }
+
+@keyframes rail-mission-pulse {
+  0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 transparent; }
+  50% { transform: scale(1.12); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 25%, transparent); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rail-mission-dot[data-activity='running'] { animation: none; }
+}

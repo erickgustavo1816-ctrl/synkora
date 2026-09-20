@@ -201,6 +201,10 @@ test('escolhas do dono usam o cartão nativo de cada CLI em todo chat GUI', () =
     assert.match(contract, /request_user_input \(Codex\)/u)
     assert.match(contract, /a list in prose or raw JSON does not create a card/u)
     assert.match(contract, /Wait for his actual answer before dependent work/u)
+    assert.match(contract, /For conversational approval, ask one scoped question/u)
+    assert.match(contract, /"Aprovar" and "Não aprovar"/u)
+    assert.match(contract, /Skipping grants no approval/u)
+    assert.match(contract, /native tool permissions and release buttons still apply/u)
   }
 })
 
@@ -266,6 +270,13 @@ test('R36 — dev e ajudante sabem que entrega visual é ARQUIVO referenciado, n
 // envia na hora + o CLI steera — sonda probe-claude-owner-midturn); esta é a
 // metade do MODELO, porque a mesma sonda provou que entrega não é obediência:
 // em haiku o modelo leu a ordem no meio do turno e terminou com um DONE seco.
+test('a persona pede progresso em texto público sem uma ordem de ficar em silêncio', () => {
+  const contract = guiMissionSystemPrompt('dev')
+  assert.match(contract, /visible assistant text/iu)
+  assert.match(contract, /thinking.*not.*visible/iu)
+  assert.doesNotMatch(contract, /Say what you concluded and stop; do not narrate/iu)
+})
+
 test('R31 — a voz do dono: os três papéis respondem SEMPRE e narram o passo a passo', () => {
   for (const role of GUI_MISSION_ROLES) {
     const contract = guiMissionSystemPrompt(role)
@@ -287,14 +298,18 @@ test('R31 — a voz do dono: os três papéis respondem SEMPRE e narram o passo 
 // tool falhou, tento outra". A metade mecânica é o hook `PreToolUse` (a sonda
 // `probe-claude-pretooluse-block` mediu a forma no binário 2.1.258); esta é a
 // metade que o modelo lê ANTES de tentar a segunda tool.
-test('R39 — a voz do dono: toda tool trava até a resposta, e a tool seguinte não é saída', () => {
+test('R39 — a cobrança bloqueia trabalho, oferece fala pública e exige retomar o pedido autorizado', () => {
   for (const role of GUI_MISSION_ROLES) {
     const contract = guiMissionSystemPrompt(role)
-    assert.match(contract, /EVERY tool is blocked/u, `${role}: não diz que TODA tool trava até a resposta`)
+    assert.ok(contract.includes('mcp__synkora__commentary'), `${role}: falta a saída pública permitida pelo hook`)
+    assert.ok(contract.includes('EVERY work tool is blocked'), `${role}: o trabalho continua guardado`)
+    assert.ok(!contract.includes('the only key is plain text'), `${role}: não pode esconder a saída pública`)
+    assert.ok(contract.includes('already authorized work in this same turn'), `${role}: responder não pode substituir a execução`)
+    assert.ok(contract.includes('stop or pause'), `${role}: continuar não pode ignorar uma parada do dono`)
     assert.match(contract, /NATIVE ones/u, `${role}: não nomeia as tools nativas`)
     assert.match(
       contract,
-      /different tool earns the same refusal/u,
+      /different work tool earns the same refusal/u,
       `${role}: não fecha a porta da tool seguinte — foi por ela que passaram as seis chamadas`
     )
     assert.match(contract, /envelope names it/u, `${role}: não diz que o envelope nomeia a tool cortada`)
@@ -857,7 +872,7 @@ const INTEGRATOR_HEADER = 'INTEGRATION — WHEN THE OWNER CLICKS ⇪, YOU ARE TH
 function integratorSection(contract) {
   const at = contract.indexOf(INTEGRATOR_HEADER)
   if (at < 0) return undefined
-  const end = [COST_HEADER, DELEGATION_HEADER]
+  const end = ['CHOICES — USE THE QUESTION CARD:', COST_HEADER, DELEGATION_HEADER]
     .map((header) => contract.indexOf(header))
     .filter((index) => index > at)
     .sort((a, b) => a - b)[0]
@@ -885,7 +900,10 @@ test('a seção do integrador ensina o ciclo inteiro: status → run na cabeça 
   // não é a vez: não fica em laço — o app avisa
   assert.match(section, /NOT the head yet/u)
   // o erro é dele, e ele resolve NO worktree da missão
-  assert.match(section, /ANY error is YOURS to fix, in THIS worktree/u)
+  assert.match(section, /Before the merge, fix errors in THIS worktree/u)
+  assert.match(section, /After a recorded merge, read integration_status and call integration_run to finish the existing ticket/u)
+  assert.match(section, /Never repeat the merge.*force cleanup or discard new edits/u)
+  assert.match(section, /Investigate persistent blockers before retrying/u)
   assert.match(section, /call integration_run again/u)
   // ao dono se pergunta PRODUTO, não git
   assert.match(section, /PRODUCT decisions/u)
@@ -1878,6 +1896,8 @@ test('o browser da casa é FONTE ÚNICA e chega a quem TESTA UI: dev e ajudante'
   // A lista de abas é CONSCIÊNCIA, não volante (D7: browser_open perdeu o tabId).
   assert.match(dev, /LIST of tabs with the owner/u, 'a lista de abas deixou de mostrar os donos')
   assert.match(dev, /awareness, not a steering wheel/iu, 'a lista virou controle da aba dos outros')
+  assert.match(dev, /BACKGROUND USE: closed panels and unselected tabs keep rendering/u)
+  assert.match(dev, /without asking the owner to enlarge or foreground the panel/u)
 
   // Curto como as seções irmãs: régua, não constituição. Teto 2000→2500 em
   // 2026-08-29 (mesma noite): pergunta do dono ("já está instruído a SEMPRE
@@ -1936,6 +1956,17 @@ test('probe é o VEREDITO em texto; shot é para o DONO ver, e o caminho tem de 
   assert.match(section, /browser_act already observes/u, 'a ação voltou a exigir leitura extra')
   // e a recusa nomeia a receita — a régua da casa, também aqui
   assert.match(section, /refusal/iu, 'a recusa do browser não ensina a saída')
+})
+
+test('browser economy is taught with one verification recipe, scoped evidence and a stop condition', () => {
+  for (const role of ['dev', 'helper']) {
+    const section = browserSection(guiMissionSystemPrompt(role))
+    assert.match(section, /browser_check/u, `${role}: no local verification recipe`)
+    assert.match(section, /scope/u, `${role}: no targeted observation`)
+    assert.match(section, /new evidence|new change/u, `${role}: no reason to repeat verification`)
+    assert.match(section, /model.*image|image.*model/iu, `${role}: no explicit visual inspection route`)
+    assert.match(section, /not aesthetic|not.*aesthetic/iu, `${role}: geometry still claims to prove appearance`)
+  }
 })
 
 test('a página é conteúdo NÃO-CONFIÁVEL: nem segredo entra nela, nem ordem sai dela', () => {

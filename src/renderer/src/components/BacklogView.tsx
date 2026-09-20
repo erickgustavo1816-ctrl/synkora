@@ -9,6 +9,9 @@ import {
   type VersionReleaseRecord
 } from '../store'
 import ArchivedMissionChat from './ArchivedMissionChat'
+import ReleaseChangeHistory from './ReleaseChangeHistory'
+import VersionMissionDeliveries from './VersionMissionDeliveries'
+import './BacklogView.css'
 import NewMissionModal from './NewMissionModal'
 import Select from './Select'
 import { TestServerModal } from './TestServerModal'
@@ -852,6 +855,8 @@ export default function BacklogView({ projectId }: Props): React.JSX.Element {
           )}
         </div>
 
+        <div className="bl-items-scroll" key={versionId ?? 'empty'} role="region"
+          aria-label={`Conteúdo da versão ${version?.name ?? ''}`} tabIndex={0}>
         {/* raio-x da versão: branch, missões dela e o que já subiu */}
         {version && (version.branch || versionMissions.length > 0 || versionDeliveries.length > 0) && (
           <div className="vs-detail">
@@ -912,17 +917,7 @@ export default function BacklogView({ projectId }: Props): React.JSX.Element {
               </div>
             )}
             {versionDeliveries.length > 0 && (
-              <div className="vs-block">
-                <span className="vs-block-title">o que já subiu nesta versão</span>
-                {versionDeliveries.map((d) => (
-                  <div key={d.id} className="vs-delivery">
-                    ▣ {d.title}
-                    <span className="vs-delivery-date">
-                      {new Date(d.at).toLocaleString('pt-BR')}
-                    </span>
-                  </div>
-                ))}
-              </div>
+              <VersionMissionDeliveries deliveries={versionDeliveries} />
             )}
           </div>
         )}
@@ -949,6 +944,7 @@ export default function BacklogView({ projectId }: Props): React.JSX.Element {
                     ` · version ${rec.bump.version}${rec.bump.committed ? '' : ' (alinhamento FALHOU)'}`}
                   {rec.publishRequired && ' · produto publica caixa (npm run release)'}
                 </span>
+                <ReleaseChangeHistory changes={rec.changes} />
               </div>
             ))}
           </div>
@@ -1017,6 +1013,8 @@ export default function BacklogView({ projectId }: Props): React.JSX.Element {
               </div>
             )
           })}
+        </div>
+
         </div>
 
         {selectable.length > 0 && !launched && (

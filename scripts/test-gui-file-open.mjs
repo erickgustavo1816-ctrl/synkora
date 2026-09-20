@@ -29,6 +29,7 @@ writeFileSync(join(cwd, 'packages', 'ui', 'components', 'unique.ts'), 'export {}
 writeFileSync(join(cwd, 'one', 'duplicate.ts'), 'one\n')
 writeFileSync(join(cwd, 'two', 'duplicate.ts'), 'two\n')
 writeFileSync(join(cwd, 'manual.pdf'), '%PDF synthetic')
+writeFileSync(join(cwd, 'archive.bin'), 'synthetic binary format')
 // A entrega que o dono clica no fio (rodada 7-D) e um homônimo raso/profundo,
 // para provar a escolha do painel fechando ambiguidade de NOME CURTO.
 writeFileSync(join(cwd, 'src', 'relatorio.html'), '<!doctype html><title>x</title>')
@@ -62,6 +63,21 @@ test('resolve caminho relativo explícito e prepara preview somente leitura', ()
   assert.equal(prepared.preview.kind, 'text')
   assert.equal(prepared.preview.content, 'export const app = true\n')
   assert.equal('absolutePath' in prepared.preview, false)
+})
+
+test('um HTML citado no chat abre renderizado no browser, inclusive acima do teto do leitor', () => {
+  const resolver = new GuiFileResolver()
+  const page = resolver.resolve(cwd, 'src/relatorio.html')
+  assert.equal(page.ok, true)
+  assert.equal(prepareGuiFileOpen(page.file).action, 'browser')
+  assert.equal(prepareGuiFileOpen(page.file, 'preview').action, 'preview')
+
+  writeFileSync(join(cwd, 'src', 'large-page.html'), '<!doctype html>' + ' '.repeat(600_000))
+  const large = resolver.resolve(cwd, 'src/large-page.html')
+  assert.equal(large.ok, true)
+  assert.equal(prepareGuiFileOpen(large.file).action, 'browser', 'HTML grande não revela a pasta')
+  const code = resolver.resolve(cwd, 'src/app.ts')
+  assert.equal(prepareGuiFileOpen(code.file).action, 'preview', 'código continua no leitor')
 })
 
 test('aceita absoluto apenas quando continua dentro do cwd autoritativo', () => {
@@ -179,9 +195,9 @@ function externalOpenHandlerRegion(source) {
 const ipcSourceText = () =>
   readFileSync(new URL('../src/main/ipc/gui.ts', import.meta.url), 'utf8')
 
-test('fallback apenas revela: nenhuma associação externa executa o arquivo', () => {
+test('fallback de formato desconhecido apenas revela: nenhuma associação externa executa o arquivo', () => {
   const resolver = new GuiFileResolver()
-  const result = resolver.resolve(cwd, 'manual.pdf')
+  const result = resolver.resolve(cwd, 'archive.bin')
   assert.equal(result.ok, true)
   if (!result.ok) return
   const prepared = prepareGuiFileOpen(result.file)

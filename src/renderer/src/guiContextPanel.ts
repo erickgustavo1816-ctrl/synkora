@@ -23,14 +23,11 @@ export interface GuiContextPanelPresentation {
 /**
  * O QUE ESTES NÚMEROS MEDEM, dito na tela.
  *
- * Os dois se leem errado sem esta linha, e o dono leu (2026-08-17): abriu um
- * chat de planejamento retomado, pediu um plano, e viu meio milhão de tokens e
- * quase dez dólares. Os dois números estavam certos e nenhum era sobre o que
- * ele acabara de pedir — contexto é a conversa INTEIRA que o modelo relê a cada
- * resposta, e custo é o acumulado desde que a sessão abriu.
+ * Contexto descreve a última medição do motor. O acumulado em USD do processo
+ * não permite concluir cobrança adicional nem consumo da cota de assinatura.
  */
 export const SCOPE_NOTE =
-  'contexto é a conversa inteira relida a cada resposta; custo é o acumulado desde que a sessão abriu.'
+  'contexto é o conteúdo disponível ao modelo na última medição. USD é o acumulado informado pelo motor desde que a sessão abriu; não indica cobrança adicional nem a cota da assinatura.'
 
 const exactNumber = new Intl.NumberFormat('pt-BR', {
   maximumFractionDigits: 0
@@ -86,7 +83,7 @@ export function guiContextPanelPresentation(
     `${percentLabel} da janela`,
     // "da sessão" viaja com o número no tooltip também: quem só passa o mouse
     // tem de receber o escopo junto, não só quem abre o painel.
-    cost ? `custo da sessão ${cost}` : null
+    cost ? `USD informado pelo motor (sessão) ${cost}` : null
   ]
     .filter((part): part is string => part !== null)
     .join(' · ')

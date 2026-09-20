@@ -31,6 +31,8 @@ files:
 # plataforma (`@lydell/node-pty-win32-x64`), que é onde os binários moram.
 asarUnpack:
   - '**/node_modules/@lydell/node-pty*/**'
+  # Native TS7 is executed as a real file; afterPack restores its runtime libs.
+  - '**/node_modules/@typescript/typescript-darwin-arm64/**'
 
 # O main procura o ícone em `process.resourcesPath` quando empacotado
 # (resolveAppIcon em src/main/index.ts) — este `extraResources` é o que põe o
@@ -38,6 +40,8 @@ asarUnpack:
 extraResources:
   - from: build/icon.ico
     to: icon.ico
+  - from: build/vendor/scrcpy
+    to: mobile/scrcpy
 
 # Os prebuilds do node-pty dispensam compilação; deixar o rebuild ligado só
 # convidaria o node-gyp para uma festa que o projeto evita de propósito.
@@ -69,5 +73,21 @@ linux:
   target:
     - AppImage
 
-# macOS ficaria de fora até existir um build/icon.icns — o gerador
-# (scripts/make-icon.mjs) hoje produz .ico e .png, não .icns.
+# Build local no próprio Mac Apple Silicon; não publica nem notariza.
+# Assinatura ad-hoc não equivale a Developer ID/Gatekeeper. Ver docs/INSTALAR_MACOS.md.
+mac:
+  icon: build/icon-mac.png
+  category: public.app-category.developer-tools
+  identity: '-'
+  hardenedRuntime: true
+  notarize: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  extendInfo:
+    NSMicrophoneUsageDescription: O SynVoice usa o microfone quando você inicia uma gravação de voz.
+  target:
+    - target: dmg
+      arch: [arm64]
+    - target: zip
+      arch: [arm64]
+  artifactName: ${productName}-${version}-mac-${arch}.${ext}

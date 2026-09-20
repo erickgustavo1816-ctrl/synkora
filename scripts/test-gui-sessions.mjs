@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import {
+  appendFileSync,
   existsSync,
   mkdtempSync,
   mkdirSync,
@@ -49,7 +50,6 @@ import {
   guiAddApiCall,
   guiConversationWeightTokens,
   guiHeavyContextMilestone,
-  guiHeavyConversationNote,
   isGuiConversationUsage
 } from '../.tmp/gui-sessions-test/guiConversationOdometer.js'
 import {
@@ -202,6 +202,36 @@ test('cursor monotônico compacta deltas sem perder chunks repetidos', () => {
   assert.equal(ring.cursor, second)
   assert.deepEqual(ring.sequencedSnapshot(), [
     { seq: second, evt: { type: 'delta', text: 'aa' } }
+  ])
+})
+
+test('pensamento prolongado não expulsa as falas públicas nem incha o replay', () => {
+  const ring = new GuiEventRing(12, 2000)
+  const opening = { type: 'text', text: 'Vou conferir o problema.' }
+  const progress = { type: 'text', text: 'Encontrei a causa; estou validando.' }
+  ring.push(opening)
+  for (let step = 0; step < 3; step++) {
+    for (let token = 0; token < 1000; token++) ring.push({ type: 'thinking' })
+    ring.push({ type: 'tool', name: 'Read', toolUseId: `t-${step}`, input: {} })
+    ring.push({ type: 'tool-result', toolUseId: `t-${step}`, text: 'synthetic', isError: false })
+  }
+  ring.push(progress)
+  assert.deepEqual(ring.snapshot().filter(e => e.type === 'text'), [opening, progress])
+  assert.equal(ring.snapshot().filter(e => e.type === 'thinking').length, 3)
+  assert.equal(ring.evictedCount, 0)
+  assert.equal(ring.cursor, 3008, 'o cursor ao vivo continua contando cada evento')
+})
+
+test('replay guarda só o sinal de pensamento e preserva fronteiras com falas e ferramentas', () => {
+  const ring = new GuiEventRing(10, 300)
+  ring.push({ type: 'text', text: 'Antes' })
+  ring.push({ type: 'thinking', text: 'private-synthetic'.repeat(500) })
+  const last = ring.push({ type: 'thinking', text: 'more-private-synthetic' })
+  ring.push({ type: 'text', text: 'Depois' })
+  assert.deepEqual(ring.sequencedSnapshot(), [
+    { seq: 1, evt: { type: 'text', text: 'Antes' } },
+    { seq: last, evt: { type: 'thinking' } },
+    { seq: 4, evt: { type: 'text', text: 'Depois' } }
   ])
 })
 
@@ -477,10 +507,10 @@ test('R24.1 — a poda avisa uma vez ao vivo, sobrevive ao disco e abre o replay
   try {
     const first = makeRegistry()
     assert.equal(first.create(spawn).ok, true)
-    // `thinking` não é checkpoint de transcript: enche o anel sem gravar disco
-    // a cada passo (e sem virar um delta compactado, que nunca poda).
+    // Distinct tool starts fill the ring without a checkpoint on every event.
+    // Repeated thinking signals now compact and must not evict real history.
     for (let index = 0; index < GUI_RING_CAP + 20; index += 1) {
-      sink({ type: 'thinking', text: `passo ${index}` })
+      sink({ type: 'tool-start', toolUseId: `synthetic-${index}` })
     }
     sink({ type: 'text', text: 'a fala mais nova' })
 
@@ -1327,7 +1357,9 @@ function claudeAgentSession() {
   session.claudeTasks = new GuiClaudeTaskRegistry()
   session.pending = new Map()
   session.pendingTurnGenerations = []
+  session.turnGeneration = 0
   session.activeTurnGeneration = null
+  session.resetIdle = () => {}
   session.interruptGeneration = null
   session.interruptRequestId = null
   session.interruptTimer = null
@@ -1666,7 +1698,9 @@ test('envelope de tarefa fora do contrato é no-op silencioso e texto raiz segue
     message: { content: [{ type: 'text', text: 'a busca terminou' }] }
   })
   assert.deepEqual(events.at(-1), { type: 'text', text: 'a busca terminou' })
-  assert.equal(events.at(-2).type, 'init')
+  assert.equal(events.at(-2).type, 'turn-started')
+  assert.equal(events.at(-3).type, 'init')
+  assert.equal(session.turnActive, true)
 })
 
 test('interrupção e encerramento cancelam os agentes antes do terminal', () => {
@@ -2257,7 +2291,7 @@ test('Codex repassa somente o contexto vivo, nunca o acumulado da sessão', () =
     }
   })
   assert.deepEqual(events, [
-    { type: 'context-usage', contextTokens: 1_312, contextWindow: 258_400 }
+    { type: 'context-usage', contextTokens: 1_312, contextWindow: 258_400, sample: null }
   ])
   assert.equal(Math.min(100, Math.round((356_000 / 258_400) * 100)), 100)
   assert.equal(Math.round((events[0].contextTokens / events[0].contextWindow) * 100), 1)
@@ -2268,7 +2302,7 @@ test('Codex repassa somente o contexto vivo, nunca o acumulado da sessão', () =
   session.handleNotification('thread/tokenUsage/updated', {
     tokenUsage: { total: { totalTokens: 400_000 } }
   })
-  assert.deepEqual(events, [{ type: 'context-usage', contextTokens: null, contextWindow: null }])
+  assert.deepEqual(events, [{ type: 'context-usage', contextTokens: null, contextWindow: null, sample: null }])
   assert.equal(session.lastTokens, undefined)
   assert.equal(session.lastWindow, undefined)
 
@@ -2278,9 +2312,43 @@ test('Codex repassa somente o contexto vivo, nunca o acumulado da sessão', () =
   events.length = 0
   session.handleNotification('thread/compacted', {})
   assert.deepEqual(events, [
+    { type: 'context-compaction', active: false },
     { type: 'context-usage', contextTokens: null, contextWindow: null },
     { type: 'command-output', text: 'contexto da thread compactado' }
   ])
+})
+
+test('Codex informa início e fim reais da compactação sem misturar threads ou duplicar eventos', () => {
+  assert.equal(isGuiPersistedEvent({ type: 'context-compaction', active: true }), true)
+  assert.equal(isGuiPersistedEvent({ type: 'context-compaction', active: false }), true)
+  assert.equal(isGuiPersistedEvent({ type: 'context-compaction', active: 'true' }), false)
+  assert.equal(isGuiPersistedEvent({ type: 'context-compaction' }), false)
+  const { session, events } = codexAgentSession()
+  session.threadId = 'synthetic-thread'
+  session.turnId = 'synthetic-turn'
+  session.lastTokens = 200_000
+  session.lastWindow = 258_400
+  const params = { threadId: session.threadId, turnId: session.turnId,
+    item: { type: 'contextCompaction', id: 'synthetic-compaction' } }
+  session.handleNotification('item/started', { ...params, threadId: 'another-thread' })
+  assert.deepEqual(events, [])
+  session.handleNotification('item/started', params)
+  session.handleNotification('item/started', params)
+  assert.deepEqual(events, [{ type: 'context-compaction', active: true }])
+  session.handleNotification('item/completed', { ...params, turnId: 'another-turn' })
+  assert.equal(events.length, 1)
+  session.handleNotification('item/completed', params)
+  assert.deepEqual(events, [
+    { type: 'context-compaction', active: true },
+    { type: 'context-compaction', active: false },
+    { type: 'context-usage', contextTokens: null, contextWindow: null },
+    { type: 'command-output', text: 'contexto da thread compactado' }
+  ])
+  assert.equal(session.lastTokens, undefined)
+  assert.equal(session.lastWindow, undefined)
+  session.handleNotification('item/completed', params)
+  session.handleNotification('thread/compacted', { threadId: session.threadId, turnId: session.turnId })
+  assert.equal(events.length, 4, 'notificação legada não duplica conclusão moderna')
 })
 
 test('Codex projeta collabAgentToolCall na lateral e só encerra após o último subagente', async () => {
@@ -3600,6 +3668,53 @@ for (const cli of ['codex', 'claude']) {
   }
 }
 
+test('Codex cancellation needs the matching interrupted terminal and excludes already-read messages', async () => {
+  const { session, events, note } = codexAgentSession()
+  session.child.exitCode = null
+  session.steerTags = new Map([['native-target', 'cancel-target'], ['native-read', 'already-read']])
+  session.cancelledSteerIds = new Set()
+  session.request = async () => ({ result: {} })
+  assert.equal(session.cancelQueuedMessages(), true)
+  session.noteOwnerSteerEcho({ type: 'userMessage', clientId: 'native-read' })
+  note('turn/completed', { threadId: 'different-thread', turn: { id: 'turn-root', status: 'interrupted' } })
+  assert.equal(events.some(event => event.type === 'owner-steer-rejected'), false)
+  note('turn/completed', { threadId: 'thread-root', turn: { id: 'earlier-turn', status: 'interrupted' } })
+  assert.equal(session.turnId, 'turn-root', 'a previous terminal cannot consume this cancellation')
+  assert.equal(session.cancelQueuedTurnId, 'turn-root')
+  note('turn/completed', { threadId: 'thread-root', turn: { id: 'turn-root', status: 'interrupted' } })
+  await new Promise(resolve => setImmediate(resolve))
+  assert.deepEqual(events.filter(event => event.type === 'owner-steer-rejected'), [
+    { type: 'owner-steer-rejected', tag: 'cancel-target', reason: 'cancelled' }
+  ])
+  assert.equal(session.steerTags.size, 0)
+  assert.equal(session.turnActive, false)
+})
+
+test('Codex cannot recreate cancelled guidance when an in-flight steer RPC is rejected late', async () => {
+  const { session, events, note } = codexAgentSession()
+  session.child.exitCode = null
+  session.steerTags = new Map()
+  session.cancelledSteerIds = new Set()
+  session.resetIdle = () => undefined
+  let releaseSteer
+  const calls = []
+  session.request = async (method, params) => {
+    calls.push({ method, params })
+    if (method === 'turn/steer') return new Promise(resolve => { releaseSteer = resolve })
+    return { result: {} }
+  }
+  session.pendingSendOperations.add(1)
+  const sending = session.startTurn('orientação sintética retirada', 1, 'cancel-target')
+  assert.equal(session.cancelQueuedMessages(), true)
+  note('turn/completed', { threadId: 'thread-root', turn: { id: 'turn-root', status: 'interrupted' } })
+  releaseSteer({ error: { message: 'previous turn ended' } })
+  await sending
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(calls.some(call => call.method === 'turn/start'), false, 'late RPC failure cannot replay a cancelled message in a new turn')
+  assert.ok(events.some(event => event.type === 'owner-steer-rejected' && event.tag === 'cancel-target'))
+  assert.equal(session.pendingSendOperations.size, 0)
+})
+
 // RECIBO DO CLIQUE DO DONO CHEGA AO MODELO SEM VIRAR FALA DELE.
 //
 // O caso real (2026-08-17): aprovar o plano injetava o recibo pelo `send`, e o
@@ -4231,12 +4346,46 @@ test('o tamanho do base64 é medido sem alocar o buffer', () => {
   assert.equal(base64ByteLength(grande.replace(/(.{76})/g, '$1\n')), 9_000)
 })
 
-test('o teto de 10 MB recusa em PT-BR e nomeia o limite', () => {
-  assert.equal(GUI_ATTACHMENT_MAX_BYTES, 10 * 1024 * 1024)
-  const msg = attachmentTooLargeError(12.5 * 1024 * 1024)
-  assert.match(msg, /12,5 MB/, 'tamanho do arquivo com vírgula decimal')
-  assert.match(msg, /10,0 MB/, 'a mensagem diz qual é o limite')
+test('o teto de 50 MB recusa em PT-BR e nomeia o limite', () => {
+  assert.equal(GUI_ATTACHMENT_MAX_BYTES, 50 * 1024 * 1024)
+  const msg = attachmentTooLargeError(50.5 * 1024 * 1024)
+  assert.match(msg, /50,5 MB/, 'tamanho do arquivo com vírgula decimal')
+  assert.match(msg, /50,0 MB/, 'a mensagem diz qual é o limite')
   assert.match(msg, /grande demais/, 'texto de UI em PT-BR, não jargão em inglês')
+})
+
+test('50 MB text attachment validates transport, persists and resolves only a path for the agent', () => {
+  const root = mkdtempSync(join(tmpdir(), 'synkora-attachment-limit-'))
+  try {
+    const size = 50 * 1024 * 1024
+    const bytes = Buffer.alloc(size, 'x')
+    const encoded = bytes.toString('base64')
+    assert.equal(attachPayloadProblem({ kind: 'file', name: 'synthetic.txt', bytesBase64: encoded }), undefined)
+    assert.match(attachmentBase64Problem(`${encoded.slice(0, -1)}A`), /50,0 MB/u,
+      'one extra decoded byte is refused even when the base64 string has the same length')
+    const dir = prepareGuiAttachmentDirectory(root)
+    const path = writeGuiAttachmentExclusive(dir, 'synthetic.txt', bytes)
+    const capabilityFile = join(root, 'capabilities.json')
+    const capabilities = new GuiAttachmentCapabilityStore(capabilityFile)
+    const descriptor = capabilities.issue('large-pane', { path, kind: 'file', mime: 'text/plain', size })
+    const reloaded = new GuiAttachmentCapabilityStore(capabilityFile)
+    const checked = validateGuiAttachmentReferences(root, 'large-pane', [descriptor], reloaded)
+    assert.equal(checked.ok, true, checked.error)
+    const prompt = withGuiAttachmentReferences('Confira o documento.', checked.resolved)
+    assert.ok(prompt.includes(path))
+    assert.ok(prompt.length < 1024, 'the 50 MB file is never expanded into the prompt')
+    assert.equal(checked.resolved[0].bytes.length, size)
+    assert.equal(validateGuiAttachmentReferences(root, 'other-pane', [descriptor], reloaded).ok, false)
+    const tooLarge = { ...descriptor, size: size + 1 }
+    assert.equal(isGuiAttachmentDescriptor(tooLarge), false)
+    assert.equal(validateGuiAttachmentReferences(root, 'large-pane', [tooLarge], reloaded).ok, false)
+    appendFileSync(path, 'x')
+    const changed = validateGuiAttachmentReferences(root, 'large-pane', [descriptor], reloaded)
+    assert.equal(changed.ok, false)
+    assert.match(changed.error, /50/u, 'the send boundary rechecks the physical size')
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
 })
 
 test('MIME de imagem vem da assinatura e dimensões absurdas não chegam ao decoder', () => {
@@ -4296,6 +4445,51 @@ test('payload torto é recusado antes de tocar o disco', () => {
     attachPayloadProblem({ kind: 'file', name: 'a.png', bytesBase64: 'QU?D' }),
     /base64 inválido/u
   )
+})
+
+test('TXT em codificações legadas abre sem invalidar anexos já enviados', () => {
+  const samples = [
+    Buffer.from('|0000|ESCRITURAÇÃO SINTÉTICA|\r\n', 'latin1'),
+    Buffer.from([0x93, 0x61, 0x94, 0x20, 0x80, 0x0d, 0x0a]),
+    Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from('Texto sintético\r\n', 'utf16le')]),
+    Buffer.concat([Buffer.from([0xfe, 0xff]), Buffer.from('Texto sintético\r\n', 'utf16le').swap16()])
+  ]
+  const root = mkdtempSync(join(tmpdir(), 'synkora-text-open-'))
+  try {
+    const directory = prepareGuiAttachmentDirectory(root)
+    const storeFile = join(root, 'capabilities.json')
+    const capabilities = new GuiAttachmentCapabilityStore(storeFile)
+    for (const [index, bytes] of samples.entries()) {
+      const path = join(directory, `synthetic-${index}.TXT`)
+      writeFileSync(path, bytes)
+      const descriptor = capabilities.issue('text-pane', {
+        path, kind: 'file', mime: 'application/octet-stream', size: bytes.length
+      })
+      const restored = new GuiAttachmentCapabilityStore(storeFile)
+      const checked = validateGuiAttachmentReferences(root, 'text-pane', [descriptor], restored)
+      assert.equal(checked.ok, true)
+      assert.deepEqual(checked.attachments, [descriptor], 'metadados persistidos continuam válidos')
+      const attachment = checked.resolved[0]
+      assert.deepEqual(attachment.bytes, bytes, 'abrir não converte nem regrava o original')
+      assert.equal(guiAttachmentOpenProblem(attachment.name, attachment.mime, attachment.bytes), undefined)
+      assert.equal(validateGuiAttachmentReferences(root, 'another-pane', [descriptor], restored).ok, false)
+      assert.equal(validateGuiAttachmentReferences(root, 'text-pane', [{ ...descriptor, mime: 'text/plain' }], restored).ok, false)
+    }
+  } finally { rmSync(root, { recursive: true, force: true }) }
+})
+
+test('abrir TXT ainda recusa binários, texto malformado e extensões ativas', () => {
+  for (const bytes of [
+    Buffer.from([0x4d, 0x5a, 0, 1]), Buffer.from([0x50, 0x4b, 3, 4]),
+    Buffer.from([0x61, 0x00, 0x62]), Buffer.from([0x61, 0x81, 0x62]),
+    Buffer.from([0xff, 0xfe, 0x61]), Buffer.from([0xff, 0xfe, 0x00, 0xd8]),
+    Buffer.from([0xff, 0xfe, 0x00, 0x00])
+  ]) assert.ok(guiAttachmentOpenProblem('synthetic.txt', 'application/octet-stream', bytes))
+  assert.ok(guiAttachmentOpenProblem('synthetic.txt', 'application/octet-stream'))
+  for (const name of ['synthetic.exe', 'synthetic.ps1', 'synthetic.html', 'synthetic.svg', 'synthetic.bin']) {
+    assert.ok(guiAttachmentOpenProblem(name, 'application/octet-stream', Buffer.from('Texto sintético', 'latin1')))
+  }
+  assert.equal(guiAttachmentOpenProblem('synthetic.txt', 'text/plain', Buffer.from('Texto UTF-8')), undefined)
 })
 
 test('pasta de anexos recusa junction e criação exclusiva não sobrescreve', () => {
@@ -5466,9 +5660,9 @@ test('aviso de aproximação é NOTA e o esgotado é ERRO com a receita', async 
   // passando ✓ depois de cada card): NOTA, jamais card de erro.
   const warned = translateGuiRateLimit({ status: 'allowed_warning', resetsAt }, null)
   assert.equal(warned.event.type, 'command-output')
-  assert.match(warned.event.text, /APROXIMANDO \(allowed_warning\)/u)
-  assert.match(warned.event.text, /nada parou/u)
-  assert.match(warned.event.text, /renova \d{2}:\d{2}:\d{2}/u)
+  assert.match(warned.event.text, /Você está perto do limite do plano\./u)
+  assert.doesNotMatch(warned.event.text, /allowed_warning|nada parou/u)
+  assert.match(warned.event.text, /Renovação prevista às \d{2}:\d{2}\./u)
   assert.doesNotMatch(warned.event.text, /atingido/u)
 
   // Bloqueio de verdade continua ERRO — e agora nomeia a RECEITA: existe outra
@@ -5557,7 +5751,7 @@ test('Claude: o aviso de aproximação não para o turno e não se repete a cada
   line({ type: 'rate_limit_event', rate_limit_info: { status: 'allowed_warning', resetsAt } })
   const aviso = events.at(-1)
   assert.equal(aviso.type, 'command-output', 'aviso é NOTA — o card de erro dizia que ACABOU')
-  assert.match(aviso.text, /APROXIMANDO/u)
+  assert.match(aviso.text, /perto do limite/u)
 
   // O CLI reemite o evento a cada request: o fio não recebe mais nada.
   events.length = 0
@@ -5860,6 +6054,8 @@ test('R22.4 — o pote SEM marca (pedido parado) sai no fecho, pelo caminho de s
 
   assert.equal(bench.sent.length, 1, 'o fecho tem de entregar o pote — a fala do dono nunca se perde')
   assert.match(bench.sent[0], /inverte a ordem das fatias/u, 'a fala do dono viaja VERBATIM')
+  assert.equal(bench.ownerMail.count(R22_PANE), 1, 'sending is not a read receipt')
+  bench.emit({ type: 'owner-steer-absorbed', tag: 'msg-1' })
   assert.equal(bench.ownerMail.count(R22_PANE), 0)
   // SEM BOLHA NOVA: a bolha saiu no envio, e o fecho é entrega, não fala.
   assert.deepEqual(bench.bubbles(), ['msg-1'])
@@ -5920,6 +6116,8 @@ test('R22.4 — o pote atravessa o BOOT: o que não saiu volta do disco e sai na
       ['quando voltar, começa por isto'],
       'a abertura do pane tem de entregar o que ficou no pote'
     )
+    assert.equal(depois.count(R22_PANE), 1, 'recovered mail stays durable until the new native receipt')
+    bench.emit({ type: 'owner-steer-absorbed', tag: 'msg-1' })
     assert.equal(depois.count(R22_PANE), 0)
     assert.equal(
       ownerMailModule.createGuiOwnerMailStore(file).load().length,
@@ -6314,6 +6512,7 @@ test("R39.1 D3' — o fecho de turno PULA a cópia steerada (o CLI já está com
 
 test("R39.1 D3' — o RENASCIMENTO entrega a cópia sem recibo (o processo morreu com ela dentro)", () => {
   const bench = ownerStopBench()
+  const retiredSink = bench.gui.panes.get(R39_PANE).sink
   bench.session().turnActive = true
   assert.equal(bench.gui.send(R39_PANE, 'para e me responde', 'msg-1').ok, true)
 
@@ -6325,17 +6524,20 @@ test("R39.1 D3' — o RENASCIMENTO entrega a cópia sem recibo (o processo morre
   bench.recreate()
   assert.equal(bench.sent.length, 2)
   assert.match(bench.sent[1], /para e me responde/u)
-  assert.equal(bench.ownerMail.count(R39_PANE), 0)
+  assert.equal(bench.ownerMail.count(R39_PANE), 1)
   assert.deepEqual(
     bench.states('msg-1'),
-    ['unread', 'delivered'],
-    'a entrega do renascimento é entrega, não leitura'
+    ['unread', 'unread'],
+    'a entrega do renascimento ainda espera seu próprio recibo'
   )
 
   // O BILHETE morreu com a geração: um recibo tardio da sessão morta não pode
   // carimbar "lida" numa bolha que o renascimento já entregou.
+  retiredSink({ type: 'owner-steer-absorbed', tag: 'msg-1' })
+  assert.deepEqual(bench.states('msg-1'), ['unread', 'unread'])
   bench.emit({ type: 'owner-steer-absorbed', tag: 'msg-1' })
-  assert.deepEqual(bench.states('msg-1'), ['unread', 'delivered'])
+  assert.deepEqual(bench.states('msg-1'), ['unread', 'unread', 'read'])
+  assert.equal(bench.ownerMail.count(R39_PANE), 0)
 })
 
 test("R39.1 D4' — \"ler agora\": corta SÓ o turno e manda o envelope curto (motor que guarda a fila)", () => {
@@ -6532,7 +6734,9 @@ test('R39 D5 — permissão aberta: a fala ESPERA no pote e o carimbo só sai na
   bench.emit({ type: 'result', isError: false, outcome: 'completed' })
   await settleTicks()
   assert.equal(bench.sent.length, 1)
-  assert.deepEqual(bench.states('msg-1'), ['delivered'])
+  assert.deepEqual(bench.states('msg-1'), ['unread'])
+  bench.emit({ type: 'owner-steer-absorbed', tag: 'msg-1' })
+  assert.deepEqual(bench.states('msg-1'), ['unread', 'read'])
 })
 
 test('R39 D1 — o ■ do dono continua sendo o único que para a FROTA', () => {
@@ -6789,7 +6993,10 @@ test('R25.1 — compactar NÃO zera o odômetro: o gasto já aconteceu', (t) => 
   assert.equal(bench.lastContext().convCalls, 1, 'a fotografia sem medida ainda carrega o total')
 })
 
-test('R25.3 — conversa pesada ganha UMA nota por marco, com a receita real', async (t) => {
+test('R25.3b — conversa pesada NÃO fala no fio: o marco vai ao diário e a tela avisa no medidor', async (t) => {
+  // Ordem do dono (2026-09-16): a nota no fio "é feia; um aviso em tooltip
+  // seria melhor". O marco continua AUDITADO uma vez por degrau; a receita
+  // mora no tooltip/painel do medidor de contexto (renderer, guiCostSignals).
   const journal = []
   const bench = odometerBench({
     record: (event, ids, detail) => journal.push({ event, ids, detail })
@@ -6802,37 +7009,27 @@ test('R25.3 — conversa pesada ganha UMA nota por marco, com a receita real', a
 
   bench.apiCall({ input: 10, cacheWrite: 1_000, cacheRead: 158_000, output: 100 })
   await settleTicks()
-  const first = bench.notes()
-  assert.equal(first.length, 1, 'o marco fala UMA vez')
-  assert.match(first[0], /re-lê ~159k/u, 'a nota diz o número medido, não um adjetivo')
-  // TODA nota nomeia a RECEITA (regra da casa): as três saídas REAIS de hoje —
-  // fechar a missão (a entrega vira briefing, R16), /compact (régua de slash da
-  // casa, vai cru ao binário) e seguir ciente.
-  assert.match(first[0], /\/compact/u)
-  assert.match(first[0], /missão/u)
-  assert.match(first[0], /ciente do custo/u)
+  assert.deepEqual(bench.notes(), [], 'cruzar o marco não escreve nota no fio')
 
   bench.apiCall({ input: 10, cacheWrite: 1_000, cacheRead: 170_000, output: 100 })
   await settleTicks()
-  assert.equal(bench.notes().length, 1, 'crescer dentro do MESMO marco não repete a nota')
-
   bench.apiCall({ input: 10, cacheWrite: 1_000, cacheRead: 305_000, output: 100 })
   await settleTicks()
-  assert.equal(bench.notes().length, 2, 'o marco seguinte (300k) fala de novo')
+  assert.deepEqual(bench.notes(), [], 'nem o marco seguinte')
 
   const audited = journal.filter((entry) => entry.event === 'gui-heavy-conversation')
-  assert.equal(audited.length, 2, 'todo advisory é AUDITADO na caixa-preta')
+  assert.equal(audited.length, 2, 'todo advisory é AUDITADO na caixa-preta, uma vez por marco')
   assert.equal(audited[0].ids.paneId, bench.paneId)
   assert.equal(audited[0].detail.milestone, 150_000)
   assert.equal(audited[1].detail.milestone, 300_000)
 })
 
-test('R25.3 — a nota é ADVISORY: nada bloqueia, o envio segue livre', async (t) => {
+test('R25.3 — o aviso é ADVISORY: nada bloqueia, o envio segue livre', async (t) => {
   const bench = odometerBench()
   t.after(() => rmSync(bench.root, { recursive: true, force: true }))
   bench.apiCall({ input: 10, cacheWrite: 1_000, cacheRead: 400_000, output: 100 })
   await settleTicks()
-  assert.equal(bench.notes().length, 1)
+  assert.equal(bench.notes().length, 0)
   assert.equal(
     bench.gui.send(bench.paneId, 'segue assim mesmo', 'msg-heavy').ok,
     true,
@@ -7036,7 +7233,7 @@ test('R25.1 — parcela suja nunca vira gasto inventado', () => {
   assert.equal(isGuiConversationUsage(null), false)
 })
 
-test('R25.3 — o marco é de 150k e a nota nomeia as receitas REAIS', () => {
+test('R25.3 — o marco é de 150k; a receita mora no medidor do renderer (guiCostSignals)', () => {
   assert.equal(GUI_HEAVY_CONTEXT_TOKENS, 150_000)
   assert.equal(guiHeavyContextMilestone(149_999), null)
   assert.equal(guiHeavyContextMilestone(150_000), 150_000)
@@ -7044,15 +7241,6 @@ test('R25.3 — o marco é de 150k e a nota nomeia as receitas REAIS', () => {
   assert.equal(guiHeavyContextMilestone(326_000), 300_000)
   assert.equal(guiHeavyContextMilestone(null), null)
   assert.equal(guiHeavyContextMilestone(Number.NaN), null)
-
-  const note = guiHeavyConversationNote(192_400)
-  assert.match(note, /~192k/u)
-  // As três saídas de hoje, todas EXECUTÁVEIS pelo dono neste chat.
-  assert.match(note, /\/compact/u)
-  assert.match(note, /missão/u)
-  assert.match(note, /ciente do custo/u)
-  // Advisory nunca fala em dinheiro nem em proibição.
-  assert.doesNotMatch(note, /\$|R\$|proibid|não pode/iu)
 })
 
 test('o item solto no chat é revalidado pelo main: pasta vira referência, arquivo volta com tamanho', () => {
@@ -7128,6 +7316,7 @@ function reloadBench(t, cli) {
         return state.turnActive
       },
       send: (text) => sent.push(text),
+      reloadSkills: () => sent.push('/reload-skills'),
       kill: () => {
         state.alive = false
       }
@@ -7196,7 +7385,8 @@ test('5.D — no claude a recarga vai pelo bastidor e o recibo do CLI vira NOTA,
     isError: false,
     outcome: 'completed',
     continues: false,
-    resultText: 'Reloaded skills: 14 skills available (1 added)'
+    resultText: 'Reloaded skills: 14 skills available (1 added)',
+    localCommand: 'reload-skills'
   })
 
   const results = live.filter(({ evt }) => evt.type === 'result')

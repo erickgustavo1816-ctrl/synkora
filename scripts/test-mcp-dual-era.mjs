@@ -68,8 +68,9 @@ const HELPER_TOOLS = Object.freeze([
  *  planejador junto com o resto. Mesma razão do bloco acima: a propriedade
  *  medida aqui é "as duas eras recebem o MESMO catálogo", e ele cresceu. */
 const SKILL_TOOLS = Object.freeze(['skill_discard', 'skill_pull', 'skill_search'])
+const CONTEXT_TOOLS = ['context_read', 'context_record', 'context_search', 'context_status']
 const PLANNER_TOOLS = Object.freeze(
-  [...PLAN_TOOLS, ...HELPER_TOOLS, ...LSP_TOOLS, ...SKILL_TOOLS].sort()
+  ['commentary', ...PLAN_TOOLS, ...HELPER_TOOLS, ...LSP_TOOLS, ...SKILL_TOOLS, ...CONTEXT_TOOLS].sort()
 )
 
 const ERAS = Object.freeze([

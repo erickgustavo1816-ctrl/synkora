@@ -24,6 +24,7 @@ import {
   type PageActKind,
   type PageResolveResult
 } from './browserPageScript'
+import { boundBrowserText, browserBound, BROWSER_RESPONSE_DEFAULT_MAX_CHARS } from './browserObservation'
 
 export type BrowserActionKind =
   | 'click'
@@ -75,7 +76,7 @@ export interface BrowserActionContext {
   /** Dois quadros e um respiro, com teto curto (painel oculto estrangula rAF). */
   settle(): Promise<void>
   /** A leitura pós-ação — o produto final desta tool. */
-  read(): Promise<string>
+  read(responseMaxChars?: number): Promise<string>
   capabilities: BrowserInputCapabilities
   log(entry: { event: string; err?: string }): void
 }
@@ -298,35 +299,103 @@ export async function runBrowserAction(
 }
 
 /**
- * O LOTE. Sequencial, para no primeiro erro, e SEMPRE termina com a leitura
- * pós-ação — inclusive quando parou: o agente precisa ver em que estado a
- * página ficou, e não só qual passo falhou.
+ * The normal batch observes once after its last action. A deterministic
+ * browser_check may defer successful observations; failures always observe.
  */
-export async function runBrowserActions(
+export interface BrowserActionsResult {
+  ok: boolean
+  text: string
+  completed: number
+  total: number
+  /** One-based, present only when a particular action failed. */
+  failedStep?: number
+  error?: string
+  observation?: string
+}
+
+export interface BrowserActionExecutionOptions {
+  /** A deterministic check can observe once after several successful batches. */
+  observe?: boolean
+  responseMaxChars?: number
+  /** Absolute local deadline. Checked before every input event and resolve. */
+  deadlineAt?: number
+}
+
+export async function runBrowserActionsResult(
   ctx: BrowserActionContext,
-  actions: BrowserAction[]
-): Promise<string> {
-  if (actions.length === 0) return 'nenhuma ação pedida — informe pelo menos uma.'
+  actions: BrowserAction[],
+  options: BrowserActionExecutionOptions = {}
+): Promise<BrowserActionsResult> {
+  if (actions.length === 0) {
+    const error = 'nenhuma ação pedida — informe pelo menos uma.'
+    return { ok: false, text: error, error, completed: 0, total: 0 }
+  }
   if (actions.length > BROWSER_ACT_MAX_STEPS) {
-    return `lista de ${actions.length} passos acima do teto de ${BROWSER_ACT_MAX_STEPS}. Receita: quebre em duas chamadas de browser_act.`
+    const error = `lista de ${actions.length} passos acima do teto de ${BROWSER_ACT_MAX_STEPS}. Receita: quebre em duas chamadas de browser_act.`
+    return { ok: false, text: error, error, completed: 0, total: actions.length }
+  }
+  const budget = browserBound(options.responseMaxChars, BROWSER_RESPONSE_DEFAULT_MAX_CHARS, 500, 32_000)
+  const expired = (): boolean => Number.isFinite(options.deadlineAt) && Date.now() >= options.deadlineAt!
+  const deadlineError = 'prazo da verificação atingido; nenhum novo evento será enviado. Receita: chame browser_read para verificar o estado atual antes de retomar.'
+  const assertWithinDeadline = (): void => { if (expired()) throw new Error(deadlineError) }
+  const boundedContext: BrowserActionContext = {
+    ...ctx,
+    send: (method, params) => { assertWithinDeadline(); return ctx.send(method, params) },
+    resolve: (step, act) => { assertWithinDeadline(); return ctx.resolve(step, act) }
   }
   const done: string[] = []
   let failure: string | undefined
   for (let i = 0; i < actions.length; i++) {
-    const receipt = await runBrowserAction(ctx, actions[i]!)
-    if (typeof receipt === 'string') {
-      done.push(`${i + 1}. ${receipt}`)
-      continue
+    try {
+      assertWithinDeadline()
+      const receipt = await runBrowserAction(boundedContext, actions[i]!)
+      if (typeof receipt === 'string') {
+        done.push(`${i + 1}. ${receipt}`)
+        continue
+      }
+      failure = receipt.error || 'a ação falhou sem detalhe. Receita: chame browser_read antes de retomar.'
+    } catch (error) {
+      failure = `falha em ${actions[i]!.action}: ${String(error)}. Receita: chame browser_read e confira browser_console antes de retomar.`
     }
-    failure = `${i + 1}. ${receipt.error}`
     break
   }
-  await ctx.settle()
-  const observation = await ctx.read()
-  const head = failure
-    ? `PAROU no passo ${done.length + 1} de ${actions.length} — os passos seguintes NÃO rodaram.\n${done
-        .concat(failure)
-        .join('\n')}`
-    : `${actions.length} ação(ões) executada(s):\n${done.join('\n')}`
-  return `${head}\n\n— a página DEPOIS da(s) ação(ões) —\n${observation}`
+  let settleFailure: string | undefined
+  if (!expired()) {
+    try { await ctx.settle() } catch (error) { settleFailure = String(error) }
+  }
+  if (expired() && !failure) settleFailure = deadlineError
+  const head = boundBrowserText(failure
+    ? `PAROU no passo ${done.length + 1} de ${actions.length} — os passos seguintes NÃO rodaram.\n${done.length + 1}. ${failure}`
+    : `${actions.length} ação(ões) executada(s):`, Math.min(600, Math.floor(budget / 3)))
+  const receiptBudget = Math.max(0, Math.min(450, Math.floor(budget / 5), budget - head.length - 240))
+  const receipts = done.length ? boundBrowserText(done.join('\n'), receiptBudget, 'recibos resumidos; passos executados no total acima') : ''
+  let text = `${head}${receipts ? '\n' + receipts : ''}`
+  let observation: string | undefined
+  let observationFailure = settleFailure
+  if (options.observe !== false || failure || settleFailure) {
+    const separator = '\n\n— a página DEPOIS da(s) ação(ões) —\n'
+    const remaining = Math.max(100, budget - text.length - separator.length)
+    if (expired()) {
+      observationFailure = deadlineError
+      observation = 'Leitura posterior não realizada: prazo da verificação atingido. Receita: chame browser_read para obter uma observação atual; este recibo não confirma o estado final da página.'
+    } else {
+      try { observation = await ctx.read(remaining) } catch (error) {
+        observationFailure = String(error)
+        observation = `não consegui ler a página depois das ações: ${observationFailure}. Receita: chame browser_read para verificar o estado atual.`
+      }
+    }
+    // Compatibility contexts may ignore the budget; still bound their output.
+    observation = boundBrowserText(observation, remaining)
+    text += separator + observation
+  }
+  return {
+    ok: !failure && !observationFailure, text, completed: done.length, total: actions.length,
+    ...(failure ? { failedStep: done.length + 1, error: failure } : observationFailure ? { error: observationFailure } : {}),
+    ...(observation !== undefined ? { observation } : {})
+  }
+}
+
+/** Backward-compatible text entry point; the typed outcome drives checks. */
+export async function runBrowserActions(ctx: BrowserActionContext, actions: BrowserAction[]): Promise<string> {
+  return (await runBrowserActionsResult(ctx, actions)).text
 }

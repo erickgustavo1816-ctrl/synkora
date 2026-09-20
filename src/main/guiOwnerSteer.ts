@@ -342,6 +342,7 @@ export class GuiOwnerStepTracker {
  * remontagem e o renderer o espelha em `guiApi.ts`.
  */
 export type GuiOwnerMessageState =
+  | 'cancelled'
   /** R39.1 D1' — foi ao CLI e AINDA NÃO FOI LIDA (o estado com AÇÃO: "ler agora"). */
   | 'unread'
   /** O corte do "ler agora" saiu; a confirmação do CLI ainda não voltou. */
@@ -363,6 +364,16 @@ export interface GuiOwnerMessageStateEvent {
   id: string
   state: GuiOwnerMessageState
   at: number
+}
+
+export function isGuiOwnerMessageStateEvent(value: unknown): value is GuiOwnerMessageStateEvent {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const event = value as Record<string, unknown>
+  return event['type'] === 'owner-message-state' && typeof event['id'] === 'string' &&
+    event['id'].length > 0 && event['id'].length <= 256 &&
+    typeof event['at'] === 'number' && Number.isFinite(event['at']) &&
+    typeof event['state'] === 'string' &&
+    ['unread', 'stopping', 'read', 'delivered', 'answered', 'cancelled'].includes(event['state'])
 }
 
 export function guiOwnerMessageStateEvent(

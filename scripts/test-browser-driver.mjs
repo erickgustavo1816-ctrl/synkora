@@ -499,7 +499,11 @@ test('READ: o corte SE ANUNCIA com a receita — truncagem silenciosa aprovaria 
   // recibo que não cabe nem o cabeçalho.
   const piso = await session.read({ maxChars: 10 })
   assert.match(piso, /\[CORTADO no teto de 500 caracteres\]/u)
-  assert.equal(BROWSER_READ_DEFAULT_MAX_CHARS, 8_000)
+  assert.equal(BROWSER_READ_DEFAULT_MAX_CHARS, 1_500)
+  const compact = await session.read({})
+  const full = await session.read({ detail: 'full' })
+  assert.ok(compact.length <= 2_000, 'o padrão agora limita a resposta inteira')
+  assert.ok(full.length > compact.length, 'a leitura detalhada continua disponível sob demanda')
 })
 
 test('READ: `scope` que não existe RECUSA nomeando a saída — nunca devolve tela vazia', async () => {
@@ -838,6 +842,7 @@ function toolkitOn(t, fixture, options = {}) {
   const manager = {
     ensureTab: async (missionId, projectId, url, tabOwner) => {
       ensured.push({ missionId, projectId, url, owner: tabOwner })
+      if (options.ensureError) throw options.ensureError
       return tab
     },
     // A PORTA DE ENTRADA das tools desde 2026-09-01: a aba DESTA identidade. O
@@ -861,6 +866,7 @@ function toolkitOn(t, fixture, options = {}) {
             viewport.writes.push({ missionId, mode, actor, tabId })
             if (options.refuseViewport) return { ok: false, error: options.refuseViewport }
             viewport.mode = mode
+            fixture.window.innerWidth = typeof mode === 'number' ? mode : viewport.frameWidth
             return { ok: true }
           },
           viewportOf: () => viewport.mode,
@@ -869,8 +875,9 @@ function toolkitOn(t, fixture, options = {}) {
   }
   const tools = buildGuiBrowserTools({
     manager,
-    resolveTarget: (id) =>
-      options.noTarget ? undefined : { missionId: 'missao-1', projectId: 'universo-1', root, owner },
+    resolveTarget: (id) => options.resolveTarget
+      ? options.resolveTarget(id, { missionId: 'missao-1', projectId: 'universo-1', root, owner })
+      : options.noTarget ? undefined : { missionId: 'missao-1', projectId: 'universo-1', root, owner },
     cliOf: () => options.cli ?? 'claude',
     log: (entry) => logs.push(entry)
   })
@@ -903,23 +910,127 @@ test('SHOT: quadro que NÃO pulsa vira AVISO honesto — nunca aprovação silen
 
   assert.match(result.text, /AVISO DE FRESCOR: o compositor NÃO pulsou \(0 quadro\(s\) em 402ms\)/u)
   assert.match(result.text, /NÃO aprove a tela por esta imagem/u)
-  assert.match(result.text, /abra o painel BROWSER desta missão no dock/iu)
+  assert.match(result.text, /confira se o painel BROWSER desta missão está aberto no dock/iu)
   // O carimbo é a MESMA frase do módulo: uma cópia divergiria na próxima rodada.
   assert.ok(result.text.includes(freshnessStamp({ frames: 0, ms: 402, pulsing: false })))
 })
 
-test('SHOT: a imagem inline é SÓ do claude — o codex descarta imagem de MCP', async (t) => {
+test('ECONOMIA/SHOT: artefato por padrão; imagem só com propósito visual explícito', async (t) => {
   const fixture = makeFixture({ items: 0 })
   const claude = toolkitOn(t, fixture, { cli: 'claude' })
-  const comImagem = await claude.tools.shot(IDENTITY, {})
-  assert.ok(comImagem.image, 'o claude ganha a imagem de carona')
+  const artifact = await claude.tools.shot(IDENTITY, {})
+  assert.equal(artifact.image, undefined, 'captura para o dono não deve entrar automaticamente no contexto')
+  assert.match(artifact.text, /CITE ESTE CAMINHO/u)
+  const comImagem = await claude.tools.shot(IDENTITY, { purpose: 'vision' })
+  assert.ok(comImagem.image, 'a análise visual explícita continua recebendo o pixel')
   assert.equal(comImagem.image.mimeType, 'image/jpeg')
 
   const codex = toolkitOn(t, fixture, { cli: 'codex' })
-  const semImagem = await codex.tools.shot(IDENTITY, {})
+  const semImagem = await codex.tools.shot(IDENTITY, { purpose: 'vision' })
   assert.equal(semImagem.image, undefined, 'mandar imagem ao codex seria pagar banda por nada')
   // O PRODUTO para os dois é o mesmo: o caminho no worktree.
   assert.match(semImagem.text, new RegExp(`^${BROWSER_SHOT_DIR}/missao-1/`, 'u'))
+  assert.match(semImagem.text, /abra.*imagem.*caminho|abra.*caminho.*imagem/iu)
+})
+
+test('ECONOMIA/OPEN: a leitura inicial respeita escopo e orçamento do pedido', async (t) => {
+  const { tools } = toolkitOn(t, makeFixture({ items: 120 }))
+  const result = await tools.open(IDENTITY, { read: { scope: 'form', detail: 'compact', responseMaxChars: 1000 } })
+  assert.match(result, /Salvar/u)
+  assert.doesNotMatch(result, /Painel da missão/u, 'open não deve devolver novamente a página inteira')
+  assert.ok(result.length <= 1000, `a resposta completa excedeu o orçamento: ${result.length}`)
+})
+
+test('PRIVACIDADE/OPEN: lista não copia capability do preview nem quando título vira URL', async (t) => {
+  const capability = 'a'.repeat(48)
+  const url = `http://127.0.0.1:49999/__synkora_preview/${capability}/preview.html`
+  const { tools, tabs } = toolkitOn(t, makeFixture({ items: 0 }), {
+    tabs: [{ tabId: 'owner-preview', title: '', url, active: true, owner: { kind: 'user', label: 'dono' }, driving: false }]
+  })
+  for (const title of ['', url]) {
+    tabs[0].title = title
+    const result = await tools.open(IDENTITY, { read: { scope: 'form' } })
+    assert.equal(result.includes(capability), false, 'capability não pertence ao contexto nem ao transcript')
+    assert.match(result, /artifact-preview|arquivo local/u, 'a aba continua identificável como preview local')
+    assert.equal(tabs[0].url, url, 'URL operacional não muda')
+  }
+})
+
+test('PRIVACIDADE/OPEN: falha do motor não copia capability do preview no diagnóstico', async (t) => {
+  const capability = 'b'.repeat(48)
+  const url = `http://127.0.0.1:49999/__synkora_preview/${capability}/synthetic-preview.html`
+  const { tools, logs } = toolkitOn(t, makeFixture({ items: 0 }), {
+    ensureError: new Error(`Falha de navegação sintética: ${url}`)
+  })
+  const result = await tools.open(IDENTITY, { url })
+  assert.equal(result.includes(capability), false)
+  assert.match(result, /Falha de navegação sintética/u, 'o diagnóstico útil permanece')
+  assert.match(result, /artifact-preview|arquivo local/u)
+  assert.match(result, /NADA foi aberto/u)
+  assert.match(result, /Receita: chame browser_open/u)
+  assert.equal(JSON.stringify(logs).includes(capability), false, 'a telemetria continua só com metadados')
+})
+
+test('ECONOMIA/CHECK: abertura e medições conhecidas usam uma chamada na própria aba', async (t) => {
+  const { tools, ensured, viewport } = toolkitOn(t, makeFixture({ items: 0 }))
+  assert.equal(typeof tools.check, 'function', 'o roteiro local precisa estar disponível no kit')
+  const result = await tools.check(IDENTITY, {
+    url: 'http://localhost:8791',
+    scenarios: [{ width: 375 }, { width: 1280 }],
+    targets: [{ selector: 'button', checks: ['visible', 'noHorizontalOverflow'] }]
+  })
+  assert.equal(result.ok, true)
+  assert.equal(ensured.length, 1)
+  assert.deepEqual(ensured[0].owner, OWNER_DEV)
+  assert.deepEqual(viewport.writes.map(({ mode }) => mode), [375, 1280])
+  assert.ok(viewport.writes.every(({ tabId }) => tabId === 'tab-1'))
+  assert.match(result.text, /geometria.*estética|estética.*geometria/iu)
+})
+
+test('IDENTIDADE/CHECK: remapeamento do pane interrompe o roteiro mesmo com aba antiga viva', async (t) => {
+  let remapped = false
+  const { tools, host, viewport } = toolkitOn(t, makeFixture({ items: 0 }), {
+    resolveTarget: (_id, target) => remapped ? { ...target, missionId: 'another-synthetic-mission' } : target
+  })
+  const send = host.page.debugger.sendCommand
+  host.page.debugger.sendCommand = async (method, params) => {
+    const result = await send(method, params)
+    if (method === 'Runtime.evaluate' && String(params?.expression).includes('document.readyState')) remapped = true
+    return result
+  }
+  const result = await tools.check(IDENTITY, {
+    scenarios: [{ width: 375, actions: [{ action: 'click', selector: 'button' }] }],
+    targets: [{ selector: 'button' }]
+  })
+  assert.equal(result.ok, false)
+  assert.equal(viewport.writes.length, 0)
+  assert.equal(host.inputs().length, 0)
+  assert.match(result.text, /identidade|vínculo/u)
+})
+
+test('ECONOMIA/BENCHMARK: roteiro sintético mede chamadas e caracteres sem inferência', async (t) => {
+  const { tools } = toolkitOn(t, makeFixture({ items: 120 }))
+  const legacy = [await tools.open(IDENTITY, { read: { detail: 'full' } })]
+  for (const width of [375, 1280]) {
+    legacy.push(await tools.viewport(IDENTITY, { width }))
+    legacy.push(await tools.wait(IDENTITY, { selector: 'button' }))
+    legacy.push(await tools.read(IDENTITY, { detail: 'full' }))
+    for (const selector of ['form', 'button', 'input']) legacy.push(await tools.probe(IDENTITY, { selector }))
+    legacy.push((await tools.shot(IDENTITY, { purpose: 'vision' })).text)
+  }
+  const before = { calls: legacy.length, characters: legacy.reduce((sum, value) => sum + value.length, 0) }
+  t.diagnostic(`legacy-workflow ${JSON.stringify(before)}`)
+  assert.equal(typeof tools.check, 'function')
+  const result = await tools.check(IDENTITY, {
+    scenarios: [{ width: 375, wait: { selector: 'button' } }, { width: 1280, wait: { selector: 'button' } }],
+    targets: ['form', 'button', 'input'].map((selector) => ({ selector, checks: ['visible', 'noHorizontalOverflow'] })),
+    capture: { name: 'evidence' }
+  })
+  assert.equal(result.ok, true)
+  assert.ok(result.text.length < before.characters / 2)
+  assert.ok(1 < before.calls / 2)
+  assert.equal(result.images?.length ?? 0, 0)
+  t.diagnostic(`local-check ${JSON.stringify({ calls: 1, characters: result.text.length, images: 0 })}`)
 })
 
 test('SHOT: a guarda da H1 recusa ANTES de trabalhar — e NADA é gravado', async (t) => {
@@ -928,7 +1039,7 @@ test('SHOT: a guarda da H1 recusa ANTES de trabalhar — e NADA é gravado', asy
   const { tools, root } = toolkitOn(t, fixture, {
     captureReadiness: () => ({
       ok: false,
-      error: 'a janela do Synkora está minimizada/escondida — a captura pendura ali; restaure a janela e repita'
+      error: 'o browser está SEM JANELA — reencaixe o painel e repita'
     }),
     capturePage: async () => {
       written.push('capturou')
@@ -936,7 +1047,7 @@ test('SHOT: a guarda da H1 recusa ANTES de trabalhar — e NADA é gravado', asy
     }
   })
   const result = await tools.shot(IDENTITY, {})
-  assert.match(result.text, /minimizada\/escondida/u)
+  assert.match(result.text, /SEM JANELA/u)
   assert.match(result.text, /NADA foi gravado/u)
   assert.equal(written.length, 0, 'a recusa é ANTES da captura, não depois')
   assert.equal(result.image, undefined)
@@ -950,6 +1061,8 @@ test('SHOT: a captura que PENDURA morre no relógio de 2s do módulo (o cinto da
   // Sem este teto a chamada voltaria em 5-8s (P5) e o agente perderia a rodada.
   assert.match(result.text, /a captura PENDUROU/u)
   assert.match(result.text, /NADA foi gravado/u)
+  assert.doesNotMatch(result.text, /minimizada|escondida|restaure|FORA da árvore/u)
+  assert.match(result.text, /Se já estiver, continue com browser_read e browser_probe/u)
 })
 
 test('TOOLKIT: sem missão e sem aba, a recusa nomeia a receita e o ⚡ nem acende', async (t) => {
@@ -1284,6 +1397,7 @@ test('VIEWPORT: motor sem a largura (harness velho) diz a VERDADE em vez de fing
 
 const BROWSER_TOOLS = Object.freeze([
   'browser_act',
+  'browser_check',
   'browser_console',
   'browser_eval',
   'browser_find',
@@ -1300,6 +1414,9 @@ const LSP_TOOLS = Object.freeze(['lsp_definition', 'lsp_diagnostics', 'lsp_hover
 // do browser (dev + ajudante + planejador sim, reviewer não), e por isso elas
 // aparecem em todas as réguas de catálogo deste arquivo.
 const SKILL_TOOLS = Object.freeze(['skill_discard', 'skill_pull', 'skill_search'])
+const MOBILE_TOOLS = Object.freeze(['mobile_action', 'mobile_expo', 'mobile_screenshot', 'mobile_start', 'mobile_status', 'mobile_stop'])
+const CONTEXT_READ = ['context_read', 'context_search', 'context_status']
+const CONTEXT_WRITE = [...CONTEXT_READ, 'context_record']
 const PLANNER_TOOLS = Object.freeze(['delete_plan', 'get_plan', 'list_plans', 'propose_plan', 'update_plan'])
 const DELEGATOR_TOOLS = Object.freeze([
   'delegate',
@@ -1314,7 +1431,7 @@ const INTEGRATION_TOOLS = Object.freeze(['integration_run', 'integration_status'
 // R38 (2026-08-29): mais uma no catálogo do gui-release, o `release_done` — a
 // cerca do browser (que é o que este teste prova) segue idêntica: o release
 // continua sem NENHUMA `browser_*`.
-const RELEASE_TOOLS = Object.freeze(['release_done', 'release_run', 'release_status'])
+const RELEASE_TOOLS = Object.freeze(['release_done', 'release_push', 'release_run', 'release_save', 'release_status', 'release_target'])
 
 const sorted = (...groups) => Object.freeze([...groups.flat()].sort())
 
@@ -1341,6 +1458,10 @@ function stubBrowserKit(calls) {
     read: answer('browser_read'),
     find: answer('browser_find'),
     act: answer('browser_act'),
+    check: async (id, input) => {
+      calls.push({ tool: 'browser_check', paneId: id.paneId, input })
+      return { ok: true, text: 'recibo de browser_check', localSteps: 3, completedScenarios: 1 }
+    },
     probe: answer('browser_probe'),
     viewport: answer('browser_viewport'),
     console: answer('browser_console'),
@@ -1349,7 +1470,7 @@ function stubBrowserKit(calls) {
     wait: answer('browser_wait'),
     shot: async (id, input) => {
       calls.push({ tool: 'browser_shot', paneId: id.paneId, input })
-      return { text: '.synkora/browser/missao-1/001-tela.jpg — 1200x675px', image: { data: 'AAAA', mimeType: 'image/jpeg' } }
+      return { text: '.synkora/browser/missao-1/001-tela.jpg — 1200x675px', ...(input.purpose === 'vision' ? { image: { data: 'AAAA', mimeType: 'image/jpeg' } } : {}) }
     }
   }
 }
@@ -1433,17 +1554,17 @@ test('CATÁLOGO: o browser chega a quem VERIFICA A PRÓPRIA TELA — dev e ajuda
 
   assert.deepEqual(
     await toolNames(url, 'token-dev', 'cat-dev'),
-    sorted(DELEGATOR_TOOLS, INTEGRATION_TOOLS, LSP_TOOLS, BROWSER_TOOLS, SKILL_TOOLS)
+    sorted(['commentary'], DELEGATOR_TOOLS, INTEGRATION_TOOLS, LSP_TOOLS, BROWSER_TOOLS, MOBILE_TOOLS, SKILL_TOOLS, CONTEXT_WRITE, ['mission_summary'])
   )
   // O QA DELEGADO é o caso real do design: o dev abre um ajudante só para
   // varrer a tela enquanto ele segue no código.
   assert.deepEqual(
     await toolNames(url, 'token-ajudante', 'cat-ajudante'),
-    sorted(LSP_TOOLS, BROWSER_TOOLS, SKILL_TOOLS)
+    sorted(LSP_TOOLS, BROWSER_TOOLS, MOBILE_TOOLS, SKILL_TOOLS, CONTEXT_READ)
   )
   // O recibo do catálogo servido (a caixa-preta do boot) conta a mesma história.
   const receipt = served.find((entry) => entry.paneId === 'gui-helper-11111111-2')
-  assert.deepEqual([...receipt.tools].sort(), sorted(LSP_TOOLS, BROWSER_TOOLS, SKILL_TOOLS))
+  assert.deepEqual([...receipt.tools].sort(), sorted(LSP_TOOLS, BROWSER_TOOLS, MOBILE_TOOLS, SKILL_TOOLS, CONTEXT_READ))
 })
 
 test('CATÁLOGO: reviewer, planejador e release NÃO recebem o browser — a cerca é mecânica', async (t) => {
@@ -1473,14 +1594,14 @@ test('CATÁLOGO: reviewer, planejador e release NÃO recebem o browser — a cer
   })
 
   const rev = await toolNames(url, 'token-reviewer', 'cat-rev')
-  assert.deepEqual(rev, sorted(DELEGATOR_TOOLS, LSP_TOOLS))
+  assert.deepEqual(rev, sorted(['commentary'], DELEGATOR_TOOLS, LSP_TOOLS, CONTEXT_READ))
   // 2026-08-30: o planejador delega (kit de ajudantes no catálogo dele) — e a
   // propriedade DESTE teste segue de pé: browser continua fora; quem navega na
   // pesquisa dele é o AJUDANTE.
   const planner = await toolNames(url, 'token-planner', 'cat-planner')
-  assert.deepEqual(planner, sorted(PLANNER_TOOLS, DELEGATOR_TOOLS, LSP_TOOLS, SKILL_TOOLS))
+  assert.deepEqual(planner, sorted(['commentary'], PLANNER_TOOLS, DELEGATOR_TOOLS, LSP_TOOLS, SKILL_TOOLS, CONTEXT_WRITE))
   const release = await toolNames(url, 'token-release', 'cat-release')
-  assert.deepEqual(release, sorted(RELEASE_TOOLS, LSP_TOOLS))
+  assert.deepEqual(release, sorted(['commentary'], RELEASE_TOOLS, LSP_TOOLS, CONTEXT_READ))
 
   for (const [label, tools] of [
     ['reviewer', rev],
@@ -1517,6 +1638,7 @@ test('CERCA DE TEXTO: NENHUMA das onze devolve `structuredContent` — os dois C
     browser_read: {},
     browser_find: { query: 'salvar' },
     browser_act: { actions: [{ action: 'click', ref: 1 }] },
+    browser_check: { targets: [{ selector: 'main' }] },
     browser_probe: { ref: 1 },
     browser_shot: { name: 'tela' },
     browser_viewport: { preset: 'mobile' },
@@ -1538,7 +1660,9 @@ test('CERCA DE TEXTO: NENHUMA das onze devolve `structuredContent` — os dois C
   }
   // A única imagem do kit é a do shot, e ela vive no `content[]`, não num campo
   // estruturado.
-  const shot = await client.callTool({ name: 'browser_shot', arguments: { name: 'tela' } })
+  const artifact = await client.callTool({ name: 'browser_shot', arguments: { name: 'tela' } })
+  assert.equal(artifact.content.filter((block) => block.type === 'image').length, 0)
+  const shot = await client.callTool({ name: 'browser_shot', arguments: { name: 'tela', purpose: 'vision' } })
   assert.equal(shot.content.filter((block) => block.type === 'image').length, 1)
   assert.equal(shot.structuredContent, undefined)
 
@@ -1626,8 +1750,8 @@ test('PRÉ-SANÇÃO (a lição da R14): as onze estão na lista do AJUDANTE e na
   // HELPER_PERMISSION_DEAD_END: o ajudante MORRE. Um QA visual são dezenas de
   // chamadas seguidas — sem a lista, cada uma viraria card de permissão para o
   // dono no gesto em que ele pediu para não precisar olhar.
-  assert.equal(BROWSER_TOOL_NAMES.length, 11, 'onze tools, não setenta')
-  assert.equal(new Set(BROWSER_TOOL_NAMES).size, 11, 'sem nome repetido')
+  assert.equal(BROWSER_TOOL_NAMES.length, 12, 'doze tools incluindo verificação local')
+  assert.equal(new Set(BROWSER_TOOL_NAMES).size, 12, 'sem nome repetido')
   assert.deepEqual([...BROWSER_TOOL_NAMES].sort(), [...BROWSER_TOOLS].sort())
 
   for (const name of BROWSER_TOOL_NAMES) {

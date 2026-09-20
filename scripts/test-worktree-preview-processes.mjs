@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import {
@@ -82,6 +82,27 @@ test('raiz inválida falha de modo fechado antes de enumerar processos', async (
   assert.equal(result.stopped, 0)
   assert.equal(result.failed, process.platform === 'win32' ? 1 : 0)
   if (process.platform !== 'win32') assert.equal(result.skipped, true)
+})
+
+test('Next dev/start e worker exigem cwd exato, entrada conhecida e flags limitadas', () => {
+  const next = argv => candidate({ cwd: root, argv: [executablePath, ...argv] })
+  for (const argv of [
+    ['node_modules/next/dist/bin/next', 'start', '-p', '3100'],
+    [`${root}\\node_modules\\next\\dist\\bin\\next`, 'dev', '--turbopack', '--port=3100'],
+    ['node_modules/.bin/../next/dist/bin/next', 'dev', '--hostname', '127.0.0.1'],
+    [`${root}\\node_modules\\next\\dist\\server\\lib\\start-server.js`]
+  ]) assert.equal(isWorktreePreviewProcess(root, next(argv)), true)
+  for (const argv of [
+    ['node_modules/next/dist/bin/next', 'build'],
+    ['node_modules/next/dist/bin/next', 'start', '../another'],
+    ['node_modules/next/dist/bin/next', 'dev', '--config', 'another.js'],
+    ['node_modules/next/dist/bin/next', 'dev', '--port', 'invalid'],
+    ['node_modules/next/dist/server/lib/start-server.js', 'unexpected'],
+    ['-e', 'node_modules/next/dist/bin/next', 'dev']
+  ]) assert.equal(isWorktreePreviewProcess(root, next(argv)), false)
+  const preview = next(['node_modules/next/dist/bin/next', 'start'])
+  assert.equal(isWorktreePreviewProcess(root, { ...preview, cwd: root + '-other' }), false)
+  assert.equal(isWorktreePreviewProcess(root, { ...preview, cwd: undefined }), false)
 })
 
 test('Windows: prova identidade, encerra e aguarda somente filhos Astro sintéticos da raiz exata', {
@@ -172,6 +193,84 @@ test('Windows: prova identidade, encerra e aguarda somente filhos Astro sintéti
     const resolvedBase = resolve(base)
     const withinTemp = relative(resolve(tmpdir()), resolvedBase)
     assert.ok(withinTemp && !withinTemp.startsWith('..' + sep) && !withinTemp.includes(sep), 'limpeza fica na pasta temporária criada por este teste')
+    rmSync(resolvedBase, { recursive: true, force: true })
+  }
+})
+
+test('Windows: Next relativo, dev e worker liberam a pasta; runtime compartilhado e cwd alterado ficam isolados', {
+  skip: process.platform !== 'win32', timeout: 60_000
+}, async () => {
+  const base = mkdtempSync(join(tmpdir(), "synkora-next-' & $()-"))
+  const missionRoot = join(base, 'mission with space')
+  const siblingRoot = missionRoot + '-sibling'
+  const sharedModules = join(base, 'shared', 'node_modules')
+  const children = []
+  const source = 'process.on("message", directory => { process.chdir(directory); process.send("moved") }); process.stdout.write("ready\\n"); setInterval(() => {}, 1000)\n'
+  const cli = join(sharedModules, 'next', 'dist', 'bin', 'next')
+  const worker = join(sharedModules, 'next', 'dist', 'server', 'lib', 'start-server.js')
+  for (const entry of [cli, worker]) {
+    mkdirSync(dirname(entry), { recursive: true })
+    writeFileSync(entry, source)
+  }
+  for (const directory of [missionRoot, siblingRoot]) {
+    mkdirSync(directory)
+    symlinkSync(sharedModules, join(directory, 'node_modules'), 'junction')
+  }
+  const alive = child => child.exitCode === null && child.signalCode === null
+  async function launch(args, cwd = missionRoot) {
+    const child = spawn(process.execPath, args, { cwd, windowsHide: true, detached: true, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] })
+    children.push(child)
+    await Promise.race([
+      once(child.stdout, 'data', { signal: AbortSignal.timeout(5000) }),
+      once(child, 'exit').then(([code]) => { throw new Error(`synthetic Next exited before ready (${code})`) }),
+      once(child, 'error').then(([error]) => { throw error })
+    ])
+    return child
+  }
+  try {
+    const start = await launch(['node_modules/next/dist/bin/next', 'start', '-p', '3100'])
+    const dev = await launch([cli, 'dev', '--turbopack', '--port=3101'])
+    const server = await launch([worker])
+    const moved = await launch([cli, 'start', '--hostname', '127.0.0.1'])
+    const sibling = await launch([cli, 'start', '-p', '3102'], siblingRoot)
+    const build = await launch([cli, 'build'])
+    const override = await launch([cli, 'dev', '--config', 'another.js'])
+    const proof = await probeWorktreePreviewProcesses(missionRoot)
+    assert.equal(proof.failed, 0)
+    assert.deepEqual(proof.processes.map(p => p.pid).sort(), [start, dev, server, moved].map(p => p.pid).sort())
+    assert.ok(proof.processes.every(p => p.cwd.toLowerCase() === missionRoot.toLowerCase()))
+
+    const movedProof = proof.processes.find(p => p.pid === moved.pid)
+    const changedDirectory = once(moved, 'message')
+    moved.send(siblingRoot)
+    await changedDirectory
+    assert.deepEqual(await stopProbedWorktreePreviewProcesses(missionRoot, [movedProof]), { stopped: 0, failed: 1 })
+    assert.equal(alive(moved), true, 'a pasta é verificada novamente ao encerrar')
+
+    const exited = [start, dev, server].map(child => once(child, 'exit'))
+    assert.deepEqual(await stopWorktreePreviewProcesses(missionRoot), { stopped: 3, failed: 0 })
+    await Promise.all(exited)
+    for (const child of [sibling, moved, build, override]) assert.equal(alive(child), true, 'outros diretórios e comandos permanecem vivos')
+    assert.deepEqual(await stopWorktreePreviewProcesses(missionRoot), { stopped: 0, failed: 0 })
+
+    // These rejected fixture commands still intentionally hold the root. Move
+    // their cwd by IPC; only the automatic preview cleanup above terminates.
+    for (const child of [build, override]) {
+      const changed = once(child, 'message')
+      child.send(siblingRoot)
+      await changed
+    }
+    renameSync(missionRoot, missionRoot + '-released')
+  } finally {
+    await Promise.all(children.map(async child => {
+      if (!alive(child)) return
+      const exited = once(child, 'exit')
+      child.kill()
+      await exited
+    }))
+    const resolvedBase = resolve(base)
+    const withinTemp = relative(resolve(tmpdir()), resolvedBase)
+    assert.ok(withinTemp && !withinTemp.startsWith('..' + sep) && !withinTemp.includes(sep), 'limpeza limitada ao fixture temporário')
     rmSync(resolvedBase, { recursive: true, force: true })
   }
 })

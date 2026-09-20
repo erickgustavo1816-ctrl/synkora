@@ -17,7 +17,13 @@ import {
 import { tmpdir } from 'os'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'path'
 import { ensureNodeModulesLink } from './nodeModulesLink'
+import { ensureWorktreeEnvironment } from './worktreeEnvironment'
+export { inspectReleaseTarget, prepareReleaseTarget } from './releaseTarget'
+export { probeReleaseRecovery, finishReleaseRecovery } from './releaseRecovery'
+import { hasDanglingWorktreeRegistration } from './worktreeRegistration'
+export { ensureWorktreeEnvironment } from './worktreeEnvironment'
 import { freshWindowsPath } from './winPath'
+export { prepareReleaseChange, applyReleaseChange, pushReleaseChanges } from './releaseChangesGit'
 
 // Worktree por tarefa (F3): cada execução roda em worktrees/<task> numa branch
 // task/<id>; aprovada nos dois gates, o main integra com merge --no-ff e limpa.
@@ -39,7 +45,10 @@ export function setGitObserver(
 function gitRaw(cwd: string, args: string[], maxBuffer?: number): string {
   const startedAt = gitObserver ? Date.now() : 0
   try {
-    return execFileSync('git', args, {
+    // Worktrees add the project/version IDs to the path. A file that fits in
+    // the source can exceed MAX_PATH there; keep the override process-local.
+    const gitArgs = process.platform === 'win32' ? ['-c', 'core.longpaths=true', ...args] : args
+    return execFileSync('git', gitArgs, {
       cwd,
       encoding: 'utf-8',
       env: { ...(process.env as Record<string, string>), PATH: freshWindowsPath() },
@@ -237,6 +246,7 @@ export function ensureSynkoraGitExcludes(projectPath: string): void {
       : resolve(projectPath, commonGitDir)
     const exclude = join(common, 'info', 'exclude')
     const wanted = [
+      '.env*',
       '.synkora/',
       '.claude/skills/',
       '.claude/agents/',
@@ -734,7 +744,13 @@ export function removeWorktreeAndBranch(
   if (expectedHead) {
     if (existsSync(dir)) {
       if (existsSync(join(dir, '.git'))) {
-        if (gitHead(dir) !== expectedHead) return false
+        if (gitHead(dir) !== expectedHead) {
+          let commonGitDir: string
+          try { commonGitDir = resolve(projectPath, git(projectPath, ['rev-parse', '--git-common-dir'])) }
+          catch { return false }
+          if (!hasDanglingWorktreeRegistration(commonGitDir, dir) ||
+            !quarantineProvenCarcass(projectPath, dir, branch, expectedHead)) return false
+        }
       } else if (!quarantineProvenCarcass(projectPath, dir, branch, expectedHead)) {
         // Sem `.git` a pasta é carcaça de remoção interrompida; `gitHead`
         // subiria a árvore de diretórios e responderia pelo repo ERRADO (ou
@@ -1659,6 +1675,7 @@ export function createMissionWorktree(
       // REMONTAGEM: worktree criado antes da R15 ganha a mobília aqui — é o
       // único momento em que passamos por ele de novo.
       ensureNodeModulesLink(projectPath, dir)
+      ensureWorktreeEnvironment(projectPath, dir)
       return { dir, branch }
     }
     mkdirSync(dirname(dir), { recursive: true })
@@ -1675,6 +1692,7 @@ export function createMissionWorktree(
     // projeto (nodeModulesLink.ts). Falha de mobília não derruba a criação —
     // o retorno do ensure é diagnóstico, nunca condição.
     ensureNodeModulesLink(projectPath, dir)
+    ensureWorktreeEnvironment(projectPath, dir)
     return { dir, branch }
   } catch {
     return null
@@ -1706,6 +1724,7 @@ export function createVersionWorktree(
       if (!isExpectedWorktree(projectPath, dir, branch)) return null
       // Mesma remontagem da missão: versão aberta antes da R15 se mobilia aqui.
       ensureNodeModulesLink(projectPath, dir)
+      ensureWorktreeEnvironment(projectPath, dir)
       return { dir, branch }
     }
     mkdirSync(dirname(dir), { recursive: true })
@@ -1717,6 +1736,7 @@ export function createVersionWorktree(
     }
     if (!isExpectedWorktree(projectPath, dir, branch)) return null
     ensureNodeModulesLink(projectPath, dir)
+    ensureWorktreeEnvironment(projectPath, dir)
     return { dir, branch }
   } catch {
     return null

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-09-09T02:04:30.402Z",
+  "updatedAt": "2026-09-16T18:02:49.560Z",
   "lanes": {
     "agora": [],
     "fila": [
@@ -196,6 +196,28 @@
           ".synkora/reports/DESIGN_FALA_DO_DONO_PARA_O_TURNO_2026-09-02.md",
           "src/main/guiOwnerSteer.ts",
           "src/main/guiSessions.ts"
+        ]
+      },
+      {
+        "id": "dock-legado-nunca-mais-desenhado-demolir-dock-he",
+        "title": "Dock legado nunca mais desenhado: demolir .dock-head e a seção entrega dos trilhos",
+        "desc": "Desde que os três chats vestem o WorkspacePanels, panelsEnabled coincide com a condição de render do MissionDeliveryRail e do ReleaseRail: o .dock-head (header V1) e a DockSection \"entrega\" (fila, branch, base) nunca são desenhados — a grade os dissolve por CSS. Demolir pede mexer no test-right-rail (header V1 / duas molduras), no ResizableRightRail e decidir onde a fila da versão volta a aparecer (hoje só a cabeça tem o ⇪).",
+        "refs": [
+          "src/renderer/src/components/MissionDeliveryRail.tsx",
+          "src/renderer/src/components/ReleaseRail.tsx",
+          "src/renderer/src/workspace/workspacePanels.css",
+          "scripts/test-right-rail.mjs"
+        ]
+      },
+      {
+        "id": "pasta-da-missao-presa-por-processo-do-proprio-ag",
+        "title": "Pasta da missão presa por processo do PRÓPRIO agente que escapou do taskkill /T (incidente 16/09: servidor na 8791 era \"background shell command\" do CLI) — instrumentar o desfecho do tree-kill no diário e decidir se o fecho espera a árvore morrer antes da 1ª tentativa de remoção",
+        "desc": "terminateGuiProcessTree dispara taskkill sem esperar; retryWorktreeRelease dá 2,4 s. Hipóteses: taskkill != 0 → fallback child.kill() (só o CLI morre); ou órfão fora da árvore viva. Medir antes de teorizar: gravar código de saída do taskkill + PIDs vivos com cwd no worktree logo após o kill (só metadados).",
+        "refs": [
+          "src/main/guiProcessTree.ts",
+          "src/main/worktreeRelease.ts",
+          "src/main/missionEngine.ts",
+          ".synkora/reports/FIX_FECHO_CONTINUO_E_PULSO_2026-09-16.md"
         ]
       }
     ],
@@ -580,6 +602,73 @@
           "docs/adr/0011-planejamento-com-metodo-escolhido.md"
         ],
         "day": "08/09 — terça"
+      },
+      {
+        "id": "o-release-veste-os-paineis-do-workspace-a-mesma-",
+        "title": "O release veste os painéis do workspace — a mesma moldura dos três chats",
+        "desc": "Ordem do dono 09/09 (\"deixa tudo igual, e no código também\"): o chat do release saiu do dock legado e entrou no WorkspacePanels — painel \"Release\" (subida + última subida), descarte na cabeça do palco (ReleaseHeaderActions, arma/confirma), cardápio por tipo de missão (availableWorkspacePanels). Harness release-panels.html com componentes reais; gate 1622/1622.",
+        "refs": [
+          ".synkora/reports/RELEASE_PAINEIS_WORKSPACE_2026-09-09.md",
+          "src/renderer/src/components/ReleaseRail.tsx",
+          "src/renderer/src/workspace/ReleaseHeaderActions.tsx",
+          "src/renderer/src/workspacePanels.ts"
+        ],
+        "day": "09/09 — quarta"
+      },
+      {
+        "id": "o-fecho-continuo-da-integracao-o-turno-do-dono-n",
+        "title": "O fecho contínuo da integração — o turno do dono não acaba com o turno do agente: result vira continuação, a geração retomada herda a rodada, nota do fecho é para o DONO (a receita do agente saiu do fio), MERGE GRAVADO antes de \"integrada\"",
+        "desc": "Print de 2026-09-16: \"Integrada.\" + receita gigante no fio + rodada 0:00. Envelope da rodada em guiIntegrationReply (observe antes do anel; result do resume absorvido por sinal estrutural); MISSION_FOLDER_HELD_NOTE; contratos/MCP dizem que a finalização é do app depois do turno e que pasta presa = processo que o próprio agente iniciou. Red-proof em reply (18) e mission-creation (45). ESPERA RESTART.",
+        "refs": [
+          ".synkora/reports/FIX_FECHO_CONTINUO_E_PULSO_2026-09-16.md",
+          "src/main/guiIntegrationReply.ts",
+          "src/main/missionEngine.ts",
+          "src/main/missionFinalization.ts",
+          "scripts/test-integration-reply.mjs"
+        ],
+        "day": "16/09 — quarta"
+      },
+      {
+        "id": "o-pulso-do-agente-uma-linha-no-rabo-do-fio-com-u",
+        "title": "O pulso do agente — uma linha no rabo do fio com um GESTO por ação (pensar/ler/editar/comando/buscar/responder/compactar/página/skill/ajudantes/integrar), verbo + alvo + rastro \"— leu …\" + relógio \"há N s\"; silêncio muda a forma (tracejado 1 min, --err + receita 3 min)",
+        "desc": "Substitui \"o agente está pensando / Última atividade registrada / Sem atualização do agente\" (print do dono). Mockup aprovado com CSS real (harness + HTML autocontido); direção impeccable (Operate + craft floor) sob a lei da casa. guiAgentPulse.ts puro + GuiAgentPulse.tsx/.css; guiThinkingPresentation ganha phase; GuiWorkProgress morto. Render test no GuiPane real com capturas inspecionadas. Renderer-only (HMR).",
+        "refs": [
+          "scripts/harness/agent-pulse.html",
+          "docs/mockups/agent-pulse-2026-09-16.html",
+          "src/renderer/src/guiAgentPulse.ts",
+          "src/renderer/src/components/GuiAgentPulse.tsx",
+          "src/renderer/src/components/GuiAgentPulse.css",
+          "scripts/test-gui-thinking-feedback.mjs",
+          "scripts/test-gui-activity-render.mjs"
+        ],
+        "day": "16/09 — quarta"
+      },
+      {
+        "id": "conversa-pesada-avisa-no-medidor-nao-no-fio-r25-",
+        "title": "Conversa pesada avisa no MEDIDOR, não no fio (R25.3b): tooltip com a receita no chip de contexto, chip tracejado quando cruza 150k, mesma linha dentro do painel — a nota \"esta conversa re-lê ~453k tokens…\" saiu do chat",
+        "desc": "Ordem do dono 2026-09-16: \"essa mensagem acho feia, um aviso em tooltip seria melhor\". O main continua carimbando o marco (150k, 300k…) no diário gui-heavy-conversation; a receita (fechar a missão / /compact / seguir ciente) mora em guiCostSignals.guiHeavyConversationTip, derivada do context-usage sticky. Red-proof: sessions R25 (notas vazias) e context-panel (tip novo); render nativo do painel com capturas do chip e do painel. Main mudou (nota removida) — ESPERA RESTART; o chip entra por HMR.",
+        "refs": [
+          "src/renderer/src/guiCostSignals.ts",
+          "src/renderer/src/components/GuiContextPanel.tsx",
+          "src/main/guiSessions.ts",
+          "scripts/test-gui-context-panel.mjs",
+          "scripts/test-gui-context-render.mjs"
+        ],
+        "day": "16/09 — quarta"
+      },
+      {
+        "id": "cancelar-a-mensagem-e-contraordem-nunca-corte-a-",
+        "title": "Cancelar a mensagem é CONTRAORDEM, nunca corte: a bolha some, nada de \"turno interrompido\", o agente recebe um bilhete de bastidor para ignorar a fala retirada (guiOwnerCancellation.ts morto)",
+        "desc": "Print do dono 2026-09-16: cancelar uma mensagem não lida cortava o turno (o CLI só cancela a fila via interrupt cancel_queued; a tool em voo morria e a rodada reiniciava). Agora cancelOwnerMessage apaga a cópia durável, tira a fala do rastreio de recibos, publica cancelled (o renderer remove a bolha) e manda guiOwnerCancelText atrás dela. Limite honesto: o texto ainda passa pelos olhos do modelo, só não é obedecido; ■ e \"ler agora\" seguem sendo os únicos cortes. Red-proof em queued-turn-lifecycle e owner-bubble; fixture Electron do composer confere a bolha sumindo. Main mudou — ESPERA RESTART.",
+        "refs": [
+          "src/main/guiSessions.ts",
+          "src/main/guiOwnerMail.ts",
+          "src/renderer/src/guiOwnerBubble.ts",
+          "src/renderer/src/components/GuiPane.tsx",
+          "scripts/test-gui-queued-turn-lifecycle.mjs",
+          "scripts/test-gui-owner-bubble.mjs"
+        ],
+        "day": "16/09 — quarta"
       }
     ]
   },
@@ -1066,6 +1155,55 @@
       "action": "add",
       "id": "skills-3-0-r2-ajustes-skills-com-o-interruptor-d",
       "detail": "→ fila"
+    },
+    {
+      "at": "2026-09-09T18:47:15.416Z",
+      "by": "orquestrador",
+      "action": "add",
+      "id": "o-release-veste-os-paineis-do-workspace-a-mesma-",
+      "detail": "→ feito"
+    },
+    {
+      "at": "2026-09-09T18:47:20.164Z",
+      "by": "orquestrador",
+      "action": "add",
+      "id": "dock-legado-nunca-mais-desenhado-demolir-dock-he",
+      "detail": "→ dividas"
+    },
+    {
+      "at": "2026-09-16T15:54:24.562Z",
+      "by": "orquestrador",
+      "action": "add",
+      "id": "o-fecho-continuo-da-integracao-o-turno-do-dono-n",
+      "detail": "→ feito"
+    },
+    {
+      "at": "2026-09-16T15:54:26.521Z",
+      "by": "orquestrador",
+      "action": "add",
+      "id": "o-pulso-do-agente-uma-linha-no-rabo-do-fio-com-u",
+      "detail": "→ feito"
+    },
+    {
+      "at": "2026-09-16T15:55:23.136Z",
+      "by": "orquestrador",
+      "action": "add",
+      "id": "pasta-da-missao-presa-por-processo-do-proprio-ag",
+      "detail": "→ dividas"
+    },
+    {
+      "at": "2026-09-16T17:43:37.280Z",
+      "by": "orquestrador",
+      "action": "add",
+      "id": "conversa-pesada-avisa-no-medidor-nao-no-fio-r25-",
+      "detail": "→ feito"
+    },
+    {
+      "at": "2026-09-16T18:02:49.559Z",
+      "by": "orquestrador",
+      "action": "add",
+      "id": "cancelar-a-mensagem-e-contraordem-nunca-corte-a-",
+      "detail": "→ feito"
     }
   ]
 }

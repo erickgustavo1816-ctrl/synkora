@@ -172,6 +172,19 @@ test('real DockBrowser hides in layout and retired observers cannot publish afte
   clip.getBoundingClientRect = () => ({ x: 300, y: 120, left: 300, top: 120, width: 500, height: 220 })
   await act(() => window.dispatchEvent(new Event(BROWSER_DOCK_CONTEXT_CHANGED)))
   assert.deepEqual(reports.at(-1)[1], { x: 300, y: 120, width: 500, height: 220 }, 'real clipping boxes still bound the native view')
+  // Minimum width is aligned; widening at fractional display scale alternates
+  // between aligned and subpixel edges. Exercise the real reporting path.
+  for (const width of [360, 360.4, 361.6, 600.4, 601, 899.8, 360]) {
+    const box = { left: 900 - width, top: 120, width, height: 220 }
+    clip.getBoundingClientRect = () => box
+    await act(() => window.dispatchEvent(new Event(BROWSER_DOCK_CONTEXT_CHANGED)))
+    const rect = reports.at(-1)[1]
+    assert.equal(reports.at(-1)[2], true)
+    assert.ok(rect.x >= box.left, `native view covered the left border at width ${width}`)
+    assert.ok(rect.y >= box.top, 'native view covered the top border')
+    assert.ok(rect.x + rect.width <= box.left + box.width, 'native view covered the right border')
+    assert.ok(rect.y + rect.height <= box.top + box.height, 'native view covered the bottom border')
+  }
   await act(() => tree.update(React.createElement(Parent, { visible: true, missionId: 'm1', panelVisible: false })))
   assert.equal(layoutReports.at(-1)[2], false, 'closing the window or maximizing another hides the native page before paint')
   await act(() => tree.update(React.createElement(Parent, { visible: true, missionId: 'm1', panelVisible: true })))

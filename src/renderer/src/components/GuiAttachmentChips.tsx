@@ -1,23 +1,24 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 import type {
   GuiAttachmentAction,
-  GuiAttachmentDescriptor,
-  GuiAttachmentPreviewResult
+  GuiAttachmentDescriptor
 } from '../../../preload'
 import { guiApi } from '../guiApi'
+import { safePreviewSource } from '../guiAttachmentPreview'
 import GuiAttachmentLightbox from './GuiAttachmentLightbox'
+import GuiComposerImagePreview from './GuiComposerImagePreview'
 
 interface GuiAttachmentChipsProps {
   attachments: readonly GuiAttachmentDescriptor[]
   onRemove?: (id: string) => void
-  /** Presente somente para anexos já enviados. Habilita ações que voltam ao
-   * main; composer e fila continuam chips estáticos. */
+  /** Pane that owns the opaque attachment capability. */
   paneId?: string
   presented?: boolean
+  /** Active composer only: preview without blocking the draft. */
+  previewable?: boolean
+  previewAnchorRef?: RefObject<HTMLElement | null>
   className?: string
 }
-
-const MAX_PREVIEW_DATA_URL_CHARS = 5_600_000
 
 function attachmentLabel(kind: GuiAttachmentDescriptor['kind']): string {
   if (kind === 'image') return 'imagem'
@@ -38,22 +39,6 @@ function formatSize(size: number | null): string | null {
   return `${(size / (1024 * 1024)).toFixed(1).replace('.', ',')} MB`
 }
 
-function safePreviewSource(result: GuiAttachmentPreviewResult): string | null {
-  if (
-    !result.ok ||
-    result.mime !== 'image/png' ||
-    !Number.isSafeInteger(result.width) ||
-    !Number.isSafeInteger(result.height) ||
-    result.width <= 0 ||
-    result.height <= 0 ||
-    result.dataUrl.length > MAX_PREVIEW_DATA_URL_CHARS ||
-    !result.dataUrl.startsWith('data:image/png;base64,')
-  ) {
-    return null
-  }
-  return result.dataUrl
-}
-
 function cleanFeedback(value: string | undefined, fallback: string): string {
   return value?.replace(/\s+/gu, ' ').trim().slice(0, 240) || fallback
 }
@@ -62,12 +47,14 @@ function GuiAttachmentChip({
   attachment,
   paneId,
   presented,
-  onRemove
+  onRemove,
+  onPreview
 }: {
   attachment: GuiAttachmentDescriptor
   paneId?: string
   presented: boolean
   onRemove?: (id: string) => void
+  onPreview?: (id: string) => void
 }): React.JSX.Element {
   const interactive = presented && Boolean(paneId)
   const [thumbnail, setThumbnail] = useState<string | null>(null)
@@ -188,9 +175,30 @@ function GuiAttachmentChip({
     !thumbnail &&
     !thumbnailError
   const actionFailed = Boolean(actionFeedback && actionFeedback !== 'Cópia salva')
+  const copy = (
+    <span className="gui-attachment-copy">
+      <span className="gui-attachment-name" title={attachment.name}>{attachment.name}</span>
+      <span className="gui-attachment-meta">{kind}{size ? ` · ${size}` : ''}</span>
+      {(thumbnailError || actionFeedback) && (
+        <span className={`gui-attachment-feedback${thumbnailError || actionFailed ? ' error' : ''}`}
+          role={thumbnailError || actionFailed ? 'alert' : 'status'}>
+          {thumbnailError ?? actionFeedback}
+        </span>
+      )}
+    </span>
+  )
+  const draftPreview = Boolean(onPreview && attachment.kind === 'image' && !presented)
   return (
     <li className="gui-attachment-chip" data-kind={attachment.kind}>
-      {interactive && attachment.kind === 'image' ? (
+      {draftPreview ? (
+        <button className="gui-attachment-draft-preview" type="button"
+          aria-label={`Ver imagem ${attachment.name}`} aria-haspopup="dialog"
+          onPointerDown={event => event.preventDefault()}
+          onClick={() => onPreview?.(attachment.id)}>
+          <span className="gui-attachment-kind" aria-hidden="true">{attachmentGlyph(attachment.kind)}</span>
+          {copy}
+        </button>
+      ) : interactive && attachment.kind === 'image' ? (
         <button
           ref={thumbnailTriggerRef}
           className="gui-attachment-preview-trigger"
@@ -215,23 +223,7 @@ function GuiAttachmentChip({
           {attachmentGlyph(attachment.kind)}
         </span>
       )}
-      <span className="gui-attachment-copy">
-        <span className="gui-attachment-name" title={attachment.name}>
-          {attachment.name}
-        </span>
-        <span className="gui-attachment-meta">
-          {kind}
-          {size ? ` · ${size}` : ''}
-        </span>
-        {(thumbnailError || actionFeedback) && (
-          <span
-            className={`gui-attachment-feedback${thumbnailError || actionFailed ? ' error' : ''}`}
-            role={thumbnailError || actionFailed ? 'alert' : 'status'}
-          >
-            {thumbnailError ?? actionFeedback}
-          </span>
-        )}
-      </span>
+      {!draftPreview && copy}
       {interactive && attachment.kind === 'file' && (
         <span className="gui-attachment-actions">
           <button
@@ -278,17 +270,27 @@ function GuiAttachmentChip({
   )
 }
 
-/** Nenhum caminho é interpolado no DOM. Anexos enviados pedem prévia/ações
- * ao main; composer e fila preservam apenas a capacidade opaca. */
+/** No local paths enter the DOM; both previews use the existing capability bridge. */
 export default function GuiAttachmentChips({
   attachments,
   onRemove,
   paneId,
   presented = false,
+  previewable = false,
+  previewAnchorRef,
   className = ''
 }: GuiAttachmentChipsProps): React.JSX.Element | null {
+  const [selected, setSelected] = useState<{ paneId: string; id: string } | null>(null)
+  const closePreview = useCallback(() => setSelected(null), [])
+  const selectedAttachment = previewable && selected?.paneId === paneId
+    ? attachments.find(attachment => attachment.id === selected?.id && attachment.kind === 'image')
+    : undefined
+  useEffect(() => {
+    if (!selectedAttachment) setSelected(null)
+  }, [selectedAttachment])
   if (attachments.length === 0) return null
   return (
+    <>
     <ul className={`gui-attachment-chips ${className}`.trim()} aria-label="Anexos">
       {attachments.map((attachment) => (
         <GuiAttachmentChip
@@ -297,8 +299,13 @@ export default function GuiAttachmentChips({
           paneId={paneId}
           presented={presented}
           onRemove={onRemove}
+          onPreview={previewable && paneId ? id => setSelected({ paneId, id }) : undefined}
         />
       ))}
     </ul>
+    {selectedAttachment && paneId && <GuiComposerImagePreview
+      key={`${paneId}:${selectedAttachment.capability}`}
+      paneId={paneId} attachment={selectedAttachment} anchorRef={previewAnchorRef} onClose={closePreview} />}
+    </>
   )
 }

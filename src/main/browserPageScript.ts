@@ -55,6 +55,14 @@ export interface PageReadResult {
   url: string
   title: string
   epoch: number
+  /** Bounded structural evidence, never a comparison of painted pixels. */
+  layout?: {
+    signature: string
+    complete: boolean
+    stable: boolean
+    viewport: { w: number; h: number }
+    readyState: string
+  }
 }
 
 export interface PageResolveResult {
@@ -268,12 +276,37 @@ export const PAGE_SCRIPT = `function (p) {
         root = document.querySelector(p.scope)
         if (!root) return { ok: false, error: 'escopo nao encontrado: ' + p.scope, scopeMiss: true }
       }
+      if (!root) return { ok: false, error: 'o documento ainda nao tem corpo; aguarde com browser_wait e chame browser_read' }
       var out = []
       var chars = 0
       var truncated = false
       var refs = 0
       var hidden = 0
       var q = p.query ? String(p.query).toLowerCase() : ''
+      var layoutA = 2166136261
+      var layoutB = 5381
+      function layoutHash(value) {
+        var str = String(value)
+        for (var h = 0; h < str.length; h++) {
+          layoutA = Math.imul(layoutA ^ str.charCodeAt(h), 16777619)
+          layoutB = Math.imul(layoutB, 33) ^ str.charCodeAt(h)
+        }
+      }
+      function measureLayout(el) {
+        if (p.mode !== 'read') return
+        var b = el.getBoundingClientRect()
+        var cs = window.getComputedStyle(el)
+        var styles = ['display', 'visibility', 'opacity', 'position', 'transform', 'color',
+          'backgroundColor', 'backgroundImage', 'fontFamily', 'fontSize', 'fontWeight',
+          'lineHeight', 'letterSpacing', 'padding', 'margin', 'border', 'overflow', 'zIndex']
+        layoutHash([tagOf(el), el.id || '', el.className || '', b.left, b.top, b.width,
+          b.height, el.scrollWidth, el.scrollHeight, el.scrollLeft || 0, el.scrollTop || 0,
+          (el.children || []).length].join('|'))
+        for (var si = 0; si < styles.length; si++) layoutHash(cs[styles[si]] || '')
+      }
+      layoutHash([window.innerWidth, window.innerHeight, window.scrollX || 0,
+        window.scrollY || 0, window.devicePixelRatio || 1, document.readyState,
+        document.fonts ? document.fonts.status : 'unknown'].join('|'))
       function emit(el, depth) {
         var role = roleOf(el)
         if (!role) return
@@ -311,6 +344,7 @@ export const PAGE_SCRIPT = `function (p) {
       while (stack.length && !truncated && guard < 20000) {
         guard++
         var cur = stack.pop()
+        measureLayout(cur.el)
         var kids = cur.el.children || []
         for (var k = kids.length - 1; k >= 0; k--) {
           var c = kids[k]
@@ -321,15 +355,26 @@ export const PAGE_SCRIPT = `function (p) {
           if (!visible(c)) { hidden++; continue }
           if (cur.depth < p.depth && tg !== 'SVG') stack.push({ el: c, depth: cur.depth + 1 })
         }
-        if (cur.depth > 0) emit(cur.el, cur.depth - 1)
+        if (cur.depth > 0 || (p.scope && visible(cur.el))) emit(cur.el, Math.max(0, cur.depth - 1))
       }
+      if (stack.length) truncated = true
+      var stable = document.readyState === 'complete' && document.fonts && document.fonts.status === 'loaded'
+      if (document.getAnimations) {
+        var animations = document.getAnimations()
+        for (var ai = 0; ai < animations.length; ai++) {
+          if (animations[ai].playState === 'running' || animations[ai].pending) stable = false
+        }
+      } else stable = false
       // A pilha recebe os filhos em ordem INVERSA (o laço de k desce), entao o
       // primeiro filho e o primeiro a sair: a ordem que sai daqui ja e a do
       // documento. NAO reordenar — reordenar quebraria a leitura.
       return {
         ok: true, text: out.join('\\n'), lines: out.length, refs: refs,
         hidden: hidden, truncated: truncated, url: location.href, title: document.title,
-        epoch: store.epoch
+        epoch: store.epoch,
+        layout: { signature: String(layoutA >>> 0) + ':' + String(layoutB >>> 0),
+          complete: !truncated && guard < 20000, stable: !!stable,
+          viewport: { w: window.innerWidth, h: window.innerHeight }, readyState: document.readyState || 'unknown' }
       }
     }
 

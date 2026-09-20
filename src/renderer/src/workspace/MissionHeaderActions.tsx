@@ -1,4 +1,5 @@
 import type { Mission } from '../store'
+import { canRetryIntegrationFinalization } from '../integrationQueuePresentation'
 import WorkspaceIcon from './WorkspaceIcon'
 
 /** Presentation only: the Board retains the existing mission actions and gates. */
@@ -10,15 +11,18 @@ export default function MissionHeaderActions({ mission, planning, queueLabel, gu
 }): React.JSX.Element {
   const live = mission.status === 'ativa'
   const integration = mission.integration
-  const uploadLabel = planning ? 'Concluir planejamento' : mission.pendingIntegrationApproval ? 'Aprovar integração'
+  const repair = canRetryIntegrationFinalization(integration)
+  const uploadLabel = planning ? 'Concluir planejamento' : repair ? 'Retomar finalização' : mission.pendingIntegrationApproval ? 'Aprovar integração'
     : integration?.state === 'sync_required' ? 'Retomar integração' : 'Subir missão'
-  const uploadTip = planning ? 'Concluir esta sessão de planejamento' : integration?.lastError ?? queueLabel ?? 'Colocar esta missão na fila de integração da versão'
+  const uploadTip = planning ? 'Concluir esta sessão de planejamento' : repair
+    ? 'Conferir o merge já gravado e tentar finalizar esta missão, sem integrar novamente'
+    : integration?.lastError ?? queueLabel ?? 'Colocar esta missão na fila de integração da versão'
   const terminalLabel = testServerOpen ? 'Parar servidor de teste' : 'Abrir terminal de teste'
   const archiveLabel = mission.status === 'arquivada' ? 'Reativar missão' : 'Arquivar missão'
   return <div className="workspace-mission-actions" role="group" aria-label="Ações da missão">
     <button type="button" className={`workspace-integrate-button${mission.pendingIntegrationApproval ? ' is-pending' : ''}`}
       aria-label={uploadLabel} data-tip={uploadTip}
-      disabled={!live || (planning ? !onConclude : !!integration && integration.state !== 'sync_required')}
+      disabled={!live || (planning ? !onConclude : !!integration && integration.state !== 'sync_required' && !repair)}
       onClick={planning ? onConclude : onIntegrate}><WorkspaceIcon name={planning ? 'check' : 'upload'} /></button>
     <button type="button" aria-label={terminalLabel} data-tip={terminalLabel}
       className={testServerOpen ? 'is-running' : undefined} disabled={!live || planning}

@@ -9,9 +9,11 @@ import ReleaseRail from './ReleaseRail'
 import NewMissionModal from './NewMissionModal'
 import MissionColumn, { type MissionColumnEntry } from './MissionColumn'
 import MissionDeliveryRail from './MissionDeliveryRail'
+import DockMobile from './DockMobile'
 import WorkspacePanels from '../workspace/WorkspacePanels'
 import WorkspaceToolbar, { WorkspaceSidebarToggle } from '../workspace/WorkspaceToolbar'
 import MissionHeaderActions from '../workspace/MissionHeaderActions'
+import ReleaseHeaderActions from '../workspace/ReleaseHeaderActions'
 import { useWorkspaceLayout } from '../workspace/useWorkspaceLayout'
 import { availableWorkspacePanels } from '../workspacePanels'
 import '../workspace/workspacePanels.css'
@@ -191,7 +193,7 @@ export default function Board({ projectId }: Props): React.JSX.Element {
   /** o deck do workspace está por cima do chat: o palco fica inerte */
   const [chatCovered, setChatCovered] = useState(false)
   const boardRef = useRef<HTMLDivElement>(null)
-  const workspace = useWorkspaceLayout(projectId)
+  const workspace = useWorkspaceLayout(projectId, missionTab)
   const [progressTarget, setProgressTarget] = useState<ProgressOpenTarget | null>(null)
   const [progressDeliveryMission, setProgressDeliveryMission] = useState<string | null>(null)
   useEffect(() => onProgressOpen(projectId, setProgressTarget), [projectId])
@@ -227,6 +229,8 @@ export default function Board({ projectId }: Props): React.JSX.Element {
   }, [projectId])
   const versionName = (vid?: string): string | undefined =>
     vid ? versionsList.find((v) => v.id === vid)?.name : undefined
+  const versionTargetBranch = (vid?: string): string | undefined =>
+    vid ? versionsList.find((v) => v.id === vid)?.releaseTargetBranch : undefined
 
   // PLANOS: uma leitura no mount + o canal de mudança. Sem a ponte a lista fica
   // vazia e a seção do painel simplesmente não nasce — a aba Mapa é quem tem de
@@ -385,14 +389,8 @@ export default function Board({ projectId }: Props): React.JSX.Element {
     void loadMissions(projectId)
   }, [projectId, loadMissions])
 
-  // Missões mudaram no main (criada pelo PM, integrada, sync…) → recarrega.
-  useEffect(() => {
-    if (!window.synkora.missions) return
-    return window.synkora.missions.onChanged((pid) => {
-      if (pid === projectId && useStore.getState().openProjectId === projectId)
-        void loadMissions(projectId)
-    })
-  }, [projectId, loadMissions])
+  // The project rail refreshes mission metadata on main-process events,
+  // including projects in the background. The initial Board read stays local.
 
   // O poller de TAREFAS e o reconciliador de 30s saíram na purga F6: não há
   // mais card para reconciliar — o estado da missão 2.0 é a conversa.
@@ -854,11 +852,15 @@ export default function Board({ projectId }: Props): React.JSX.Element {
   // `.maestro-body` muda de posição, então nenhum TerminalPane remonta.
   // ——————————————————————————————————————————————————————————————————————
   const stageMode = isDirect
-  const panelsEnabled = isDirect && !!selMission && !selIsRelease
+  // UMA moldura para os três chats (ordem do dono, 2026-09-09): missão,
+  // planejamento E release vestem os painéis do workspace — o que muda por
+  // natureza é o CARDÁPIO (availableWorkspacePanels), nunca o chrome.
+  const panelsEnabled = isDirect && !!selMission
   const workspaceVisible = appPage === 'workspace' && isActive && uniTab === 'board'
+  const selMissionType = missionTypeOf(selMission)
   const panelOptions = useMemo(() => availableWorkspacePanels(
-    isPlanningMission, selMission?.status === 'ativa' || selMission?.status === 'integrando'
-  ), [isPlanningMission, selMission?.status])
+    selMissionType, selMission?.status === 'ativa' || selMission?.status === 'integrando'
+  ), [selMissionType, selMission?.status])
   const stageTermPane = activeTermPane
   const stageEmpty = !selMission && !activeTermPane
 
@@ -1079,7 +1081,16 @@ export default function Board({ projectId }: Props): React.JSX.Element {
           leadingAction={panelsEnabled ? <WorkspaceSidebarToggle controller={workspace} sidebarId={`workspace-missions-${projectId}`} /> : undefined}
           actions={panelsEnabled ? <WorkspaceToolbar controller={workspace} available={panelOptions} enabled={panelsEnabled}
             visible={workspaceVisible} title={selMission?.title ?? ''} boardRef={boardRef}
-            actions={selMission && <MissionHeaderActions mission={selMission} planning={isPlanningMission}
+            actions={selMission && (selIsRelease ? (
+              // R27 — RELEASE É RELEASE: a subida não tem ⇪/terminal/revisar/
+              // arquivar; a alavanca dela é o DESCARTE (a saída do incidente de
+              // 2026-08-27), na mesma fileira em que a missão tem as suas.
+              // HMR pode trazer o Board novo antes do store novo: sem a ação,
+              // o botão diz a receita em vez de estourar.
+              <ReleaseHeaderActions mission={{ status: selMission.status, seatId: selMission.seatId }}
+                onDiscard={discardRelease ? () => void discardRelease(selMission.id) : undefined} />
+            ) : (
+              <MissionHeaderActions mission={selMission} planning={isPlanningMission}
               queueLabel={integrationQueueLabel(selMission)} guiAvailable={missionGui.available()} reviewReady={reviewReady}
               testServerOpen={panes.some((p) => p.testServer && p.missionId === selMission.id)}
               onIntegrate={() => void onIntegrate()} onReview={() => void nudgeReview()}
@@ -1090,7 +1101,7 @@ export default function Board({ projectId }: Props): React.JSX.Element {
               }}
               onArchive={() => void archiveMission(selMission.id, selMission.status === 'ativa')}
               onConclude={() => void concludePlanningMission(selMission.id)}
-            />} /> : undefined}
+            />))} /> : undefined}
         />
         <div className="maestro-body maestro-terminal" ref={maestroTerminalRef}>
           {/* O SLOT DO PM (o terminal do Maestro, sempre montado) e os slots
@@ -1345,7 +1356,9 @@ export default function Board({ projectId }: Props): React.JSX.Element {
       {/* R27 — RELEASE É RELEASE: o trilho de missão (entrega/fila/arquivar —
           os botões sem nexo do incidente de 2026-08-20) não pertence à subida.
           Onda B do RIGHTDOCK: o trilho próprio vestiu a MOLDURA do dock e
-          ganhou a "última subida" (entidade R27F2 por projeto). */}
+          ganhou a "última subida" (entidade R27F2 por projeto). 2026-09-09: a
+          moldura é a dos PAINÉIS do workspace, a mesma da missão — o painel
+          "Release" nasce deste trilho e o descarte mora na cabeça do palco. */}
       {selMission && selIsRelease && (
         <GuiPanelErrorBoundary
           paneId={`release-rail:${selMission.id}`}
@@ -1354,12 +1367,7 @@ export default function Board({ projectId }: Props): React.JSX.Element {
           <ReleaseRail
             projectId={projectId}
             versionName={versionName(selMission.versionId)}
-            mission={{ status: selMission.status, seatId: selMission.seatId }}
-            // HMR pode trazer o Board novo antes do store novo: sem a ação,
-            // a seção não nasce (o dono não ganha um botão que estoura).
-            onDiscard={
-              discardRelease ? () => void discardRelease(selMission.id) : undefined
-            }
+            targetBranch={versionTargetBranch(selMission.versionId)}
           />
         </GuiPanelErrorBoundary>
       )}
@@ -1391,6 +1399,12 @@ export default function Board({ projectId }: Props): React.JSX.Element {
             onArchive={() => void archiveMission(selMission.id, selMission.status === 'ativa')}
             onConclude={() => void concludePlanningMission(selMission.id)}
           />
+        </GuiPanelErrorBoundary>
+      )}
+
+      {panelsEnabled && selMission && selMissionType === 'dev' && panelOptions.includes('mobile') && (
+        <GuiPanelErrorBoundary key={`mobile:${selMission.id}`} paneId={`mobile:${selMission.id}`} label="o simulador mobile">
+          <DockMobile missionId={selMission.id} projectId={projectId} visible={workspaceVisible} />
         </GuiPanelErrorBoundary>
       )}
 

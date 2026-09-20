@@ -100,8 +100,9 @@ test('a linha PUBLICAÇÃO: caixa com versões, caixa em dia, nome opaco, só c�
     'nome que não parseia manda conferir na mão'
   )
   const codeOnly = releasePublishStatusLine({ hasReleaseScript: false })
-  assert.match(codeOnly, /sem pipeline declarado/u)
-  assert.match(codeOnly, /só código/u)
+  assert.match(codeOnly, /nenhum script `release`/u)
+  assert.match(codeOnly, /hospedagem pode publicar por integração Git/u)
+  assert.doesNotMatch(codeOnly, /só código na main/u)
 })
 
 test('os fragmentos do desfecho: o ato do harness primeiro, a receita depois', () => {

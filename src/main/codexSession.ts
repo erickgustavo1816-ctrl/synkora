@@ -19,6 +19,7 @@ import {
 } from './guiTurnQueue'
 import { limitGuiToolInput } from './guiToolInput'
 import { codexCallParcelsFromTokenUsage, codexContextFromTokenUsage } from './codexTokenUsage'
+import { guiCodexUsageSample } from './guiRequestUsage'
 import { terminateGuiProcessTree } from './guiProcessTree'
 import {
   guiCodexErrorWillRetry,
@@ -483,6 +484,8 @@ export class CodexSession {
   private userInputRequests?: CodexUserInputRequests
   private asyncQuestionIds?: Set<string>
   private lastTokens: number | undefined
+  private activeCompaction: { id: string; turnId: string } | null = null
+  private completedCompaction: { id: string; turnId: string } | null = null
   private lastWindow: number | undefined
   // /fast: service tier "priority" (1.5x speed) aplicado como override por turno.
   // R11: o spawn pode nascer com o tier armado (spawn.fast do chat / pino do
@@ -675,6 +678,15 @@ export class CodexSession {
     this.respond(reply.rpcId, reply.response)
     this.resetIdle()
     return true
+  }
+
+  private cancelQueuedTurnId: string | null = null
+  private readonly cancelledSteerIds = new Set<string>()
+
+  cancelQueuedMessages(): boolean {
+    if (!this.turnId || this.interruptedTurnId) return false
+    this.cancelQueuedTurnId = this.turnId
+    return this.interrupt()
   }
 
   interrupt(): boolean {
@@ -881,7 +893,7 @@ export class CodexSession {
     }
     const resp = await this.request('thread/compact/start', { threadId: this.threadId })
     if (resp.error) throw new Error(resp.error.message ?? 'compact falhou')
-    // O resultado real chega na notificação thread/compacted.
+    // O resultado real chega pelo item contextCompaction (ou thread/compacted legado).
     this.finishCommand('compactação iniciada…')
   }
 
@@ -1811,6 +1823,7 @@ export class CodexSession {
             input: [{ type: 'text', text }],
             ...(clientUserMessageId ? { clientUserMessageId } : {})
           })
+          if (clientUserMessageId && this.cancelledSteerIds.delete(clientUserMessageId)) return
           if (!steer.error) return
           // Timeout não prova rejeição: reenviar poderia executar a mensagem
           // duas vezes. Falha fechada antes de qualquer retry.
@@ -2023,6 +2036,33 @@ export class CodexSession {
     this.respond(id, { decision: 'decline' })
   }
 
+  private emitContextCompacted(): void {
+    this.emit({ type: 'context-compaction', active: false })
+    this.lastTokens = undefined
+    this.lastWindow = undefined
+    this.emit({ type: 'context-usage', contextTokens: null, contextWindow: null })
+    this.emit({ type: 'command-output', text: 'contexto da thread compactado' })
+  }
+
+  private noteContextCompaction(item: CodexItem, p: Record<string, unknown>, active: boolean): void {
+    if (!this.threadId || p['threadId'] !== this.threadId || !this.turnId || p['turnId'] !== this.turnId ||
+      typeof item.id !== 'string' || !item.id || item.id.length > 512) return
+    const record = { id: item.id, turnId: this.turnId }
+    const matches = (other: typeof this.activeCompaction): boolean =>
+      other?.id === record.id && other.turnId === record.turnId
+    if (matches(this.completedCompaction)) return
+    if (active) {
+      if (matches(this.activeCompaction)) return
+      this.activeCompaction = record
+      this.emit({ type: 'context-compaction', active: true })
+    } else {
+      if (this.activeCompaction?.turnId === record.turnId && !matches(this.activeCompaction)) return
+      this.activeCompaction = null
+      this.completedCompaction = record
+      this.emitContextCompacted()
+    }
+  }
+
   private handleNotification(method: string, p: Record<string, unknown>): void {
     const notificationThreadId = guiCodexString(p['threadId'])
     // Thread de sub-agente REGISTRADO tem rota própria: vira atividade do card
@@ -2085,6 +2125,10 @@ export class CodexSession {
       case 'item/started': {
         const item = p['item'] as CodexItem | undefined
         if (!item) break
+        if (item.type === 'contextCompaction') {
+          this.noteContextCompaction(item, p, true)
+          break
+        }
         // R39.1 D2' — O RECIBO DE LEITURA: o app-server ecoa a mensagem do
         // usuário como ITEM da thread, com o `clientId` que mandamos. Medido em
         // 02/09 (sonda 3): o `turn/steer` responde `{turnId}` em 1 ms — isso é
@@ -2109,6 +2153,10 @@ export class CodexSession {
       case 'item/completed': {
         const item = p['item'] as CodexItem | undefined
         if (!item) break
+        if (item.type === 'contextCompaction') {
+          this.noteContextCompaction(item, p, false)
+          break
+        }
         // O par started/completed ecoa o MESMO item: a memória por conversa
         // resolve o dobro, e ler os dois lados protege de um `started` perdido.
         this.noteSkillsEntered(item)
@@ -2143,12 +2191,13 @@ export class CodexSession {
         break
       }
       case 'thread/compacted':
+        if (p['turnId'] !== undefined && p['turnId'] !== this.turnId) break
+        if (this.completedCompaction && this.completedCompaction.turnId === this.turnId) break
         // A compactação invalida a fotografia anterior. Esperamos a próxima
         // medição `last` do protocolo em vez de estimar o quanto ela reduziu.
-        this.lastTokens = undefined
-        this.lastWindow = undefined
-        this.emit({ type: 'context-usage', contextTokens: null, contextWindow: null })
-        this.emit({ type: 'command-output', text: 'contexto da thread compactado' })
+        this.completedCompaction = this.activeCompaction
+        this.activeCompaction = null
+        this.emitContextCompacted()
         break
       case 'thread/tokenUsage/updated': {
         // A régua sai da fotografia do ÚLTIMO REQUEST (um turno emite um evento
@@ -2175,15 +2224,30 @@ export class CodexSession {
           type: 'context-usage',
           contextTokens: contextTokens ?? null,
           contextWindow: contextWindow ?? null,
+          sample: guiCodexUsageSample(this.threadId ?? p['threadId'] ?? this.opts?.resumeSessionId,
+            p['tokenUsage'], { newConversation: !this.opts?.resumeSessionId, turnActive: Boolean(this.turnId) }),
           ...(parcels ? { call: parcels } : {})
         })
         break
       }
       case 'turn/completed': {
         const turn = p['turn'] as
-          | { status?: string; error?: { message?: string } }
+          | { id?: string; status?: string; error?: { message?: string } }
           | undefined
         const outcome = guiCodexTurnOutcome(turn?.status)
+        if (this.cancelQueuedTurnId && turn?.id && turn.id !== this.cancelQueuedTurnId) break
+        // The server's interrupted terminal proves pending steers were dropped.
+        // A natural completion racing the click does not prove cancellation.
+        if (this.cancelQueuedTurnId && turn?.id === this.cancelQueuedTurnId &&
+          this.cancelQueuedTurnId === this.turnId && outcome === 'cancelled') {
+          for (const [clientId, tag] of this.steerTags) {
+            if (this.cancelledSteerIds.size >= 32) this.cancelledSteerIds.delete(this.cancelledSteerIds.values().next().value!)
+            this.cancelledSteerIds.add(clientId)
+            this.steerTags.delete(clientId)
+            this.emit({ type: 'owner-steer-rejected', tag, reason: 'cancelled' })
+          }
+        }
+        this.cancelQueuedTurnId = null
         // R7-E — o ■ DO DONO passou por este motor para ESTE turno
         // (`turn/interrupt` com este turnId), então o desfecho que chega agora É
         // aquela interrupção: interrompido não é falha, mesmo quando o servidor

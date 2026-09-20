@@ -2,102 +2,57 @@ import { useState } from 'react'
 import type { GuiQueuedMessage } from '../guiMessageQueue'
 import './GuiQueuedMessageCard.css'
 import GuiAttachmentChips from './GuiAttachmentChips'
+import GuiBrowserReferenceChips from './GuiBrowserReferenceChips'
+import { ownerForceLabel } from '../guiOwnerBubble'
 
 interface GuiQueuedMessageCardProps {
+  paneId: string
   message: GuiQueuedMessage
-  optionsLabel?: string
-  onEdit: () => boolean
   onCancel: () => boolean
-  editDisabled?: boolean
-  onRetry: () => void
-  /** PULA A FILA (ordem do dono, 18/08): entrega AGORA, dentro do turno vivo,
-   *  pelo caminho direto de envio — os dois CLIs aceitam steering. Ausente =
-   *  card sem o verbo (pane sem ponte não tem para onde pular). */
-  onSendNow?: () => void
-  /** ponte fora do ar (starting/dead): o verbo fica com a dica honesta. */
-  sendNowDisabled?: boolean
+  onReadNow: () => void
+  readNowDisabled?: boolean
 }
 
 export default function GuiQueuedMessageCard({
+  paneId,
   message,
-  optionsLabel,
-  onEdit,
   onCancel,
-  editDisabled,
-  onRetry,
-  onSendNow,
-  sendNowDisabled
+  onReadNow,
+  readNowDisabled
 }: GuiQueuedMessageCardProps) {
   const failed = Boolean(message.deliveryError)
   const sending = Boolean(message.deliveryInFlight)
   const [actionError, setActionError] = useState<string | null>(null)
   return (
-    <aside
-      className={`gui-queued-message${failed ? ' has-error' : ''}${sending ? ' is-sending' : ''}`}
-      role="status"
+    <div
+      className={`gui-msg user gui-queued-message${failed ? ' has-error' : ''}${sending ? ' is-sending' : ''}`}
+      role="group"
       aria-label="Mensagem na fila"
     >
-      <div className="gui-queued-message-copy">
-        <strong>
-          {sending
-            ? 'enviando a mensagem da fila…'
-            : failed
-              ? 'não enviou automaticamente'
-              : 'vai enviar quando terminar'}
-        </strong>
-        {message.text && <span className="gui-queued-message-text">{message.text}</span>}
-        <GuiAttachmentChips attachments={message.attachments} className="gui-queued-attachments" />
-        {optionsLabel && <small>{optionsLabel}</small>}
-        {message.deliveryError && (
-          <span className="gui-queued-message-error" role="alert">
-            {message.deliveryError}
-          </span>
-        )}
-        <span className="gui-queued-message-error" role="alert">
-          {actionError}
-        </span>
-      </div>
-      <div className="gui-queued-message-actions">
-        {failed && !sending && (
-          <button type="button" className="term-btn" onClick={onRetry}>
-            tentar novamente
-          </button>
-        )}
-        {onSendNow && !failed && (
-          <button
-            type="button"
-            className="term-btn"
-            disabled={sending || sendNowDisabled}
-            data-tip={
-              sendNowDisabled
-                ? 'a ponte do chat está fora do ar — sem turno para entrar'
-                : 'envia esta mensagem durante a resposta atual; depois do envio ela não pode mais ser cancelada'
-            }
-            onClick={onSendNow}
-          >
-            enviar agora
-          </button>
-        )}
+      <span className="gui-msg-tag">você</span>
+      <GuiAttachmentChips attachments={message.attachments} className="gui-msg-attachments" />
+      <GuiBrowserReferenceChips paneId={paneId} references={message.browserReferences ?? []} className="gui-msg-browser-references" />
+      {message.text.trim() && <div className="gui-msg-text">{message.text}</div>}
+      <div className="gui-owner-state gui-owner-state-unread gui-queued-message-actions">
+        <i className="gui-owner-state-mark" aria-hidden="true" />
+        <span>{sending ? 'enviando…' : 'não lida ainda'}</span>
         <button
           type="button"
-          className="term-btn ghost-dim"
-          disabled={sending || editDisabled}
+          className="gui-owner-force"
+          disabled={sending || readNowDisabled}
+          aria-label={ownerForceLabel(message.text)}
           data-tip={
-            editDisabled
-              ? 'conclua seu rascunho atual antes de editar a mensagem da fila'
-              : undefined
+            readNowDisabled
+              ? 'a ponte do chat está fora do ar — aguarde a conversa abrir'
+              : 'força o agente a parar e ler esta mensagem agora'
           }
-          onClick={() => {
-            if (!onEdit()) {
-              setActionError('Não foi possível trazer a mensagem para edição. Ela foi preservada na fila.')
-            }
-          }}
+          onClick={onReadNow}
         >
-          editar
+          ler agora
         </button>
         <button
           type="button"
-          className="term-btn ghost-dim"
+          className="gui-owner-force gui-owner-cancel"
           disabled={sending}
           aria-label="Cancelar envio da mensagem na fila"
           data-tip={
@@ -111,9 +66,12 @@ export default function GuiQueuedMessageCard({
             }
           }}
         >
-          cancelar envio
+          cancelar
         </button>
       </div>
-    </aside>
+      <div className="gui-queued-message-error" role="alert">
+        {actionError || message.deliveryError}
+      </div>
+    </div>
   )
 }

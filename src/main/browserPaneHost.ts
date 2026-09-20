@@ -30,13 +30,16 @@
 import { BrowserWindow, WebContentsView, session } from 'electron'
 import type { WebContents } from 'electron'
 import type { BrowserPanelRect } from './browserPane'
+import { attachBrowserSurface, browserSurfaceOwner, browserSurfaceWindow, createBrowserBackgroundSurface, detachBrowserSurface } from './browserBackgroundSurface'
+import { toggleBrowserDevtoolsWindow } from './browserDevtoolsWindow'
 
 // ————————————————————————————————————————————————————————————————
 // Host injetável — TODO o Electron do módulo mora atrás desta interface
 // ————————————————————————————————————————————————————————————————
 
-/** Superfície mínima da `WebContentsView` usada pelo motor. A classe real do
- *  Electron a satisfaz por estrutura; o fake do gate implementa isto. */
+/** Logical presentation surface. The native adapter keeps hidden tabs
+ * composing in the shared background host; getVisible reports visibility
+ * to the owner, rather than native compositor visibility. */
 export interface BrowserViewHandle {
   setBounds(bounds: BrowserPanelRect): void
   setVisible(visible: boolean): void
@@ -63,6 +66,8 @@ export interface BrowserViewWindow {
 }
 
 export interface BrowserViewHost {
+  /** Native owned DevTools window. Optional for headless test hosts. */
+  toggleDevtools?(view: BrowserViewHandle): void
   /** Cria a view NA partition do projeto (webPreferences duras lá dentro).
    *  null = janela indisponível — o chamador recusa nomeando a receita. */
   create(partition: string): BrowserViewHandle | null
@@ -71,27 +76,20 @@ export interface BrowserViewHost {
   detach(view: BrowserViewHandle): void
   /** Endurece a partition UMA vez por projeto (permissões + downloads). */
   hardenSession(partition: string, hooks: BrowserSessionHooks): void
+  /** Only private artifact sessions are eligible; normal project sessions
+   * retain their existing cookies and lifecycle. Optional in headless hosts. */
+  disposeEphemeralSession?(partition: string): void
   /** Área útil da janela, para clampar bounds; null = janela indisponível. */
   contentSize(): { width: number; height: number } | null
-  /** Janela escondida/minimizada = captura PENDURA (P5) — a guarda usa isto. */
+  /** Visibility metadata, not proof that a page cannot be captured. */
   windowVisible(): boolean
   /** resize/move/maximizar da janela e o `closed`. Devolve o desligador. */
   watchWindow(hooks: BrowserWindowHooks): () => void
   /**
-   * ONDE A VIEW ESTÁ, perguntado ao Electron — não à nossa contabilidade.
-   * `BrowserWindow.fromWebContents(view.webContents)` custou **296 ns** na sonda
-   * `PROBE_BROWSER_POPOUT_2026-08-29.md` §P4 e é o **ÚNICO predicado honesto**
-   * de view ÓRFÃ (janela fechada por baixo dela): `view.getVisible()` devolve
-   * `true` e `wc.isDestroyed()` devolve `false` nesse estado — quem confia
-   * neles captura e **PENDURA 5-8 s**. `null` = órfã.
-   *
-   * Com o pop-out a pergunta também virou obrigatória por outro motivo: a view
-   * de uma missão destacada mora em OUTRA janela, e perguntar "a janela do app
-   * está visível?" (`windowVisible`) seria perguntar da janela errada.
-   *
-   * OPCIONAL no espelho de propósito: o host FALSO do gate (que nasceu antes do
-   * pop-out) não o implementa, e ali o motor cai na pergunta antiga. O host
-   * REAL abaixo sempre responde — `undefined` só existe para o dublê.
+   * Current native rendering parent, including the shared background carrier.
+   * Wrapped views verify membership in contentView.children: fromWebContents
+   * can retain a former parent after detach. Null means orphaned, not hidden.
+   * Optional for older test hosts; capture still has a deadline and freshness stamp.
    */
   viewWindow?(view: BrowserViewHandle): BrowserViewWindow | null
 }
@@ -155,7 +153,19 @@ export interface BrowserEventEmitter {
 
 export function electronBrowserViewHost(window: () => BrowserWindow | null): BrowserViewHost {
   const hardened = new Set<string>()
+  const background = createBrowserBackgroundSurface(window)
   return {
+    disposeEphemeralSession(partition) {
+      if (!/^browser-artifact-[a-f0-9-]+$/u.test(partition)) return
+      hardened.delete(partition)
+      const ephemeral = session.fromPartition(partition)
+      ephemeral.removeAllListeners('will-download')
+      void Promise.allSettled([ephemeral.closeAllConnections(), ephemeral.clearCache(), ephemeral.clearStorageData()])
+    },
+    toggleDevtools(view) {
+      const owner = browserSurfaceOwner(view) ?? BrowserWindow.fromWebContents(view.webContents)
+      if (owner && !owner.isDestroyed()) toggleBrowserDevtoolsWindow(view.webContents, owner)
+    },
     create(partition) {
       const win = window()
       if (!win || win.isDestroyed()) return null
@@ -186,18 +196,18 @@ export function electronBrowserViewHost(window: () => BrowserWindow | null): Bro
       // Página web assume fundo branco; sem isto a view pisca transparente e
       // mostra o papel do host por baixo.
       view.setBackgroundColor('#ffffff')
-      return view
+      return background.wrap(view)
     },
     attach(view) {
       const win = window()
       if (!win || win.isDestroyed()) return
-      win.contentView.addChildView(view as unknown as WebContentsView)
+      attachBrowserSurface(win, view)
     },
     detach(view) {
       const win = window()
       if (!win || win.isDestroyed()) return
       try {
-        win.contentView.removeChildView(view as unknown as WebContentsView)
+        detachBrowserSurface(win, view)
       } catch {
         // janela no meio do teardown — o close do webContents basta
       }
@@ -237,9 +247,8 @@ export function electronBrowserViewHost(window: () => BrowserWindow | null): Bro
       return Boolean(win && !win.isDestroyed() && win.isVisible() && !win.isMinimized())
     },
     viewWindow(view) {
-      // 296 ns por chamada (sonda §P4) — barato o bastante para rodar em TODA
-      // captura, e o único que enxerga a órfã.
-      const win = BrowserWindow.fromWebContents(view.webContents)
+      const surface = browserSurfaceWindow(view)
+      const win = surface === undefined ? BrowserWindow.fromWebContents(view.webContents) : surface
       if (!win || win.isDestroyed()) return null
       return { id: win.id, visible: win.isVisible(), minimized: win.isMinimized() }
     },

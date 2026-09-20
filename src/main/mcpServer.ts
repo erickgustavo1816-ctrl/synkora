@@ -30,6 +30,9 @@ import {
 // A régua do PAPEL do pane (dev × reviewer × ajudante) é a mesma que o spawn
 // usa — a integração é do DEV, e ela sai do endereço, nunca de um palpite.
 import { guiMissionRoleOf } from './guiMissionContracts'
+import { MISSION_SUMMARY_MAX } from './missionSummary'
+import { GUI_COMMENTARY_TOOL, GUI_COMMENTARY_MAX_CHARS, GUI_COMMENTARY_DESCRIPTION,
+  type GuiCommentaryDelivery } from './guiPublicCommentary'
 // R14 — o kit de CÓDIGO (design DESIGN_COPIA_E_LSP_R14, seção L2). Mesma
 // doutrina do bloco acima: os TETOS que a descrição ensina ao agente saem do
 // módulo que os aplica, nunca de uma cópia à mão.
@@ -46,12 +49,17 @@ import { LSP_DIAGNOSTICS_CEILING_MS } from './lsp/lspSession'
 // REGISTRA catálogos, nunca implementa produto), e é servido pelos retornos
 // antecipados de `gui-delegator` e `ajudante` logo abaixo.
 import { registerBrowserKit, type GuiBrowserToolkit } from './guiBrowserTools'
+import { registerMobileKit } from './mobileToolCatalog'
+import type { GuiMobileToolkit } from './guiMobileTools'
 // SKILLS 3.0 (2026-09-08 — design DESIGN_HARNESS_DO_MODELO, fatia 5.D). Mesma
 // doutrina do `guiLspTools`/`guiBrowserTools`: o kit de três tools mora no
 // módulo próprio (o mcpServer REGISTRA catálogos, nunca implementa produto) e é
 // servido pelos retornos antecipados de `gui-planner`, `gui-delegator` (exceto o
 // reviewer) e `ajudante` logo abaixo.
 import { registerSkillsKit, type GuiSkillToolkit } from './guiSkillKit'
+import { registerProjectContextKit, withProjectContextNotice } from './projectContextKit'
+import type { ProjectContextToolkit } from './projectContextTypes'
+import type { ReleaseSaveInput } from '../shared/releaseChanges'
 
 const requireFromMain = createRequire(
   typeof __filename === 'string' ? __filename : join(process.cwd(), 'package.json')
@@ -127,15 +135,21 @@ export interface McpApi {
    *  R18.1: Promise porque o git dela viaja pelo gitWorker (o texto é o mesmo). */
   integrationStatus?: (id: PaneIdentity) => Promise<string>
   /** Executa a integração DESTA missão (só com ticket do dono, só na cabeça). */
-  integrationRun?: (id: PaneIdentity) => Promise<string>
+  integrationRun?: (id: PaneIdentity, summary?: string) => Promise<string>
+  /** Plain-language result authored by this mission's dev, before completion. */
+  missionSummary?: (id: PaneIdentity, summary: string) => string
+  commentary?: (id: PaneIdentity, message: string) => GuiCommentaryDelivery
 
   // ——— kit do RELEASE (R10, 2026-08-19 — role 'gui-release') ———
   // O botão "subir pra main" da versão abre a conversa; estas cascas finas
   // falam com o releaseChat/index — a mecânica do release mora lá.
   /** A fotografia do release: trava do plano, fila, branches, receita. */
   releaseStatus?: (id: PaneIdentity) => string
+  releaseTarget?: (id: PaneIdentity, branch: string) => Promise<string>
   /** Sobe a versão desta conversa para a main (o clique do dono é o mandato). */
   releaseRun?: (id: PaneIdentity) => Promise<string>
+  releaseSave?: (id: PaneIdentity, input: ReleaseSaveInput) => Promise<string>
+  releasePush?: (id: PaneIdentity, expectedHead: string) => Promise<string>
   /** R38 — o FECHO, e ele é do AGENTE: a subida deixou de concluir a missão
    *  sozinha (ela fechava a conversa antes da caixa). Guarda dura: só com a
    *  versão 'lancada'. */
@@ -168,6 +182,8 @@ export interface McpApi {
    * que diz em letras maiúsculas que NADA foi aberto.
    */
   browser?: GuiBrowserToolkit
+  /** Mobile uses its own metadata-only observer; typed input and pixels are never journaled. */
+  mobile?: GuiMobileToolkit
 
   // ——— kit de SKILLS (2026-09-08 — os dois chats que PRODUZEM e os AJUDANTES) ———
   /**
@@ -182,6 +198,7 @@ export interface McpApi {
    * diz em letras maiúsculas que NADA foi puxado.
    */
   skills?: GuiSkillToolkit
+  context?: ProjectContextToolkit
 }
 
 /** Um helper pedido no `delegate` (contrato D2; validação zod no catálogo). */
@@ -512,11 +529,35 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
   const originalRegisterTool = server.registerTool.bind(server)
   server.registerTool = ((name: string, ...rest: unknown[]) => {
     servedTools.push(name)
+    const handler = rest[rest.length - 1]
+    if (api.context && typeof handler === 'function') {
+      rest[rest.length - 1] = async (...args: unknown[]) =>
+        withProjectContextNotice(await handler(...args), api.context, identity)
+    }
     return (originalRegisterTool as (...args: unknown[]) => unknown)(name, ...rest)
   }) as typeof server.registerTool
   const finishCatalog = (): McpServer => {
     api.noteCatalogServed?.(identity, servedTools)
     return server
+  }
+
+  if (['gui-planner', 'gui-delegator', 'gui-release'].includes(identity.role)) {
+    server.registerTool(GUI_COMMENTARY_TOOL, {
+      description: GUI_COMMENTARY_DESCRIPTION,
+      inputSchema: { message: z.string().trim().min(1).max(GUI_COMMENTARY_MAX_CHARS) }
+    }, ({ message }) => {
+      const delivered = api.commentary?.(identity, message)
+      return {
+        ...text(delivered?.ok ? 'Atualização entregue ao dono. Continue a tarefa.' :
+          delivered?.error ?? 'Canal indisponível. Escreva a atualização como texto normal no chat e continue.'),
+        ...(!delivered?.ok ? { isError: true } : {})
+      }
+    })
+  }
+
+  if (['gui-planner', 'gui-delegator', 'gui-release', 'ajudante'].includes(identity.role)) {
+    registerProjectContextKit(server, api.context, identity, identity.role === 'gui-planner' ||
+      (identity.role === 'gui-delegator' && guiMissionRoleOf(identity.paneId) === 'dev' && Boolean(identity.missionId)))
   }
 
   // ————— CHAT DE PLANEJAMENTO (2.0, onda D) — catálogo PRÓPRIO e FECHADO —————
@@ -754,6 +795,18 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
     // (endereço órfão de missão apagada) também fica de fora: a integração
     // precisa de um SUJEITO, e um endereço parecido não é um.
     if (guiMissionRoleOf(identity.paneId) === 'dev' && identity.missionId) {
+      const summarySchema = z.string().trim().min(1).max(MISSION_SUMMARY_MAX)
+        .describe('Duas ou três frases curtas em PT-BR: o que foi resolvido e o que melhorou para quem usa o produto. Linguagem leiga, como notas de atualização; sem nomes de arquivos, comandos, siglas técnicas ou promessas não verificadas.')
+      server.registerTool(
+        'mission_summary',
+        {
+          description: 'Registra o resumo DESTA missão para o histórico da versão. Ao terminar o trabalho, escreva duas ou três frases curtas em linguagem leiga sobre o resultado entregue e salve aqui, antes de encerrar a conversa ou aguardar o ⇪ do dono. Atualize se o resultado mudar. Funciona também em projetos sem Git. Não conclui a missão nem autoriza integração.',
+          inputSchema: { summary: summarySchema }
+        },
+        async ({ summary }) => api.missionSummary
+          ? text(api.missionSummary(identity, summary))
+          : text('O registro de resumo ainda não está disponível. Reinicie o Synkora e repita mission_summary { summary }.')
+      )
       server.registerTool(
         'integration_status',
         {
@@ -770,11 +823,12 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
         'integration_run',
         {
           description:
-            'INTEGRA esta missão no destino dela — o merge inteiro numa chamada (confere a fotografia aprovada e a árvore limpa, valida a identidade do destino, faz o precheck de conflito, mescla, conclui a missão e faz a fila andar). Só roda quando o ⇪ do dono já criou o ticket E esta missão é a CABEÇA da fila; fora disso a recusa te diz a posição, quem está na frente e o que falta. O desfecho SEMPRE volta para você: integrada (com os shas), conflito (com os arquivos e o movimento de resolução no SEU worktree) ou o erro honesto. Conflito não congela nada: o ticket continua na cabeça da fila, você resolve aqui, commita e chama de novo — o re-lacre da fotografia é automático e auditado. Depois, conte o desfecho ao dono no chat.'
+            'INTEGRA esta missão no destino dela — o merge inteiro numa chamada (confere a fotografia aprovada e a árvore limpa, valida a identidade do destino, faz o precheck de conflito, mescla e devolve o desfecho; a pasta da missão é liberada e a fila anda quando o SEU turno terminar — não anuncie a missão como integrada antes de o app dizer isso no chat). Se o ticket aguarda reparo de finalização, retoma SOMENTE a finalização registrada, sem novo merge ou novo clique do dono; confira integration_status e investigue o impedimento se persistir. Envie summary com duas ou três frases curtas em linguagem leiga sobre o resultado da missão, como notas de atualização; se já salvou em mission_summary, pode omitir. Só roda quando o ⇪ do dono já criou o ticket E esta missão é a CABEÇA da fila; fora disso a recusa te diz a posição, quem está na frente e o que falta. O desfecho SEMPRE volta para você: integrada (com os shas), conflito (com os arquivos e o movimento de resolução no SEU worktree) ou o erro honesto. Conflito não congela nada: o ticket continua na cabeça da fila, você resolve aqui, commita e chama de novo — o re-lacre da fotografia é automático e auditado. Depois, conte o desfecho ao dono no chat.',
+          inputSchema: { summary: summarySchema.optional() }
         },
-        async () =>
+        async ({ summary }) =>
           api.integrationRun
-            ? text(await api.integrationRun(identity))
+            ? text(await api.integrationRun(identity, summary))
             : text(INTEGRATION_ENGINE_OFF)
       )
     }
@@ -795,6 +849,9 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
       registerBrowserKit(server, api.browser, identity)
       registerSkillsKit(server, api.skills, identity)
     }
+    if (guiMissionRoleOf(identity.paneId) === 'dev' && identity.missionId) {
+      registerMobileKit(server, api.mobile, identity)
+    }
     return finishCatalog()
   }
 
@@ -803,18 +860,49 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
   // versão É o show inteiro; delegação e integração de missão não moram aqui.
   if (identity.role === 'gui-release') {
     server.registerTool(
+      'release_save',
+      {
+        description: 'SALVA uma correção feita durante esta release: commit local e histórico com motivo, arquivos e validação informada. Antes da subida usa o worktree da versão; depois usa a principal da versão atual enquanto a release estiver aberta. Leia release_status para pasta/HEAD, revise o diff e execute os testes antes. Só arquivos explícitos, sem dados privados. Não envia ao remoto nem publica instalador. Em interrupção repita o MESMO requestId e argumentos: recupera o recibo sem duplicar commit.',
+        inputSchema: {
+          requestId: z.string().regex(/^[A-Za-z0-9_-]{1,80}$/u).describe('identificador estável desta correção; reutilize ao repetir uma chamada'),
+          expectedHead: z.string().regex(/^[a-f0-9]{40,64}$/u).describe('HEAD completo lido em release_status'),
+          files: z.array(z.string().min(1).max(400)).min(1).max(100).describe('arquivos relativos à pasta de correções mostrada no status; nunca diretórios ou globs'),
+          summary: z.string().trim().min(1).max(160).describe('resumo em inglês para o commit, em uma linha'),
+          reason: z.string().trim().min(1).max(2000).describe('motivo da correção, sem conteúdo sensível'),
+          validation: z.string().trim().min(1).max(2000).describe('testes executados e resultados; relato do agente, sem logs brutos')
+        }
+      },
+      async (input) => api.releaseSave ? text(await api.releaseSave(identity, input)) : text(RELEASE_ENGINE_OFF)
+    )
+    server.registerTool(
+      'release_push',
+      {
+        description: 'ENVIA a principal desta release já subida ao origin, sem força. Use após release_save ou para repetir um envio que falhou. Leia release_status e forneça o HEAD atual. Exige pasta limpa e recibos reconciliados. O envio é de código; não publica nem confirma instalador.',
+        inputSchema: { expectedHead: z.string().regex(/^[a-f0-9]{40,64}$/u) }
+      },
+      async ({ expectedHead }) => api.releasePush ? text(await api.releasePush(identity, expectedHead)) : text(RELEASE_ENGINE_OFF)
+    )
+    server.registerTool(
       'release_status',
       {
         description:
-          'A FOTOGRAFIA do release desta versão: a trava do plano mestre (e quem a segura), a fila de integração do universo (missão subindo ainda vem antes), as branches (versão × main) com os heads, e a RECEITA do próximo passo. Leia SEMPRE antes de agir — e sempre que uma tentativa recusar.'
+          'A FOTOGRAFIA do release desta versão: destino escolhido, branch aberta na pasta do projeto, branches locais disponíveis, heads, travas e próximo passo. Leia SEMPRE antes de agir e após uma recusa. Se o destino autorizado pelo dono difere da fotografia, use release_target para defini-lo dentro da própria release.'
       },
       () => (api.releaseStatus ? text(api.releaseStatus(identity)) : text(RELEASE_ENGINE_OFF))
+    )
+    server.registerTool(
+      'release_target',
+      {
+        description: 'DEFINE o destino desta release usando a branch já autorizada pelo dono (por exemplo main/PROD). Leia as branches locais em release_status. Salva a escolha na versão; não troca a pasta, não faz merge e não publica. Use quando o dono escolheu main mas o projeto está em dev; não devolva ao dono uma troca manual inexistente. release_run prepara o destino e executa a subida.',
+        inputSchema: { branch: z.string().min(1).max(200) }
+      },
+      async ({ branch }) => api.releaseTarget ? text(await api.releaseTarget(identity, branch)) : text(RELEASE_ENGINE_OFF)
     )
     server.registerTool(
       'release_run',
       {
         description:
-          'SOBE a versão desta conversa para a branch principal do projeto — o release inteiro numa chamada (re-confere a trava do plano, recusa com missão ainda na fila, mescla a branch da versão na main, carimba a versão como atual e avisa as outras missões de que a base andou). Toda recusa NOMEIA o que falta e a receita. O desfecho volta para você: conte ao dono em uma ou duas linhas. O clique dele no botão é o seu mandato — vale para ESTA versão, uma subida por gesto. A subida NÃO encerra esta conversa: ela pousa a versão na main e devolve o que ainda falta; o fecho é seu, pelo release_done.'
+          'SOBE esta versão para o destino escolhido em release_target e exibido no release_status. Reconfere fila, missões, plano e arquivos; prepara a branch autorizada na pasta limpa do projeto sem força, integra a versão e envia ao origin. A branch de desenvolvimento não é o destino automático. O mandato do dono vale para ESTA versão e destino. A subida NÃO encerra esta conversa: confirme o deploy solicitado e o que faltar antes de release_done. Toda recusa informa o motivo; nunca faça checkout, merge ou push manual para contorná-la.'
       },
       async () =>
         api.releaseRun ? text(await api.releaseRun(identity)) : text(RELEASE_ENGINE_OFF)
@@ -857,6 +945,7 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
     // código. Sem browser aqui, esse ajudante voltaria a abrir browser externo,
     // que é a dor que originou a feature.
     registerBrowserKit(server, api.browser, identity)
+    registerMobileKit(server, api.mobile, identity)
     // SKILLS 3.0 (2026-09-08): o ajudante TAMBÉM monta harness. O briefing dele
     // já lista o que a missão puxou (guiDelegationWiring), mas uma fatia que
     // precisa de um playbook que ninguém previu não pode depender de o delegador

@@ -1,10 +1,13 @@
 import type { GuiAttachmentDescriptor } from '../../preload'
+import type { GuiBrowserReference } from '../../shared/guiBrowserReferences'
 
 const GUI_QUEUE_PREFIX = 'synkora.guiQueue.'
 const GUI_QUEUE_VERSION = 2
 export const GUI_QUEUE_MAX_CHARS = 1_000_000
 export const GUI_QUEUE_CLAIM_LEASE_MS = 60_000
 const GUI_QUEUE_ATTACHMENT_MAX_FILES = 20
+// Mirrors main/guiAttachments.ts and guiComposerAttachments.ts.
+const GUI_QUEUE_ATTACHMENT_MAX_BYTES = 50 * 1024 * 1024
 const GUI_QUEUE_ATTACHMENT_MAX_TOTAL_BYTES = 50 * 1024 * 1024
 
 type GuiQueueStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
@@ -21,6 +24,7 @@ export interface GuiQueuedMessage {
   at: number
   options: GuiQueuedOptions
   attachments: GuiAttachmentDescriptor[]
+  browserReferences?: GuiBrowserReference[]
   /** Falha da ultima tentativa automatica. Enquanto existir, o dispatcher nao
    * tenta de novo sozinho: o dono decide entre repetir, editar ou apagar. */
   deliveryError?: string
@@ -102,11 +106,39 @@ function isQueuedAttachment(value: unknown): value is GuiAttachmentDescriptor {
     typeof attachment.size === 'number' &&
     Number.isSafeInteger(attachment.size) &&
     attachment.size >= 0 &&
-    attachment.size <= 10 * 1024 * 1024 &&
+    attachment.size <= GUI_QUEUE_ATTACHMENT_MAX_BYTES &&
     typeof attachment.mime === 'string' &&
     /^[a-z0-9][a-z0-9!#$&^_.+-]{0,127}\/[a-z0-9][a-z0-9!#$&^_.+-]{0,127}$/u.test(
       attachment.mime
     )
+  )
+}
+
+/** Leitura do envelope é síncrona no boot. O main continua resolvendo estes
+ * IDs contra os snapshots canônicos do mesmo pane antes de entregar ao agente. */
+function isQueuedBrowserReference(value: unknown): value is GuiBrowserReference {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const ref = value as GuiBrowserReference
+  const finite = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n)
+  const short = (s: unknown, max: number): s is string => typeof s === 'string' && s.length <= max
+  const viewport = (v: GuiBrowserReference['viewport']): boolean => Boolean(v &&
+    finite(v.width) && v.width > 0 && v.width <= 100_000 &&
+    finite(v.height) && v.height > 0 && v.height <= 100_000 &&
+    finite(v.devicePixelRatio) && v.devicePixelRatio > 0 && v.devicePixelRatio <= 100 &&
+    finite(v.scrollX) && finite(v.scrollY))
+  return Boolean(
+    short(ref.id, 128) && /^browser-reference-[A-Za-z0-9-]{20,100}$/u.test(ref.id) &&
+    Number.isSafeInteger(ref.number) && ref.number > 0 &&
+    short(ref.capturedAt, 40) && Number.isFinite(Date.parse(ref.capturedAt)) &&
+    short(ref.missionId, 256) && ref.missionId && short(ref.tabId, 256) && ref.tabId &&
+    short(ref.url, 16_384) && short(ref.frameUrl, 16_384) &&
+    short(ref.frameId, 256) && Number.isSafeInteger(ref.backendNodeId) && ref.backendNodeId > 0 &&
+    viewport(ref.viewport) && (ref.frameViewport === undefined || viewport(ref.frameViewport)) &&
+    ref.element && short(ref.element.tag, 128) && short(ref.element.selector, 8_192) &&
+    (ref.element.selectorPath === undefined || (Array.isArray(ref.element.selectorPath) &&
+      ref.element.selectorPath.length <= 100 && ref.element.selectorPath.every(part => short(part, 8_192)))) &&
+    short(ref.element.text, 8_192) && ref.element.bounds &&
+    ['x', 'y', 'width', 'height'].every(key => finite(ref.element.bounds[key as keyof typeof ref.element.bounds]))
   )
 }
 
@@ -118,6 +150,7 @@ function parseQueue(raw: string | null): GuiQueueEnvelope | null {
     const candidate = value as Partial<GuiQueueEnvelope>
     const options = candidate.options as Partial<GuiQueuedOptions> | undefined
     const attachments = candidate.attachments === undefined ? [] : candidate.attachments
+    const browserReferences = candidate.browserReferences === undefined ? [] : candidate.browserReferences
     const model = cleanNullableString(options?.model)
     const effort = cleanNullableString(options?.effort)
     const deliveryError =
@@ -139,10 +172,14 @@ function parseQueue(raw: string | null): GuiQueueEnvelope | null {
       typeof options.permissionMode !== 'string' ||
       !Array.isArray(attachments) ||
       attachments.length > GUI_QUEUE_ATTACHMENT_MAX_FILES ||
-      !attachments.every(isQueuedAttachment)
+      !attachments.every(isQueuedAttachment) ||
+      !Array.isArray(browserReferences) || browserReferences.length > 20 ||
+      !browserReferences.every(isQueuedBrowserReference) ||
+      new Set(browserReferences.map(ref => ref.id)).size !== browserReferences.length ||
+      new Set(browserReferences.map(ref => ref.number)).size !== browserReferences.length
     )
       return null
-    if (!candidate.text.trim() && attachments.length === 0) return null
+    if (!candidate.text.trim() && attachments.length === 0 && browserReferences.length === 0) return null
     const attachmentIds = new Set<string>()
     const attachmentCapabilities = new Set<string>()
     let attachmentBytes = 0
@@ -176,6 +213,7 @@ function parseQueue(raw: string | null): GuiQueueEnvelope | null {
         permissionMode: options.permissionMode.slice(0, 64)
       },
       attachments: attachments.map((attachment) => ({ ...attachment })),
+      ...(browserReferences.length > 0 ? { browserReferences: structuredClone(browserReferences) } : {}),
       ...(deliveryError ? { deliveryError } : {}),
       ...(claimToken && claimedAt !== undefined ? { claimToken, claimedAt } : {})
     }
@@ -185,7 +223,7 @@ function parseQueue(raw: string | null): GuiQueueEnvelope | null {
 }
 
 function publicMessage(envelope: GuiQueueEnvelope): GuiQueuedMessage {
-  const { id, text, at, options, attachments, deliveryError } = envelope
+  const { id, text, at, options, attachments, browserReferences, deliveryError } = envelope
   const claimedUntil =
     envelope.claimToken && envelope.claimedAt !== undefined
       ? envelope.claimedAt + GUI_QUEUE_CLAIM_LEASE_MS
@@ -196,6 +234,7 @@ function publicMessage(envelope: GuiQueueEnvelope): GuiQueuedMessage {
     at,
     options,
     attachments: attachments.map((attachment) => ({ ...attachment })),
+    ...(browserReferences?.length ? { browserReferences: structuredClone(browserReferences) } : {}),
     ...(deliveryError ? { deliveryError } : {}),
     // O prazo autoriza outro renderer a ASSUMIR a entrega depois de um crash;
     // nunca autoriza o usuário a editar/apagar enquanto não houve ACK ou falha.
@@ -278,7 +317,8 @@ export function acknowledgeGuiQueuedMessage(
   return storageRemove(storage, key)
 }
 
-/** Falha confirmada libera a lease e conserva exatamente o mesmo id/payload. */
+/** A refusal releases the lease and preserves the exact payload. An empty
+ * error means a transient deferral, eligible for automatic retry. */
 export function releaseGuiQueuedMessageClaim(
   paneId: string,
   ownerToken: string,
@@ -295,7 +335,7 @@ export function releaseGuiQueuedMessageClaim(
     JSON.stringify({
       ...message,
       v: GUI_QUEUE_VERSION,
-      deliveryError: deliveryError || 'não deu para enviar automaticamente'
+      deliveryError: deliveryError || undefined
     })
   )
   if (!released || !storageSet(storage, key, JSON.stringify(released))) return null

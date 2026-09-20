@@ -1,5 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { GuiQuestion } from '../guiApi'
+import GuiQuickQuestionCard from './GuiQuickQuestionCard'
+
+interface GuiQuestionCardProps {
+  questions: GuiQuestion[]
+  onAnswer: (answers: Record<string, string>) => void
+  onSkip: () => void
+  disabled?: boolean
+}
+
+export default function GuiQuestionCard(props: GuiQuestionCardProps): React.JSX.Element {
+  const single = props.questions.length === 1 ? props.questions[0] : undefined
+  if (single && !single.multiSelect && single.options.length === 2) {
+    return <GuiQuickQuestionCard question={single} onAnswer={props.onAnswer}
+      onSkip={props.onSkip} disabled={props.disabled} />
+  }
+  return <GuiQuestionnaire {...props} />
+}
 
 // PERGUNTA COM OPÇÕES (AskUserQuestion / request_user_input) — o desenho que o dono pediu ("aquelas
 // perguntas que você seleciona e digita"), traduzido do claudecodeui para o
@@ -13,7 +30,7 @@ import type { GuiQuestion } from '../guiApi'
 //  - Teclado: 1-9 escolhe, 0 abre "outra resposta", Enter avança/envia,
 //    Esc pula. O card recebe o foco sozinho a cada passo.
 
-export default function GuiQuestionCard({
+function GuiQuestionnaire({
   questions,
   onAnswer,
   onSkip,

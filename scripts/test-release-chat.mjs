@@ -37,6 +37,21 @@ const version = (patch = {}) => ({
   ...patch
 })
 
+test('release separa destino main da pasta em dev e oferece troca dentro do chat', () => {
+  const input = {
+    version: version(), mainBranch: 'main', pendingMissions: [], openBacklogItems: [],
+    planLockMessage: null, integrationPending: [], releaseIntentPending: false,
+    target: { branch: 'main', currentBranch: 'dev', head: 'a'.repeat(40), branches: ['dev', 'main'], needsSwitch: true }
+  }
+  const text = releaseStatusText(input)
+  assert.match(text, /DESTINO: main/u)
+  assert.match(text, /PASTA DO PROJETO: dev/u)
+  assert.match(text, /release_run.*main/u)
+  const unset = { ...input, mainBranch: undefined, target: { currentBranch: 'dev', branches: ['dev', 'main'], needsSwitch: false, error: 'destino não definido; use release_target com a branch autorizada pelo dono' } }
+  assert.match(releaseNextStep(unset), /release_target/u)
+  assert.doesNotMatch(releaseNextStep(unset), /tudo livre/u)
+})
+
 // ————— ensureReleaseMission: UMA conversa por versão —————
 
 test('versão lançada e versão sem isolamento recusam com a receita', () => {
@@ -104,7 +119,8 @@ test('a receita segue a prioridade real: intent > fila > missões > backlog > tr
     integrationPending: [],
     releaseIntentPending: false
   }
-  assert.match(releaseNextStep({ ...base, releaseIntentPending: true }), /journal/u)
+  assert.match(releaseNextStep({ ...base, releaseIntentPending: true }), /release_run.*recuperar/u)
+  assert.doesNotMatch(releaseNextStep({ ...base, releaseIntentPending: true }), /reinici/u)
   assert.match(
     releaseNextStep({ ...base, integrationPending: [{ title: 'M', state: 'queued' }] }),
     /fila/u
@@ -366,19 +382,19 @@ test('a missão de release nunca bloqueia o próprio release — nas DUAS régua
 // worktree, mas NÃO concluía a missão de release: o board mostrava o release
 // eternamente "rodando". O sinal estrutural é UM: versão provada na base ⇒ o
 // REGISTRO (a missão de release) se conclui — no caminho feliz E no boot.
-test('a reconciliação de boot conclui a missão de release junto com a versão', async () => {
+test('a reconciliação de boot preserva a missão para terminar a entrega explicitamente', async () => {
   const index = await source('src/main/index.ts')
   const recover = index.slice(index.indexOf('function recoverVersionReleaseIntents'))
   const block = recover.slice(0, recover.indexOf('async function releaseVersionImpl'))
   assert.match(
     block,
-    /missionTypeOf\(m\) === 'release'/u,
-    'a reconciliação encontra o registro da subida'
+    /release_done/u,
+    'a recuperação deixa o fecho explícito disponível'
   )
-  assert.match(
+  assert.doesNotMatch(
     block,
     /missions\.update\(m\.id, \{ status: 'concluida' \}\)/u,
-    'e o conclui pelo MESMO sinal estrutural do caminho feliz'
+    'uma subida provada não atesta a entrega'
   )
 })
 
@@ -491,7 +507,7 @@ test('R27F2 — o fecho do release e a reconciliação empurram missions:changed
   assert.match(conclude.slice(0, 2600), /syncBoard\(mission\.projectId\)/u)
   assert.match(conclude.slice(0, 2600), /emitBacklogChanged\(mission\.projectId\)/u)
 
-  const reconcile = index.slice(index.indexOf("missionTypeOf(m) === 'release' &&"))
+  const reconcile = index.slice(index.indexOf('// Recovery proves the ascent'))
   assert.match(
     reconcile.slice(0, 900),
     /missions:changed/u,
@@ -503,14 +519,12 @@ test('R27F2 — o fecho do release e a reconciliação empurram missions:changed
 // termina sem desfecho visível ou receita, e nenhum fecho depende de UM push
 // entregue (doutrina: durável com recibo OU re-derivável por reconciliador).
 
-test('R27F2 — a leitura de missões CURA o registro de release atrasado', async () => {
+test('a leitura de missões preserva a release ativa entre sessões', async () => {
   const engine = await source('src/main/missionEngine.ts')
   const read = engine.slice(engine.indexOf('function missionsWithIntegration'))
   const block = read.slice(0, read.indexOf('\n  /**'))
-  assert.match(block, /missionTypeOf\(mission\) [!=]== 'release'/u, 'a régua é por TIPO, como nas outras superfícies')
-  assert.match(block, /'lancada'/u, 'o gatilho é o fato provado: versão já lançada')
-  assert.match(block, /concluida/u, 'o registro atrasado conclui na própria leitura')
-  assert.match(block, /emitMissionsChanged/u, 'curou → avisa as outras telas; nada curado → silêncio (converge)')
+  assert.match(block, /release_done/u, 'o fecho tem um verbo explícito')
+  assert.doesNotMatch(block, /missions\.update/u, 'uma leitura não conclui a entrega')
 })
 
 // R38 — A REDE FICA, MAS PARA DE PESCAR CONVERSA VIVA. A cura da R27F2 rodava
@@ -518,15 +532,12 @@ test('R27F2 — a leitura de missões CURA o registro de release atrasado', asyn
 // mesmo com o agente vivo no meio da caixa: o card sumia (R30) e o dono perdia
 // o chat. Lei da casa preservada — registro atrasado não fica eternamente
 // "rodando" —, escopo estreitado: só ÓRFÃO (sem chat vivo) é curado.
-test('R38 — a cura viva só alcança release ÓRFÃO: chat vivo nunca é fechado por leitura', async () => {
+test('a ausência de um pane vivo não é evidência de release concluída', async () => {
   const engine = await source('src/main/missionEngine.ts')
   const read = engine.slice(engine.indexOf('function missionsWithIntegration'))
   const block = read.slice(0, read.indexOf('\n  /**'))
-  assert.match(block, /paneAlive\(/u, 'a leitura pergunta se o chat do release está VIVO')
-  assert.ok(
-    block.indexOf('paneAlive(') < block.indexOf("status: 'concluida'"),
-    'a pergunta vem ANTES da conclusão — depois seria fechar e só então perguntar'
-  )
+  assert.doesNotMatch(block, /paneAlive\(/u, 'presença de processo não decide o ciclo da release')
+  assert.doesNotMatch(block, /status: 'concluida'/u, 'a leitura não encerra a conversa')
   assert.match(
     engine,
     /paneAlive\(paneId: string\): boolean/u,
@@ -547,12 +558,12 @@ test('R38 — a cura viva só alcança release ÓRFÃO: chat vivo nunca é fecha
 // `guiSessions = registerGuiIpc(...)` — o registro de conversas nem existe
 // ainda e o Map dele nasce vazio a cada boot. Lá, todo release é órfão por
 // construção, e a rede continua sendo a única saída.
-test('R38 — a reconciliação de BOOT roda antes de existir chat: o motivo fica escrito', async () => {
+test('a recuperação de BOOT preserva a conversa antes de carregar o registro de chats', async () => {
   const index = await source('src/main/index.ts')
   const recover = index.slice(index.indexOf('function recoverVersionReleaseIntents'))
   const block = recover.slice(0, recover.indexOf('async function releaseVersionImpl'))
-  assert.match(block, /R38/u, 'o bloco do boot declara por que NÃO pergunta pelo pane')
-  assert.match(block, /registerGuiIpc/u, 'e nomeia a prova: o registro nasce depois')
+  assert.match(block, /Recovery proves the ascent/u, 'o boot distingue subida de entrega')
+  assert.match(block, /release_done/u, 'o fecho continua disponível depois da recuperação')
   // A CHAMADA, não a menção: o comentário acima cita `registerGuiIpc(...)`.
   assert.ok(
     index.indexOf('recoverVersionReleaseIntents(p.id)') <
@@ -569,7 +580,7 @@ test('R27F2 — toda recusa do motor de release carrega a receita', async () => 
   assert.match(implBody, /deixe a fila terminar/u, 'fila de integração ensina a espera')
   assert.match(implBody, /integre \(ou arquive\)/u, 'missão pendente ensina os dois verbos')
   assert.match(implBody, /faça \(vire missão\) ou exclua/u, 'backlog aberto ensina os dois verbos')
-  assert.match(implBody, /reinicie o Synkora para reconciliá-lo/u, 'journal pendente ensina o boot seguro')
+  assert.match(implBody, /await recoverVersionReleaseIntents\(version.projectId, version.id\)/u, 'journal pendente retoma a própria tentativa sob a trava da release')
   assert.match(implBody, /Repare a identidade/u, 'isolamento inválido ensina o reparo')
   assert.match(implBody, /Finalize e valide/u, 'worktree sujo ensina o fecho')
 })
@@ -607,7 +618,7 @@ test('R29 — a fotografia declara a PUBLICAÇÃO: pipeline, versões, ausência
   })
   assert.match(aligned, /em dia/u)
   const codeOnly = releaseStatusText({ ...base, publish: { hasReleaseScript: false } })
-  assert.match(codeOnly, /PUBLICAÇÃO: sem pipeline declarado/u, 'sem script = subida só de código, dito em voz alta')
+  assert.match(codeOnly, /PUBLICAÇÃO: nenhum script `release`/u, 'ausência do script não exclui deploy por integração Git')
   assert.doesNotMatch(codeOnly, /npm run release/u)
   assert.doesNotMatch(releaseStatusText(base), /PUBLICAÇÃO/u, 'sem manifesto, a linha nem existe')
 })
@@ -634,7 +645,7 @@ test('R38 — a persona: a ascensão fecha NADA, e o release_done é do agente',
   assert.match(prompt, /ascent closes NOTHING/u, 'a subida não é o fim — dito em voz alta')
   assert.match(
     prompt,
-    /THREE tools run this show/u,
+    /SIX tools run this show/u,
     'o inventário do papel acompanha o catálogo real'
   )
   assert.match(

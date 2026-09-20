@@ -1,11 +1,16 @@
 export const WORKSPACE_PANELS = [
   { id: 'browser', title: 'Browser' },
+  { id: 'mobile', title: 'Mobile' },
   { id: 'frota', title: 'Frota' },
   { id: 'trabalho', title: 'Trabalho' },
-  { id: 'historico', title: 'Histórico' }
+  { id: 'historico', title: 'Histórico' },
+  { id: 'release', title: 'Release' }
 ] as const
 
 export type WorkspacePanelId = typeof WORKSPACE_PANELS[number]['id']
+/** Declared mirror of MissionType (src/renderer/src/store.ts): this module
+ * stays pure so the node suites load it without the store. */
+export type WorkspaceMissionType = 'dev' | 'planejamento' | 'release'
 export interface WorkspacePreference {
   sidebarCollapsed: boolean
   panels: WorkspacePanelId[]
@@ -80,8 +85,10 @@ export function workspaceRowSplit(value: number, height = 0): number {
   return Math.min(100 - minimum, Math.max(minimum, Number.isFinite(value) ? value : 50))
 }
 
-export function workspaceStorageKey(projectId: string): string {
-  return `synkora.workspace.v1:${encodeURIComponent(projectId)}`
+export function workspaceStorageKey(projectId: string, missionId?: string | null): string {
+  return missionId == null
+    ? `synkora.workspace.v1:${encodeURIComponent(projectId)}`
+    : `synkora.workspace.v2:${encodeURIComponent(projectId)}:${encodeURIComponent(missionId)}`
 }
 
 export function isWorkspacePanelId(id: unknown): id is WorkspacePanelId {
@@ -92,21 +99,35 @@ export function normalizeWorkspacePreference(value: unknown): WorkspacePreferenc
   const raw = (value && typeof value === 'object' ? value : {}) as Partial<WorkspacePreference> & { columnWidth?: number }
   const requested = Array.isArray(raw.panels) ? [...new Set(raw.panels.filter(isWorkspacePanelId))] : []
   const columns: WorkspacePanelId[][] = []
+  const sourceColumns: number[] = []
   const placed = new Set<WorkspacePanelId>()
-  if (Array.isArray(raw.columns)) for (const candidate of raw.columns) {
+  // Before explicit columns were persisted, adjacent panels shared a column.
+  // Reconstruct those original pairs so splitting Mobile preserves their sizes.
+  // An explicit empty array is a new layout, not that historical representation.
+  const originalColumns = Array.isArray(raw.columns) ? raw.columns
+    : Array.from({ length: Math.ceil(requested.length / 2) }, (_, index) => requested.slice(index * 2, index * 2 + 2))
+  for (const [source, candidate] of originalColumns.entries()) {
     if (!Array.isArray(candidate)) continue
     const items = candidate.filter((id): id is WorkspacePanelId => {
       if (!isWorkspacePanelId(id) || !requested.includes(id) || placed.has(id)) return false
       placed.add(id); return true
     })
-    for (let i = 0; i < items.length; i += 2) columns.push(items.slice(i, i + 2))
+    for (let i = 0; i < items.length;) {
+      const count = items[i] === 'mobile' || items[i + 1] === 'mobile' ? 1 : 2
+      columns.push(items.slice(i, i + count))
+      // Splitting a legacy Mobile row must not shift a following column's
+      // saved width or row split. Both new columns inherit their origin.
+      sourceColumns.push(source)
+      i += count
+    }
   }
   for (const id of requested) if (!placed.has(id)) {
-    if (columns.at(-1)?.length === 1) columns.at(-1)!.push(id)
-    else columns.push([id])
+    const last = columns.at(-1)
+    if (id !== 'mobile' && last?.length === 1 && last[0] !== 'mobile') last.push(id)
+    else { sourceColumns.push(columns.length); columns.push([id]) }
   }
   const panels = columns.flat()
-  const sizes = Array.from({ length: Math.max(2, columns.length) }, (_, index) => index)
+  const sizes = Array.from({ length: Math.max(2, columns.length) }, (_, index) => sourceColumns[index] ?? index)
   return {
     sidebarCollapsed: raw.sidebarCollapsed === true,
     panels,
@@ -118,15 +139,31 @@ export function normalizeWorkspacePreference(value: unknown): WorkspacePreferenc
   }
 }
 
-export function readWorkspacePreference(storage: Pick<Storage, 'getItem'> | null, projectId: string): WorkspacePreference {
-  try { return normalizeWorkspacePreference(JSON.parse(storage?.getItem(workspaceStorageKey(projectId)) ?? 'null')) }
+export function readWorkspacePreference(storage: Pick<Storage, 'getItem'> | null, projectId: string, missionId?: string | null): WorkspacePreference {
+  try {
+    const saved = storage?.getItem(workspaceStorageKey(projectId, missionId))
+    if (saved != null || missionId == null) return normalizeWorkspacePreference(JSON.parse(saved ?? 'null'))
+    // The old project-wide layout cannot tell which mission opened a panel.
+    // Preserve its sizing/sidebar preferences, but never spread open panels.
+    const legacy = readWorkspacePreference(storage, projectId)
+    return normalizeWorkspacePreference({ ...legacy, panels: [], columns: [], maximized: null })
+  }
   catch { return normalizeWorkspacePreference(null) }
 }
 
-export function availableWorkspacePanels(planning: boolean, browser: boolean): WorkspacePanelId[] {
-  return WORKSPACE_PANELS.filter((panel) =>
-    (browser || panel.id !== 'browser') && (!planning || !['trabalho', 'historico'].includes(panel.id))
-  ).map((panel) => panel.id)
+/** The panels a chat can open, decided by the nature of its mission — one
+ * frame for the three chats, never a different chrome per type (owner's
+ * order, 2026-09-09). Dev opens everything but Release; planning has no
+ * worktree, so no Trabalho/Histórico; release runs in the project folder with
+ * no worktree, no delegation and no browser kit, so only its own panel. */
+export function availableWorkspacePanels(type: WorkspaceMissionType, browser: boolean): WorkspacePanelId[] {
+  return WORKSPACE_PANELS.filter((panel) => {
+    if (panel.id === 'release') return type === 'release'
+    if (type === 'release') return false
+    if (panel.id === 'mobile') return type === 'dev' && browser
+    if (panel.id === 'browser') return browser
+    return type !== 'planejamento' || panel.id === 'frota'
+  }).map((panel) => panel.id)
 }
 
 export function openWorkspacePanel(state: WorkspacePreference, id: WorkspacePanelId): WorkspacePreference {
@@ -150,7 +187,9 @@ export type WorkspaceDropTarget = { panel: WorkspacePanelId; edge: 'left' | 'rig
 export function canMoveWorkspacePanel(state: WorkspacePreference, id: WorkspacePanelId, target: WorkspaceDropTarget): boolean {
   if (!state.panels.includes(id) || id === target.panel) return false
   const column = state.columns.find(column => column.includes(target.panel))
-  return !!column && (target.edge === 'left' || target.edge === 'right' || column.filter(panel => panel !== id).length < 2)
+  if (!column) return false
+  if (target.edge === 'left' || target.edge === 'right') return true
+  return id !== 'mobile' && !column.includes('mobile') && column.filter(panel => panel !== id).length < 2
 }
 
 export function moveWorkspacePanel(state: WorkspacePreference, id: WorkspacePanelId, target: WorkspaceDropTarget): WorkspacePreference {

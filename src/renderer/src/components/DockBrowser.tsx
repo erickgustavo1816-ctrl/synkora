@@ -621,14 +621,14 @@ export default function DockBrowser({
 
     const measure = (): void => {
       if (stopped) return
-      const box = browserRect(el.getBoundingClientRect())
+      const box = browserRect(el.getBoundingClientRect(), 'inward')
       lastRectRef.current = box
       if (!visible || !elementIsPainted(el)) {
         report(mission, box, false)
         return
       }
       const clipped = clipBrowserRect(box, [
-        ...clips.map((node) => browserRect(node.getBoundingClientRect())),
+        ...clips.map((node) => browserRect(node.getBoundingClientRect(), 'inward')),
         viewportRect()
       ])
       if (!rectHasArea(clipped)) {

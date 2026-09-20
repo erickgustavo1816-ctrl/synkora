@@ -1,5 +1,6 @@
 import { parentPort, receiveMessageOnPort, type MessagePort } from 'node:worker_threads'
 import * as worktree from './worktree'
+import { projectContextSnapshot } from './projectContextGit'
 
 // WORKER DE GIT (task #2, 2026-08-04): as "travadas" do app eram o MAIN
 // congelado em execFileSync de git (spawn 1-2s, transição 2-3,5s, merge
@@ -20,7 +21,8 @@ export const CHECKPOINT_MARKER = '__SYNKORA_GIT_CHECKPOINT__'
 // (gitOff('<nome>')). Antes de remover qualquer export de lá, grepe pelo NOME
 // — o typecheck não enxerga este mapa.
 const registry: Record<string, unknown> = {
-  ...worktree
+  ...worktree,
+  projectContextSnapshot
 }
 
 interface GitWorkerRequest {

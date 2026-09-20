@@ -14,6 +14,7 @@ const compiled = buildSync({ stdin: { contents: `
   export { default as DockSection } from './components/DockSection'
   export { default as WorkspacePanels } from './workspace/WorkspacePanels'
   export { default as MissionHeaderActions } from './workspace/MissionHeaderActions'
+  export { default as ReleaseHeaderActions } from './workspace/ReleaseHeaderActions'
   export { focusProgressDelivery } from './progressNavigation'
 `, resolveDir: 'src/renderer/src', loader: 'ts' }, bundle: true, platform: 'node', format: 'cjs',
   jsx: 'automatic', write: false, external: ['react', 'react/jsx-runtime', 'react-dom'] }).outputFiles[0].text
@@ -183,10 +184,10 @@ test('redimensionar a coluna visível conserva os tamanhos dos painéis incompat
   const h = await harness(t)
   for (const id of ['trabalho', 'historico', 'browser']) await h.run('openPanel', id)
   await h.run('setColumnWidth', 680)
-  await h.update({ available: h.m.availableWorkspacePanels(true, true) })
+  await h.update({ available: h.m.availableWorkspacePanels('planejamento', true) })
   await act(() => h.tree.root.findByProps({ 'aria-label': 'Largura de Browser' }).props.onDoubleClick())
   assert.deepEqual(h.controller().preference.columnWidths, [680, 1016])
-  await h.update({ available: h.m.availableWorkspacePanels(false, true) })
+  await h.update({ available: h.m.availableWorkspacePanels('dev', true) })
   assert.equal(h.panel('trabalho').props.hidden, false)
   assert.equal(h.panel('browser').props.style.gridColumn, 2)
   assert.equal(h.tree.root.findByProps({ className: 'workspace-panel-deck' }).props.style.width, 1016)
@@ -252,15 +253,15 @@ async function harness(t, extra = {}) {
     React.useEffect(() => () => unmounts.push(id), [id])
     return React.createElement('p', { 'data-content': id, 'data-stamp': stamp }, id)
   }
-  function Harness({ projectId, available, visible, onCovered }) {
-    controller = m.useWorkspaceLayout(projectId)
+  function Harness({ projectId, missionId, available, visible, onCovered }) {
+    controller = m.useWorkspaceLayout(projectId, missionId)
     return React.createElement('div', { ref, 'data-qa-board': true },
       React.createElement(Content, { id: 'chat' }),
       React.createElement(m.WorkspacePanels, { projectId, controller, available, visible, enabled: true, legacyEnabled: true, boardRef: ref, onCovered },
         React.createElement('div', { className: 'delivery-rail dock' },
           m.WORKSPACE_PANELS.map(({ id, title }) => React.createElement(m.DockSection, { id, title, key: id }, React.createElement(Content, { id }))))))
   }
-  let props = { projectId: 'A', available: m.availableWorkspacePanels(false, true), visible: true, ...extra }
+  let props = { projectId: 'A', available: m.availableWorkspacePanels('dev', true), visible: true, ...extra }
   let tree
   await act(() => { tree = create(React.createElement(Harness, props), { createNodeMock: node => node.props['data-qa-board'] ? board : ({ querySelector: () => null, clientWidth: width }) }) })
   await act(() => m.flushFrames())
@@ -316,15 +317,65 @@ test('troca de projeto restaura preferências e o escopo nunca recebe as escolha
   assert.deepEqual(JSON.parse(h.m.values.get(h.m.workspaceStorageKey('B'))).panels, ['frota'])
 })
 
+test('cada missão mantém seus painéis ao abrir, fechar, trocar e remontar o controlador', async t => {
+  const h = await harness(t, { missionId: 'one' })
+  await h.run('openPanel', 'browser')
+  await h.run('setColumnWidth', 620)
+  const closePreviousMission = h.controller().closePanel
+  await h.update({ missionId: 'two' })
+  assert.deepEqual(h.controller().preference.panels, [], 'abrir em one não abre em two')
+  await h.run('openPanel', 'browser')
+  await h.run('openPanel', 'historico')
+  await act(() => closePreviousMission('browser'))
+  assert.deepEqual(h.controller().preference.panels, ['browser', 'historico'], 'callback atrasado da missão anterior não fecha a atual')
+  await h.update({ missionId: 'one' })
+  assert.deepEqual(h.controller().preference.panels, ['browser'])
+  assert.equal(h.controller().preference.columnWidths[0], 620)
+  await h.run('closePanel', 'browser')
+  await h.update({ missionId: 'two' })
+  assert.deepEqual(h.controller().preference.panels, ['browser', 'historico'], 'fechar em one não fecha em two')
+  await h.update({ projectId: 'B' })
+  assert.deepEqual(h.controller().preference.panels, [], 'IDs iguais em projetos distintos não colidem')
+  await h.update({ projectId: 'A', missionId: 'one' })
+  assert.deepEqual(h.controller().preference.panels, [])
+  assert.deepEqual(h.m.readWorkspacePreference({ getItem: key => h.m.values.get(key) }, 'A', 'two').panels,
+    ['browser', 'historico'], 'a preferência persiste por missão')
+  let restored
+  function Remounted() { restored = h.m.useWorkspaceLayout('A', 'two'); return null }
+  let remounted
+  await act(() => { remounted = create(React.createElement(Remounted)) })
+  try { assert.deepEqual(restored.preference.panels, ['browser', 'historico']) }
+  finally { await act(() => remounted.unmount()) }
+  const board = readFileSync('src/renderer/src/components/Board.tsx', 'utf8')
+  assert.match(board, /useWorkspaceLayout\(projectId, missionTab\)/u, 'o Board precisa fornecer a missão selecionada')
+})
+
+test('preferência antiga preserva medidas, sem espalhar painéis abertos para missões novas', () => {
+  const m = runtime()
+  const legacy = m.normalizeWorkspacePreference({ panels: ['browser', 'historico'], maximized: 'browser',
+    sidebarCollapsed: true, columnWidths: [780, 480], rowSplits: [60, 40] })
+  m.values.set(m.workspaceStorageKey('A'), JSON.stringify(legacy))
+  const storage = { getItem: key => m.values.get(key) ?? null }
+  const mission = m.readWorkspacePreference(storage, 'A', 'new')
+  assert.deepEqual(mission.panels, [])
+  assert.deepEqual(mission.columns, [])
+  assert.equal(mission.maximized, null)
+  assert.equal(mission.sidebarCollapsed, true)
+  assert.deepEqual(mission.columnWidths, [780, 480])
+  assert.deepEqual(m.readWorkspacePreference(storage, 'A'), legacy, 'a preferência legada continua intacta')
+  assert.notEqual(m.workspaceStorageKey('A:B', 'C'), m.workspaceStorageKey('A', 'B:C'))
+  assert.notEqual(m.workspaceStorageKey('A', ''), m.workspaceStorageKey('A'))
+})
+
 test('missão de planejamento e projeto fora de vista escondem somente seus painéis incompatíveis', async t => {
   const h = await harness(t)
   for (const id of ['trabalho', 'browser', 'frota']) await h.run('openPanel', id)
-  await h.update({ available: h.m.availableWorkspacePanels(true, true) })
+  await h.update({ available: h.m.availableWorkspacePanels('planejamento', true) })
   assert.equal(h.panel('trabalho').props['aria-hidden'], true)
   assert.equal(h.panel('browser').props.hidden, false)
   await h.update({ visible: false })
   assert.deepEqual(h.visibility.filter(([id]) => id === 'browser').at(-1), ['browser', false])
-  await h.update({ visible: true, available: h.m.availableWorkspacePanels(false, true) })
+  await h.update({ visible: true, available: h.m.availableWorkspacePanels('dev', true) })
   assert.equal(h.panel('trabalho').props.hidden, false)
   assert.deepEqual(h.visibility.filter(([id]) => id === 'browser').at(-1), ['browser', true])
 })
@@ -470,6 +521,14 @@ test('cabeçalho mantém quatro ações e as guardas de integração, revisão e
     assert.equal(called.at(-1), 'KillTestServer')
     await act(() => tree.update(React.createElement(m.MissionHeaderActions, { ...base, mission: { ...mission, integration: { state: 'sync_required' } } })))
     assert.equal(button('Retomar integração').props.disabled, false)
+    await act(() => tree.update(React.createElement(m.MissionHeaderActions, { ...base, mission: { ...mission,
+      integration: { state: 'blocked', owner: 'orchestrator' } } })))
+    assert.equal(button('Retomar finalização').props.disabled, false)
+    await act(() => button('Retomar finalização').props.onClick())
+    assert.equal(called.at(-1), 'Integrate')
+    await act(() => tree.update(React.createElement(m.MissionHeaderActions, { ...base, mission: { ...mission,
+      integration: { state: 'blocked', owner: 'agent' } } })))
+    assert.equal(button('Subir missão').props.disabled, true)
     await act(() => tree.update(React.createElement(m.MissionHeaderActions, { ...base, planning: true })))
     assert.equal(button('Concluir planejamento').props.disabled, false)
     assert.equal(button('Abrir terminal de teste').props.disabled, true)
@@ -593,4 +652,80 @@ test('mover painéis no grid real conserva conteúdo, larguras e no máximo duas
   assert.equal(h.tree.root.findByProps({ className: 'workspace-panel-grid' }).props.style.gridTemplateColumns, 'minmax(0, 360fr) minmax(0, 360fr) minmax(0, 360fr)', 'as colunas conservam a largura durante a animação de saída')
   assert.deepEqual(h.unmounts, [])
   assert.ok([...h.mounts.values()].every(count => count === 1))
+})
+
+// ————— O RELEASE VESTE A MESMA MOLDURA (ordem do dono, 2026-09-09) —————
+// "O chat da release não está com o mesmo design dessa parte de painéis do
+// chat de missão e planejamento. Deixa tudo igual — e no código também." O
+// trilho próprio do release morava no dock legado (ResizableRightRail +
+// dock-head/dock-sec) porque o Board o excluía dos painéis. Agora os três
+// chats vestem o WorkspacePanels; o que muda por natureza é o CARDÁPIO.
+
+test('o cardápio de painéis nasce da natureza da missão: o release só tem o painel Release', () => {
+  const m = runtime()
+  assert.deepEqual(m.availableWorkspacePanels('dev', true), ['browser', 'mobile', 'frota', 'trabalho', 'historico'])
+  assert.deepEqual(m.availableWorkspacePanels('dev', false), ['frota', 'trabalho', 'historico'])
+  assert.deepEqual(m.availableWorkspacePanels('planejamento', true), ['browser', 'frota'])
+  assert.deepEqual(m.availableWorkspacePanels('planejamento', false), ['frota'])
+  assert.deepEqual(m.availableWorkspacePanels('release', true), ['release'], 'sem worktree, sem delegação e sem kit de browser: só a subida')
+  assert.deepEqual(m.availableWorkspacePanels('release', false), ['release'])
+  assert.equal(m.WORKSPACE_PANELS.find(panel => panel.id === 'release')?.title, 'Release')
+  // O painel guardado na preferência do projeto sobrevive à troca de chat e só
+  // aparece onde cabe — a mesma régua de trabalho/histórico no planejamento.
+  assert.deepEqual(m.normalizeWorkspacePreference({ panels: ['release', 'browser'] }).panels, ['release', 'browser'])
+})
+
+test('o Board liga os painéis para o release e leva o descarte para a cabeça do palco', () => {
+  const board = readFileSync(new URL('../src/renderer/src/components/Board.tsx', import.meta.url), 'utf8')
+  assert.match(board, /const panelsEnabled = isDirect && !!selMission\r?\n/u, 'o release não é mais excluído dos painéis')
+  assert.doesNotMatch(board, /panelsEnabled = isDirect && !!selMission && !selIsRelease/u)
+  assert.match(board, /availableWorkspacePanels\(\s*selMissionType,/u, 'o cardápio é decidido pela natureza da missão')
+  assert.match(board, /selIsRelease \? \(/u)
+  assert.match(board, /<ReleaseHeaderActions mission=\{\{ status: selMission\.status, seatId: selMission\.seatId \}\}/u)
+  assert.match(board, /<ReleaseRail\s+projectId=\{projectId\}\s+versionName=\{versionName\(selMission\.versionId\)\}\s+targetBranch=\{versionTargetBranch\(selMission\.versionId\)\}\s*\/>/u, 'o trilho mostra o destino escolhido; a alavanca saiu dele')
+  const rail = readFileSync(new URL('../src/renderer/src/components/ReleaseRail.tsx', import.meta.url), 'utf8')
+  assert.match(rail, /className="delivery-rail dock"/u, 'o mesmo raiz do trilho da missão: a grade do workspace o dissolve')
+  assert.match(rail, /<DockSection id="release" title="release">/u, 'a seção que vira o painel Release')
+  assert.doesNotMatch(rail, /onDiscard|releaseDiscardOffer|window\.confirm/u)
+  const css = readFileSync(new URL('../src/renderer/src/global.css', import.meta.url), 'utf8')
+  assert.doesNotMatch(css, /\.release-rail\.dock\s*\{/u, 'a moldura própria do release morreu')
+  assert.doesNotMatch(css, /\.release-rail-discard/u)
+})
+
+test('o descarte da subida arma no primeiro clique e só descarta no segundo — nunca window.confirm', async () => {
+  const m = runtime()
+  const source = readFileSync(new URL('../src/renderer/src/workspace/ReleaseHeaderActions.tsx', import.meta.url), 'utf8')
+  assert.doesNotMatch(source, /window\.confirm/u)
+  assert.match(source, /releaseDiscardOffer/u, 'a verdade do estado vem do módulo puro')
+  let discarded = 0
+  const base = { mission: { status: 'ativa', seatId: 'seat-1' }, onDiscard: () => discarded++ }
+  let tree
+  await act(() => { tree = create(React.createElement(m.ReleaseHeaderActions, base)) })
+  const button = label => tree.root.findByProps({ 'aria-label': label })
+  try {
+    assert.equal(tree.root.findAllByType('button').length, 1, 'o release tem UMA alavanca na cabeça')
+    assert.equal(button('Descartar a subida').props.disabled, false)
+    assert.match(button('Descartar a subida').props['data-tip'], /NÃO volta/u, 'a dica já diz o que o git não desfaz')
+    await act(() => button('Descartar a subida').props.onClick())
+    assert.equal(discarded, 0, 'o primeiro clique só arma')
+    const confirm = button('Confirmar o descarte da subida')
+    assert.equal(confirm.props.className, 'is-confirming')
+    assert.match(confirm.props['data-tip'], /NÃO volta/u)
+    await act(() => confirm.props.onKeyDown({ key: 'Escape', preventDefault() {}, stopPropagation() {} }))
+    assert.equal(button('Descartar a subida').props.disabled, false, 'Esc desarma')
+    await act(() => button('Descartar a subida').props.onClick())
+    await act(() => button('Confirmar o descarte da subida').props.onBlur())
+    assert.equal(discarded, 0, 'sair do botão desarma')
+    await act(() => button('Descartar a subida').props.onClick())
+    await act(() => button('Confirmar o descarte da subida').props.onClick())
+    assert.equal(discarded, 1)
+    assert.equal(button('Descartar a subida').props.disabled, false, 'descartou e voltou ao repouso')
+    await act(() => tree.update(React.createElement(m.ReleaseHeaderActions, { ...base, mission: { status: 'ativa' } })))
+    assert.match(button('Descartar a subida').props['data-tip'], /não começou/u, 'sem conversa a dica diz que nada se desfaz')
+    await act(() => tree.update(React.createElement(m.ReleaseHeaderActions, { ...base, mission: { status: 'concluida', seatId: 's' } })))
+    assert.equal(button('Descartar a subida').props.disabled, true, 'subida encerrada não se descarta')
+    await act(() => tree.update(React.createElement(m.ReleaseHeaderActions, { mission: { status: 'ativa', seatId: 's' } })))
+    assert.equal(button('Descartar a subida').props.disabled, true)
+    assert.match(button('Descartar a subida').props['data-tip'], /reinicie o app/iu, 'sem a ação do store o botão diz a receita')
+  } finally { await act(() => tree.unmount()) }
 })

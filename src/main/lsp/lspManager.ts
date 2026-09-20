@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, statSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { LspError } from './lspRpc'
@@ -225,6 +225,9 @@ export interface TsServerLaunchDeps {
    *  `.exe` sem depender da máquina onde o gate roda. */
   platform?: NodeJS.Platform
   arch?: string
+  /** Electron's trusted bundle resources directory. The test can supply a
+   * synthetic app layout; project packages never use this mapping. */
+  resourcesPath?: string
 }
 
 /**
@@ -291,7 +294,7 @@ function launchForTypescript(
     }
   }
 
-  const exe = (deps.nativeExe ?? ((dir: string) => nativeExeOf(dir, deps)))(typescriptDir)
+  const exe = (deps.nativeExe ?? ((dir: string) => nativeExeOf(dir, deps, origin === 'app')))(typescriptDir)
   if (!exe) {
     throw new LspError(
       `o typescript de ${typescriptDir} não é da linha clássica (não tem \`lib/tsserver.js\`) e o executável nativo dele não foi encontrado no disco — rode \`npm install\` ${where} para trazer o pacote de plataforma \`@typescript/${platformPackageOf(typescriptDir, deps)}\` e reabra o chat`
@@ -396,14 +399,15 @@ function classicTsServerOf(typescriptDir: string): string | null {
  * Não existir é RESPOSTA (`null`), não exceção: quem recusa, com a receita, é
  * `launchForTypescript`.
  */
-function nativeExeOf(typescriptDir: string, deps: TsServerLaunchDeps): string | null {
+function nativeExeOf(typescriptDir: string, deps: TsServerLaunchDeps, appFallback: boolean): string | null {
   const platform = deps.platform ?? process.platform
   const identity = typescriptIdentityOf(typescriptDir)
   if (!identity) return null
 
+  const platformPackage = `${identity.base}-${platform}-${deps.arch ?? process.arch}`
   const platformDir = platformPackageDirOf(
     typescriptDir,
-    `${identity.base}-${platform}-${deps.arch ?? process.arch}`
+    platformPackage
   )
   if (!platformDir) return null
 
@@ -412,6 +416,20 @@ function nativeExeOf(typescriptDir: string, deps: TsServerLaunchDeps): string | 
     'lib',
     platform === 'win32' ? `${identity.binName}.exe` : identity.binName
   )
+  const resources = deps.resourcesPath ?? (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath
+  const samePath = (left: string, right: string): boolean => platform === 'win32'
+    ? resolve(left).toLowerCase() === resolve(right).toLowerCase() : resolve(left) === resolve(right)
+  // spawn() cannot execute an ASAR virtual path, even when smartUnpack placed
+  // its bytes beside the archive. Map only the app's own fallback package,
+  // anchored to Electron resources, never an arbitrary "app.asar" substring.
+  if (appFallback && resources && isAbsolute(resources) &&
+    samePath(typescriptDir, join(resources, 'app.asar', 'node_modules', 'typescript'))) {
+    const relative = join('node_modules', '@typescript', platformPackage)
+    if (!samePath(platformDir, join(resources, 'app.asar', relative)) &&
+      !samePath(platformDir, join(resources, 'app.asar.unpacked', relative))) return null
+    exe = join(resources, 'app.asar.unpacked', relative, 'lib', platform === 'win32' ? `${identity.binName}.exe` : identity.binName)
+    try { if (!statSync(exe).isFile()) return null } catch { return null }
+  }
   if (platform === 'win32' && exe.length >= 248) exe = `\\\\?\\${exe}`
   return existsSync(exe) ? exe : null
 }

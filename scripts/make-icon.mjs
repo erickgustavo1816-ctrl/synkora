@@ -15,8 +15,10 @@
  * Saídas:
  *   build/icon.ico  — 16, 24, 32, 48, 64, 128 e 256px (cada entrada é um PNG)
  *   build/icon.png  — 256px, para plataformas que não usam .ico
+ *   build/icon-mac.png — 1024px, modo --mac-only (geometria original)
  *
  * Uso: `node scripts/make-icon.mjs`
+ * Mac: `node scripts/make-icon.mjs --mac-only` (não altera os ícones Windows)
  */
 
 import { deflateSync, inflateSync } from 'node:zlib'
@@ -531,6 +533,13 @@ function assert(ok, label, detail) {
 /* ──────────────────────────────── main ─────────────────────────────────── */
 
 mkdirSync(OUT_DIR, { recursive: true })
+
+if (process.argv.includes('--mac-only')) {
+  const png = encodePng(1024, renderIcon(1024).px)
+  writeFileSync(join(OUT_DIR, 'icon-mac.png'), png)
+  console.log(`build/icon-mac.png  ${png.length} bytes (1024px, geometria original)`)
+  process.exit(0)
+}
 
 const images = SIZES.map((size) => {
   const { px, parts } = renderIcon(size)

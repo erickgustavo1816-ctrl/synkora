@@ -23,6 +23,7 @@ import {
   createMissionWorktree,
   createVersionWorktree,
   ensureSynkoraGitExcludes,
+  initGitRepo,
   isExactCleanPreCasSnapshot,
   isExpectedWorktree,
   isExpectedVersionWorktree,
@@ -57,6 +58,113 @@ function initializeWorktreesDirectory(t, prefix) {
   t.after(() => rmSync(directory, { recursive: true, force: true }))
   return directory
 }
+
+test('Windows: mission and version checkout support long paths without changing Git config', {
+  skip: process.platform !== 'win32'
+}, (t) => {
+  const root = initializeRepository(t, 'synkora-long-source-')
+  const worktrees = initializeWorktreesDirectory(t, 'synkora-long-target-')
+  git(root, ['config', 'core.longpaths', 'false'])
+  git(root, ['config', 'core.autocrlf', 'false'])
+  const relativeFile = join('assets', 'nested-'.repeat(8), 'content-'.repeat(7), 'fixture.txt')
+  mkdirSync(join(root, 'assets', 'nested-'.repeat(8), 'content-'.repeat(7)), { recursive: true })
+  writeFileSync(join(root, relativeFile), 'synthetic long path\n')
+  git(root, ['add', '--', relativeFile])
+  git(root, ['commit', '-m', 'test: long path fixture'])
+  const base = join(worktrees, 'workspace-'.repeat(7))
+  const versionId = '12345678-1234-1234-1234-123456789abc'
+  assert.ok(join(base, `version-${versionId}`, relativeFile).length > 260)
+  // Match the interrupted first attempt: Git leaves the new branch behind
+  // after checkout fails, but no registered worktree exists to resume.
+  mkdirSync(base, { recursive: true })
+  assert.throws(() => execFileSync('git', ['-c', 'core.longpaths=false', 'worktree', 'add',
+    '-b', `version/${versionId}`, join(base, `version-${versionId}`)], {
+    cwd: root, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe']
+  }), /Filename too long/)
+  const preservedHead = git(root, ['rev-parse', `refs/heads/version/${versionId}`])
+  const version = createVersionWorktree(root, base, 'V0.0.1', versionId)
+  assert.ok(version, 'the first version must survive Windows long checkout paths')
+  const mission = createMissionWorktree(root, base, 'longpath-mission', version.branch)
+  assert.ok(mission, 'the first mission must be isolated too')
+  assert.equal(readFileSync(join(version.dir, relativeFile), 'utf8'), 'synthetic long path\n')
+  assert.equal(readFileSync(join(mission.dir, relativeFile), 'utf8'), 'synthetic long path\n')
+  assert.equal(isExpectedWorktree(root, mission.dir, mission.branch), true)
+  assert.equal(git(root, ['rev-parse', `refs/heads/version/${versionId}`]), preservedHead)
+  assert.equal(git(root, ['config', '--local', '--get', 'core.longpaths']), 'false')
+})
+
+test('missões e versões recebem env local sem versionar nem sobrescrever configurações', (t) => {
+  const root = initializeRepository(t, 'synkora-env-source-')
+  const worktrees = initializeWorktreesDirectory(t, 'synkora-env-wt-')
+  const fixtures = {
+    '.env': 'SYNTHETIC_MODE=development\r\n', '.env.local': 'SYNTHETIC_PORT=4200\r\n',
+    '.env.production': 'SYNTHETIC_MODE=production\n', '.env.development.local': 'SYNTHETIC_MODE=local\n',
+    '.env.example': 'SYNTHETIC_MODE=example\n', '.environment': 'SYNTHETIC_PREFIX=true\n'
+  }
+  for (const [name, bytes] of Object.entries(fixtures)) writeFileSync(join(root, name), bytes)
+  writeFileSync(join(root, 'not-env.txt'), 'synthetic unrelated file\n')
+  const version = createVersionWorktree(root, worktrees, 'env-version')
+  assert.ok(version)
+  const mission = createMissionWorktree(root, worktrees, 'env-mission', version.branch)
+  assert.ok(mission)
+  for (const workspace of [version, mission]) {
+    for (const [name, bytes] of Object.entries(fixtures)) {
+      assert.equal(existsSync(join(workspace.dir, name)), true, `${name} deve acompanhar o worktree`)
+      assert.equal(readFileSync(join(workspace.dir, name), 'utf8'), bytes)
+      assert.equal(lstatSync(join(workspace.dir, name)).isSymbolicLink(), false)
+    }
+    assert.equal(existsSync(join(workspace.dir, 'not-env.txt')), false)
+    git(workspace.dir, ['add', '-A'])
+    assert.equal(git(workspace.dir, ['status', '--porcelain']), '')
+  }
+  writeFileSync(join(mission.dir, '.env'), 'SYNTHETIC_MODE=mission-only\n')
+  unlinkSync(join(mission.dir, '.env.local'))
+  assert.ok(createMissionWorktree(root, worktrees, 'env-mission', version.branch))
+  assert.equal(readFileSync(join(mission.dir, '.env'), 'utf8'), 'SYNTHETIC_MODE=mission-only\n')
+  assert.equal(readFileSync(join(mission.dir, '.env.local'), 'utf8'), fixtures['.env.local'])
+  assert.equal(readFileSync(join(root, '.env'), 'utf8'), fixtures['.env'])
+})
+
+test('importar projeto sem Git mantém todos os env fora do commit inicial', (t) => {
+  const root = initializeWorktreesDirectory(t, 'synkora-env-init-')
+  writeFileSync(join(root, 'base.txt'), 'synthetic project\n')
+  writeFileSync(join(root, '.env'), 'SYNTHETIC_MODE=development\n')
+  writeFileSync(join(root, '.env.local'), 'SYNTHETIC_PORT=4200\n')
+  writeFileSync(join(root, '.env.production'), 'SYNTHETIC_MODE=production\n')
+  writeFileSync(join(root, '.environment'), 'SYNTHETIC_PREFIX=true\n')
+  assert.equal(initGitRepo(root), true)
+  assert.equal(git(root, ['ls-files', '--', '.env*']), '')
+  assert.equal(existsSync(join(root, '.env')), true)
+  assert.equal(existsSync(join(root, '.env.local')), true)
+})
+
+test('env exige exclusão no Git e ignora diretórios com o mesmo prefixo', (t) => {
+  const root = initializeRepository(t, 'synkora-env-refusal-')
+  const worktrees = initializeWorktreesDirectory(t, 'synkora-env-refusal-wt-')
+  writeFileSync(join(root, '.gitignore'), '!.env\n')
+  git(root, ['add', '.gitignore'])
+  git(root, ['commit', '-m', 'synthetic ignore override'])
+  writeFileSync(join(root, '.env'), 'SYNTHETIC_MODE=test\n')
+  assert.equal(createMissionWorktree(root, worktrees, 'env-refused'), null)
+  assert.equal(existsSync(join(worktrees, 'mission-env-refu', '.env')), false)
+  unlinkSync(join(root, '.env'))
+  mkdirSync(join(root, '.env'))
+  assert.ok(createMissionWorktree(root, worktrees, 'env-folder'))
+  assert.equal(existsSync(join(worktrees, 'mission-env-fold', '.env')), false)
+})
+
+test('env rastreado e removido no worktree não é restaurado pela preparação', (t) => {
+  const root = initializeRepository(t, 'synkora-env-tracked-')
+  const worktrees = initializeWorktreesDirectory(t, 'synkora-env-tracked-wt-')
+  writeFileSync(join(root, '.env'), 'SYNTHETIC_TRACKED=true\n')
+  git(root, ['add', '.env'])
+  git(root, ['commit', '-m', 'synthetic tracked environment'])
+  const mission = createMissionWorktree(root, worktrees, 'env-tracked')
+  assert.ok(mission)
+  unlinkSync(join(mission.dir, '.env'))
+  assert.ok(createMissionWorktree(root, worktrees, 'env-tracked'))
+  assert.equal(existsSync(join(mission.dir, '.env')), false)
+})
 
 test('prova que o isolamento é a raiz exata do mesmo repo e da branch esperada', (t) => {
   const root = initializeRepository(t, 'synkora-isolation-proof-')
@@ -625,6 +733,53 @@ test('version cleanup preserves the worktree unless head and cleanliness are exa
 })
 
 // ————— CARCAÇA DE REMOÇÃO INTERROMPIDA (incidente 2026-08-24) —————
+
+function leaveDanglingWorktreePointer(root, mission) {
+  const pointer = readFileSync(join(mission.dir, '.git'))
+  unlinkSync(join(mission.dir, '.git'))
+  git(root, ['worktree', 'prune', '--expire', 'now'])
+  writeFileSync(join(mission.dir, '.git'), pointer)
+}
+
+test('carcaça com .git apontando para registro removido é preservada em quarentena', (t) => {
+  const root = initializeRepository(t, 'synkora-dangling-source-')
+  const worktrees = initializeWorktreesDirectory(t, 'synkora-dangling-wt-')
+  const mission = createMissionWorktree(root, worktrees, 'dangling-pointer')
+  const head = git(mission.dir, ['rev-parse', 'HEAD'])
+  leaveDanglingWorktreePointer(root, mission)
+  writeFileSync(join(mission.dir, 'local-only.txt'), 'synthetic local data')
+  assert.equal(removeWorktreeAndBranch(root, mission.dir, mission.branch, head), true)
+  assert.equal(existsSync(mission.dir), false)
+  assert.equal(readFileSync(join(`${mission.dir}-carcass-bak`, 'local-only.txt'), 'utf8'), 'synthetic local data')
+  assert.equal(existsSync(join(`${mission.dir}-carcass-bak`, '.git')), true)
+  assert.equal(removeWorktreeAndBranch(root, mission.dir, mission.branch, head), true, 'recovery is idempotent')
+})
+
+test('ponteiro .git inválido, de outro repo ou com conteúdo divergente não autoriza quarentena', (t) => {
+  const root = initializeRepository(t, 'synkora-dangling-refusal-')
+  const worktrees = initializeWorktreesDirectory(t, 'synkora-dangling-refusal-wt-')
+  for (const [index, mode] of ['malformed', 'foreign', 'modified', 'branch-moved', 'registration-present'].entries()) {
+    const mission = createMissionWorktree(root, worktrees, `${index}-blocked-${mode}`)
+    assert.ok(mission)
+    const head = git(mission.dir, ['rev-parse', 'HEAD'])
+    if (mode !== 'registration-present') leaveDanglingWorktreePointer(root, mission)
+    if (mode === 'malformed') writeFileSync(join(mission.dir, '.git'), 'not a git pointer')
+    if (mode === 'foreign') writeFileSync(join(mission.dir, '.git'), `gitdir: ${join(worktrees, 'foreign', '.git', 'worktrees', 'missing')}\n`)
+    if (mode === 'modified') writeFileSync(join(mission.dir, 'base.txt'), 'changed\n')
+    if (mode === 'branch-moved') {
+      git(root, ['commit', '--allow-empty', '-m', 'synthetic later commit'])
+      git(root, ['update-ref', `refs/heads/${mission.branch}`, 'HEAD'])
+    }
+    if (mode === 'registration-present') {
+      const pointer = readFileSync(join(mission.dir, '.git'), 'utf8').replace(/worktrees[\\/][^\r\n]+/u, 'worktrees')
+      unlinkSync(join(mission.dir, '.git'))
+      writeFileSync(join(mission.dir, '.git'), pointer)
+    }
+    assert.equal(removeWorktreeAndBranch(root, mission.dir, mission.branch, head), false, mode)
+    assert.equal(existsSync(mission.dir), true, mode)
+    assert.equal(existsSync(`${mission.dir}-carcass-bak`), false, mode)
+  }
+})
 //
 // O `git worktree remove` pós-merge morreu no MEIO: levou o `.git` da pasta e
 // parte dos arquivos, o prune apagou o registro — e a pasta que sobrou nunca

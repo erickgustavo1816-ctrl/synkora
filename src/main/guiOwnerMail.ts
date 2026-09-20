@@ -63,6 +63,7 @@
  * o `guiOwnerMailbox` abaixo.
  */
 import { loadJsonStore, persistJsonStore } from './jsonStore'
+import { GUI_OWNER_REPLY_PROGRESS } from './guiPublicCommentary'
 
 /** A marca do bloco que pega carona. O agente e o dono leem a mesma linha e
  *  sabem de cara que quem falou foi o app repassando a voz do DONO. */
@@ -364,6 +365,24 @@ export class GuiOwnerMailbox {
     return true
   }
 
+  /** The CLI explicitly discarded an unread message. Restore ordinary mail
+   * in place, preserving order without inventing an owner interruption. */
+  releaseSteered(paneId: string, messageId: string): boolean {
+    const entry = this.panes.get(paneId)?.find((mail) => mail.messageId === messageId)
+    if (entry?.steered !== true) return false
+    delete entry.steered
+    this.persist()
+    return true
+  }
+
+  markSteered(paneId: string, messageId: string): boolean {
+    const entry = this.panes.get(paneId)?.find(mail => mail.messageId === messageId)
+    if (!entry || entry.handoff) return false
+    entry.steered = true
+    this.persist()
+    return true
+  }
+
   /** Devolve à FRENTE (a entrega não aconteceu): a ordem em que o dono falou é
    *  a ordem em que o agente tem de ler. */
   restore(paneId: string, entries: readonly GuiOwnerMailEntry[]): void {
@@ -377,6 +396,24 @@ export class GuiOwnerMailbox {
   forget(paneId: string): void {
     if (!this.panes.delete(paneId)) return
     this.persist()
+  }
+
+  /** Cancellation is acknowledged only after the durable recovery copy is
+   * removed. A failed write must not resurrect a confirmed cancellation. */
+  cancelById(paneId: string, messageId: string): boolean {
+    const current = this.panes.get(paneId)
+    if (!current?.some(entry => entry.messageId === messageId)) return false
+    const remaining = current.filter(entry => entry.messageId !== messageId)
+    if (this.store) {
+      const records: GuiOwnerMailRecord[] = []
+      for (const [id, entries] of this.panes) {
+        for (const entry of id === paneId ? remaining : entries) records.push({ paneId: id, ...entry })
+      }
+      try { this.store.save(records) } catch { return false }
+    }
+    if (remaining.length) this.panes.set(paneId, remaining)
+    else this.panes.delete(paneId)
+    return true
   }
 
   private persist(): void {
@@ -430,9 +467,8 @@ export function guiOwnerMailBlock(entries: readonly GuiOwnerMailEntry[]): string
   // A ordem agora nomeia o momento: a fala vem ANTES de qualquer outra tool.
   const tail =
     'Leia e AJUSTE O RUMO AGORA — isto não é um turno novo, é o dono falando DENTRO deste. ' +
-    'FALE COM ELE JÁ, antes de qualquer outra tool (inclusive antes de voltar a esperar ajudante): ' +
-    'uma ou duas linhas dizendo o que você entendeu e o que muda — até você falar, a tela dele fica ' +
-    'parada e ele conclui que a mensagem se perdeu. Depois aja: se o pedido muda o trabalho da frota, ' +
+    'FALE COM ELE JÁ, antes de qualquer outra tool de trabalho (inclusive antes de voltar a esperar ajudante). ' +
+    GUI_OWNER_REPLY_PROGRESS + ' Se o pedido muda o trabalho da frota, ' +
     'dirija (helper_send), descarte (helper_cancel) ou abra outros (delegate) antes de seguir.'
   return [head, body, tail].join('\n')
 }
@@ -494,8 +530,8 @@ export function guiOwnerHandText(
     ? `Você estava em: ${lastStep.trim()}. A tool em voo NÃO terminou — re-cheque antes de confiar no que ela ia devolver.`
     : 'Você estava em: pensando (nenhuma tool em voo).'
   const tail =
-    'Responda PRIMEIRO, em 1–2 linhas, o que você entendeu e o que muda; depois retome de onde estava, ' +
-    'complementando o que já tinha feito. Não recomece do zero e não troque de assunto.'
+    GUI_OWNER_REPLY_PROGRESS + ' Continue de onde estava, complementando o que já tinha feito. ' +
+    'Não recomece do zero e não troque de assunto.'
   return [head, body, step, tail].join('\n')
 }
 
@@ -515,13 +551,32 @@ export function guiOwnerHandText(
  * responder primeiro, depois continuar de onde parou. Sem tool em voo o
  * envelope diz "pensando" e não inventa corte nenhum.
  */
+/** Quantos caracteres da fala retirada a contraordem cita — o modelo não vê
+ *  ids, então é o começo do texto que diz QUAL fala morreu. */
+const CANCEL_QUOTE_MAX = 80
+
+/**
+ * A CONTRAORDEM (2026-09-16) — o cancelamento do dono viaja como bilhete ATRÁS
+ * da fala, e os dois chegam juntos na próxima fronteira. Nada é cortado: o
+ * único cancelamento nativo do CLI é um interrupt, e o dono não quer ver
+ * "turno interrompido" por causa de uma mensagem que ele mesmo retirou.
+ */
+export function guiOwnerCancelText(text: string): string {
+  const inteiro = String(text ?? '').replace(/\s+/gu, ' ').trim()
+  const citada = inteiro.length > CANCEL_QUOTE_MAX ? `${inteiro.slice(0, CANCEL_QUOTE_MAX - 1).trimEnd()}…` : inteiro
+  return (
+    `${GUI_OWNER_MAIL_TAG} — o dono RETIROU a mensagem dele que começa com "${citada}": ela não vale mais. ` +
+    'Não a responda, não a execute e não a mencione; continue exatamente de onde estava.'
+  )
+}
+
 export function guiOwnerForceText(lastStep: string | null): string {
   const head = `${GUI_OWNER_MAIL_TAG} — ele FORÇOU a leitura AGORA: o seu turno foi PARADO para isto, e a mensagem dele acima é o turno novo.`
   const step = lastStep?.trim()
     ? `Você estava em: ${lastStep.trim()}. A tool em voo NÃO terminou — re-cheque antes de confiar no que ela ia devolver.`
     : 'Você estava em: pensando (nenhuma tool em voo).'
   const tail =
-    'Responda PRIMEIRO, em 1–2 linhas, o que você entendeu e o que muda; depois retome de onde estava. ' +
+    GUI_OWNER_REPLY_PROGRESS + ' ' +
     'Não recomece do zero e não troque de assunto.'
   return [head, step, tail].join('\n')
 }

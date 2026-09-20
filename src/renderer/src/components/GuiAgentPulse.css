@@ -1,0 +1,398 @@
+/* ================= O PULSO DO AGENTE (mockup aprovado em 2026-09-16) =================
+   UMA linha, da MESMA família das linhas de ferramenta (11.5px, raio 6, fundo
+   fill-2). O GESTO à esquerda é o vocabulário de movimento do fio: cada ação
+   tem o seu — a forma do movimento diz o que está acontecendo antes de o olho
+   ler a palavra. O VERBO diz o que acontece AGORA; o alvo é o arquivo/página; o
+   rastro (— leu …) é o passado imediato, apagado. O relógio à direita é o tempo
+   desde o último sinal público do agente: número tabular, não dança. O silêncio
+   muda a FORMA antes da cor: moldura tracejada ao 1º minuto; aos 3 minutos a
+   moldura e o relógio vestem --err e nasce a linha de receita. */
+
+.gui-pulse {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 6px 10px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: var(--gui-fill-2);
+  color: var(--ink-2);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+.gui-pulse-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.gui-pulse-verb {
+  flex: none;
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.gui-pulse-sep {
+  flex: none;
+  color: var(--ink-3);
+}
+
+.gui-pulse-target {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-2);
+}
+
+.gui-pulse-trail {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-3);
+}
+
+.gui-pulse-clock {
+  flex: none;
+  margin-left: auto;
+  padding-left: 8px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: var(--ink-3);
+}
+
+/* silêncio ≥ 1 min: a moldura aparece (forma), o relógio ganha peso */
+.gui-pulse.quiet {
+  border-style: dashed;
+  border-color: var(--gui-line-strong);
+}
+
+.gui-pulse.quiet .gui-pulse-clock {
+  color: var(--ink-2);
+}
+
+/* silêncio ≥ 3 min: a mesma forma, agora em --err (AA sobre papel) + receita */
+.gui-pulse.stalled {
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--err) 55%, transparent);
+}
+
+.gui-pulse.stalled .gui-pulse-clock {
+  color: var(--err);
+}
+
+.gui-pulse-hint {
+  padding-left: 26px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+
+.gui-pulse-hint kbd {
+  font: inherit;
+  color: var(--ink);
+}
+
+/* ---------- OS GESTOS: um por ação, 18×12px, só transform/opacity ----------
+   A cor do movimento é o acento (como as bolinhas de sempre). Em repouso
+   (reduced-motion) cada gesto vira o seu glifo/traço parado — o FATO fica. */
+
+.gui-pulse-glyph {
+  flex: none;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 12px;
+  color: var(--accent);
+  font-size: 12px;
+  line-height: 1;
+}
+
+.gui-pulse-glyph i {
+  display: block;
+  font-style: normal;
+}
+
+/* pensando — as três bolinhas de sempre (o vocabulário que já existe) */
+.gui-pulse-glyph[data-action='thinking'] {
+  gap: 3px;
+}
+
+.gui-pulse-glyph[data-action='thinking'] i {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: gui-dot 1.05s ease-in-out infinite;
+}
+
+.gui-pulse-glyph[data-action='thinking'] i:nth-child(2) {
+  animation-delay: 0.16s;
+}
+
+.gui-pulse-glyph[data-action='thinking'] i:nth-child(3) {
+  animation-delay: 0.32s;
+}
+
+/* lendo — três linhas de texto que ACENDEM de cima para baixo (o olho descendo a página) */
+.gui-pulse-glyph[data-action='reading'] {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding-left: 3px;
+}
+
+.gui-pulse-glyph[data-action='reading'] i {
+  width: 11px;
+  height: 1.5px;
+  border-radius: 1px;
+  background: currentColor;
+  opacity: 0.3;
+  animation: gui-pulse-read 1.2s ease-in-out infinite;
+}
+
+.gui-pulse-glyph[data-action='reading'] i:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.gui-pulse-glyph[data-action='reading'] i:nth-child(3) {
+  animation-delay: 0.4s;
+  width: 7px;
+}
+
+@keyframes gui-pulse-read {
+  0%,
+  70%,
+  100% {
+    opacity: 0.3;
+  }
+  25% {
+    opacity: 1;
+  }
+}
+
+/* editando / escrevendo — as linhas são ESCRITAS: crescem da esquerda, uma depois da outra */
+.gui-pulse-glyph[data-action='editing'] {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding-left: 3px;
+}
+
+.gui-pulse-glyph[data-action='editing'] i {
+  width: 11px;
+  height: 1.5px;
+  border-radius: 1px;
+  background: currentColor;
+  transform-origin: left center;
+  animation: gui-pulse-write 1.6s ease-out infinite;
+}
+
+.gui-pulse-glyph[data-action='editing'] i:nth-child(2) {
+  animation-delay: 0.3s;
+}
+
+.gui-pulse-glyph[data-action='editing'] i:nth-child(3) {
+  animation-delay: 0.6s;
+  width: 7px;
+}
+
+@keyframes gui-pulse-write {
+  0% {
+    transform: scaleX(0);
+    opacity: 0.5;
+  }
+  45%,
+  80% {
+    transform: scaleX(1);
+    opacity: 1;
+  }
+  100% {
+    transform: scaleX(1);
+    opacity: 0.15;
+  }
+}
+
+/* rodando um comando — o arco gira (o terminal trabalhando) */
+.gui-pulse-glyph[data-action='running'] i {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  border: 1.5px solid color-mix(in srgb, currentColor 28%, transparent);
+  border-top-color: currentColor;
+  animation: gui-pulse-spin 0.9s linear infinite;
+}
+
+@keyframes gui-pulse-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* buscando — a lupa VARRE de um lado ao outro */
+.gui-pulse-glyph[data-action='searching'] i::before {
+  content: '⌕';
+}
+
+.gui-pulse-glyph[data-action='searching'] i {
+  animation: gui-pulse-sweep 1.3s ease-in-out infinite alternate;
+}
+
+@keyframes gui-pulse-sweep {
+  from {
+    transform: translateX(-2.5px);
+  }
+  to {
+    transform: translateX(2.5px);
+  }
+}
+
+/* respondendo — o cursor de texto pisca (alguém digitando) */
+.gui-pulse-glyph[data-action='responding'] i {
+  width: 2px;
+  height: 11px;
+  background: currentColor;
+  animation: gui-pulse-blink 1s step-end infinite;
+}
+
+@keyframes gui-pulse-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}
+
+/* compactando contexto — dois colchetes APERTAM o que está entre eles */
+.gui-pulse-glyph[data-action='compacting'] {
+  gap: 7px;
+}
+
+.gui-pulse-glyph[data-action='compacting'] i {
+  width: 2px;
+  height: 10px;
+  background: currentColor;
+  animation: gui-pulse-squeeze-l 1.3s ease-in-out infinite;
+}
+
+.gui-pulse-glyph[data-action='compacting'] i:nth-child(2) {
+  animation-name: gui-pulse-squeeze-r;
+}
+
+@keyframes gui-pulse-squeeze-l {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  50% {
+    transform: translateX(2.5px);
+  }
+}
+
+@keyframes gui-pulse-squeeze-r {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  50% {
+    transform: translateX(-2.5px);
+  }
+}
+
+/* página (browser) — a seta dá o passo para fora, para cima e à direita */
+.gui-pulse-glyph[data-action='browsing'] i::before {
+  content: '⇗';
+}
+
+.gui-pulse-glyph[data-action='browsing'] i {
+  animation: gui-pulse-step 1.2s ease-in-out infinite;
+}
+
+@keyframes gui-pulse-step {
+  0%,
+  100% {
+    transform: translate(0, 0);
+    opacity: 0.7;
+  }
+  50% {
+    transform: translate(1.5px, -1.5px);
+    opacity: 1;
+  }
+}
+
+/* skill / ajudantes — o glifo RESPIRA */
+.gui-pulse-glyph[data-action='skill'] i::before {
+  content: '❖';
+}
+
+.gui-pulse-glyph[data-action='helpers'] i::before {
+  content: '✦';
+}
+
+.gui-pulse-glyph[data-action='skill'] i,
+.gui-pulse-glyph[data-action='helpers'] i {
+  animation: gui-pulse-breathe 1.4s ease-in-out infinite;
+}
+
+@keyframes gui-pulse-breathe {
+  0%,
+  100% {
+    transform: scale(0.85);
+    opacity: 0.55;
+  }
+  50% {
+    transform: scale(1.1);
+    opacity: 1;
+  }
+}
+
+/* integrando — o ⇪ sobe */
+.gui-pulse-glyph[data-action='integrating'] i::before {
+  content: '⇪';
+}
+
+.gui-pulse-glyph[data-action='integrating'] i {
+  animation: gui-pulse-rise 1.1s ease-in-out infinite;
+}
+
+@keyframes gui-pulse-rise {
+  0%,
+  100% {
+    transform: translateY(1.5px);
+    opacity: 0.55;
+  }
+  50% {
+    transform: translateY(-1.5px);
+    opacity: 1;
+  }
+}
+
+/* esperando uma ferramenta genérica — o ◌ pisca (o mesmo sinal da linha da ferramenta) */
+.gui-pulse-glyph[data-action='waiting'] i::before {
+  content: '◌';
+}
+
+.gui-pulse-glyph[data-action='waiting'] i {
+  animation: gui-pulse-blink 1s step-end infinite;
+}
+
+/* Sem movimento o FATO continua na tela: cada gesto vira seu traço parado. */
+@media (prefers-reduced-motion: reduce) {
+  .gui-pulse-glyph i {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+}

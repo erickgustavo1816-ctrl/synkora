@@ -1,0 +1,34 @@
+.vs-mission-delivery {
+  min-width: 0;
+  border-left: 2px solid var(--ok);
+  padding: 6px 10px;
+}
+
+.vs-mission-delivery .vs-delivery {
+  display: list-item;
+  list-style-position: inside;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.vs-mission-delivery .vs-delivery-date {
+  margin-left: 8px;
+}
+
+.vs-mission-delivery > summary:focus-visible {
+  outline: 1px solid var(--ink-3);
+  outline-offset: 2px;
+}
+
+.vs-mission-summary {
+  margin: 5px 0 0;
+  max-width: 90ch;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.vs-mission-summary.pending {
+  color: var(--ink-2);
+}

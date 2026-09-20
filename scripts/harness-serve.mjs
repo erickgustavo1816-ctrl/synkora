@@ -5,6 +5,7 @@
 // um servidor. Registrado em .claude/launch.json como "drop-harness"; PORT
 // muda a porta (padrão 5199, longe do 5173 do electron-vite do dono).
 import { createServer } from 'node:http'
+import { existsSync } from 'node:fs'
 import { readFile, readdir } from 'node:fs/promises'
 import { dirname, extname, join, normalize, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -43,6 +44,23 @@ createServer(async (req, res) => {
           : join(harnessDir, normalize(path).replace(/^[/\\]+/, ''))
     if (target !== projectCss && target !== workspaceCss && !target.startsWith(harnessDir))
       throw new Error('fora do harness')
+    // Harness em TSX (componentes REAIS, dados sintéticos): /nome.js empacota
+    // scripts/harness/nome.tsx NA HORA com o esbuild — sem passo de build e
+    // sem bundle commitado. O test-workspace-panel-layout faz o mesmo para o
+    // Electron headless; aqui é para o olho, no Browser pane.
+    if (target.endsWith('.js') && target.startsWith(harnessDir)) {
+      const source = target.slice(0, -3) + '.tsx'
+      if (existsSync(source)) {
+        const { build } = await import('esbuild')
+        const out = await build({
+          entryPoints: [source], bundle: true, write: false,
+          platform: 'browser', format: 'iife', jsx: 'automatic'
+        })
+        res.writeHead(200, { 'content-type': 'text/javascript', 'cache-control': 'no-store' })
+        res.end(out.outputFiles[0].text)
+        return
+      }
+    }
     const body = await readFile(target)
     res.writeHead(200, {
       'content-type': types[extname(target)] ?? 'application/octet-stream',

@@ -177,6 +177,27 @@ const IMAGE_PREVIEW_MIME = new Map([
   ['.webp', 'image/webp']
 ])
 
+/** Renderable artifacts open in the mission browser. Declared mirror of
+ * fileOpenFamily in renderer/guiFileContextMenu.ts; source code stays in the
+ * inert reader. Assets accepted by the local preview server are narrower
+ * than an arbitrary file server and live in guiFileBrowserPreview.ts. */
+export const GUI_BROWSER_FILE_MIME = new Map([
+  ['.html', 'text/html; charset=utf-8'],
+  ['.htm', 'text/html; charset=utf-8'],
+  ['.xhtml', 'application/xhtml+xml; charset=utf-8'],
+  ['.svg', 'image/svg+xml'],
+  ['.mp3', 'audio/mpeg'],
+  ['.wav', 'audio/wav'],
+  ['.ogg', 'audio/ogg'],
+  ['.m4a', 'audio/mp4'],
+  ['.mp4', 'video/mp4'],
+  ['.webm', 'video/webm'],
+  ['.ogv', 'video/ogg'],
+  ...IMAGE_PREVIEW_MIME
+])
+
+export type GuiFileOpenMode = 'auto' | 'preview' | 'browser'
+
 const SENSITIVE_BASENAMES = new Set([
   '.git-credentials',
   '.netrc',
@@ -221,6 +242,7 @@ export type GuiFileResolveReason =
 
 export type GuiFileOpenResult =
   | { ok: true; action: 'preview'; preview: GuiFilePreview }
+  | { ok: true; action: 'browser'; missionId: string; projectId: string; tabId?: string; host: 'dock' | 'popout'; message: string }
   | { ok: true; action: 'reveal'; message: string }
   | {
       ok: false
@@ -244,6 +266,7 @@ export type GuiFileResolveResult =
 
 export type GuiPreparedFileOpen =
   | { ok: true; action: 'preview'; preview: GuiFilePreview }
+  | { ok: true; action: 'browser'; file: GuiResolvedFile }
   | { ok: true; action: 'reveal'; absolutePath: string; message: string }
   | Exclude<GuiFileOpenResult, { ok: true }>
 
@@ -462,12 +485,22 @@ function finalValidation(file: GuiResolvedFile): ValidationResult {
   return validateFile(root, file.absolutePath)
 }
 
-/** Prepara conteúdo INERTE para o renderer. Formato grande/desconhecido cai
- * em `reveal`; execução nunca é uma ação possível desta união. */
-export function prepareGuiFileOpen(file: GuiResolvedFile): GuiPreparedFileOpen {
+/** Chooses the surface after revalidating the physical path. Browser artifacts
+ * do not cross IPC as markup or file:// URLs: the main opens a bounded local
+ * preview. `preview` explicitly preserves the inert reader for source review. */
+export function prepareGuiFileOpen(
+  file: GuiResolvedFile,
+  mode: GuiFileOpenMode = 'auto'
+): GuiPreparedFileOpen {
   const validated = finalValidation(file)
   if (!validated.ok) return validated
   const current = validated.file
+
+  const browserFile = GUI_BROWSER_FILE_MIME.has(extensionForPreview(current.path))
+  if (mode !== 'preview' && browserFile) return { ok: true, action: 'browser', file: current }
+  if (mode === 'browser') {
+    return { ok: false, reason: 'denied', error: 'este formato não tem prévia no browser do Synkora; use as opções de abertura do arquivo' }
+  }
 
   let size: number
   let mtime: number
@@ -515,6 +548,7 @@ export function prepareGuiFileOpen(file: GuiResolvedFile): GuiPreparedFileOpen {
   // própria: só .md morava na lista de texto, e as irmãs caíam no "sem preview".
   const textPreview =
     TEXT_PREVIEW_EXTENSIONS.has(extension) ||
+    extension === '.htm' || extension === '.xhtml' ||
     GUI_MARKDOWN_PREVIEW_EXTENSIONS.has(extension) ||
     TEXT_PREVIEW_BASENAMES.has(lowerName)
   if (!textPreview || size > GUI_FILE_PREVIEW_TEXT_MAX_BYTES) {

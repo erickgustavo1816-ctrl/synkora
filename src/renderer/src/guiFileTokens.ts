@@ -20,9 +20,9 @@ const BARE_FILE_EXTENSIONS = new Set([
   'astro', 'avif', 'bmp', 'c', 'cc', 'conf', 'cpp', 'cs', 'css', 'csv', 'diff',
   'gif', 'go', 'gql', 'graphql', 'h', 'hpp', 'htm', 'html', 'ico', 'ini', 'java',
   'jpeg', 'jpg', 'json', 'jsonc', 'jsx', 'kt', 'kts', 'less', 'lock', 'log',
-  'lua', 'md', 'mdx', 'mjs', 'mts', 'pdf', 'php', 'png', 'prisma', 'proto', 'py',
+  'lua', 'm4a', 'md', 'mdx', 'mjs', 'mp3', 'mp4', 'mts', 'ogg', 'ogv', 'pdf', 'php', 'png', 'prisma', 'proto', 'py',
   'rb', 'rs', 'scss', 'sql', 'svelte', 'svg', 'swift', 'toml', 'ts', 'tsx',
-  'txt', 'vue', 'webp', 'xml', 'yaml', 'yml'
+  'txt', 'vue', 'wav', 'webm', 'webp', 'xhtml', 'xml', 'yaml', 'yml'
 ])
 
 const KNOWN_EXTENSIONLESS = new Set([

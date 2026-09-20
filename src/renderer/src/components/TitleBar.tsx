@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useStore, type CliStatus, type SeatCli } from '../store'
 import { hueOf, initialsOf } from '../util'
 import SynkoraMark from './SynkoraMark'
@@ -10,6 +11,7 @@ import SynVoice from './SynVoice'
 import ProgressRadarButton from './ProgressRadarButton'
 import TitleBarIcon from './TitleBarIcon'
 import QuickSettingsPanel from './QuickSettingsPanel'
+import { useTitleBarPopoverLayout } from '../useTitleBarPopoverLayout'
 
 const CLI_NAME: Record<SeatCli, string> = { claude: 'claude', codex: 'codex' }
 
@@ -62,6 +64,9 @@ export default function TitleBar(): React.JSX.Element {
   const usageDialogRef = useRef<HTMLDivElement>(null)
   const cliDialogRef = useRef<HTMLDivElement>(null)
 
+  useTitleBarPopoverLayout(open, usageTriggerRef, usageDialogRef)
+  useTitleBarPopoverLayout(cliOpen, cliTriggerRef, cliDialogRef)
+
   const project = openProjectId ? projects.find((p) => p.id === openProjectId) : null
   const inSettings = appPage === 'settings'
 
@@ -78,7 +83,8 @@ export default function TitleBar(): React.JSX.Element {
   useEffect(() => {
     if (!open) return
     function onDocClick(e: MouseEvent): void {
-      if (!anchorRef.current?.contains(e.target as Node)) setOpen(false)
+      if (!anchorRef.current?.contains(e.target as Node) &&
+          !usageDialogRef.current?.contains(e.target as Node)) setOpen(false)
     }
     document.addEventListener('mousedown', onDocClick)
     return () => document.removeEventListener('mousedown', onDocClick)
@@ -87,7 +93,8 @@ export default function TitleBar(): React.JSX.Element {
   useEffect(() => {
     if (!cliOpen) return
     function onDocClick(e: MouseEvent): void {
-      if (!cliRef.current?.contains(e.target as Node)) setCliOpen(false)
+      if (!cliRef.current?.contains(e.target as Node) &&
+          !cliDialogRef.current?.contains(e.target as Node)) setCliOpen(false)
     }
     document.addEventListener('mousedown', onDocClick)
     return () => document.removeEventListener('mousedown', onDocClick)
@@ -249,7 +256,7 @@ export default function TitleBar(): React.JSX.Element {
             <TitleBarIcon name="terminal" />
             <i className={`tb-status-dot ${cliDotClassName}`} aria-hidden="true" />
           </button>
-          {cliOpen && (
+          {cliOpen && createPortal(
             <div
               ref={cliDialogRef}
               id="titlebar-cli-status"
@@ -311,7 +318,7 @@ export default function TitleBar(): React.JSX.Element {
                 </button>
                 {diagMsg && <div className="usage-line muted">{diagMsg}</div>}
               </div>
-            </div>
+            </div>, document.body
           )}
         </div>
 
@@ -329,7 +336,7 @@ export default function TitleBar(): React.JSX.Element {
           >
             <TitleBarIcon name="gauge" />
           </button>
-          {open && (
+          {open && createPortal(
             <div
               ref={usageDialogRef}
               id="titlebar-account-limits"
@@ -373,7 +380,7 @@ export default function TitleBar(): React.JSX.Element {
                   </div>
                 )
               })}
-            </div>
+            </div>, document.body
           )}
           </div>
           </div>

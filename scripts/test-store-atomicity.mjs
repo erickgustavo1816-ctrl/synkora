@@ -32,6 +32,47 @@ function isMissingParentError(error) {
   return error instanceof Error && 'code' in error && error.code === 'ENOENT'
 }
 
+test('destino da release pertence à versão, sobrevive ao reload e não muda depois da subida', t => {
+  const root = temporaryRoot(t, 'synkora-release-destination-')
+  const file = join(root, 'backlog.json')
+  const store = new BacklogStore(file)
+  const first = store.createVersion('p1', { name: '1.0.0' })
+  const other = store.createVersion('p1', { name: '1.1.0' })
+  assert.equal(store.setVersionReleaseTarget(first.id, 'main'), true)
+  const reloaded = new BacklogStore(file)
+  assert.equal(reloaded.getVersion(first.id).releaseTargetBranch, 'main')
+  assert.equal(reloaded.getVersion(other.id).releaseTargetBranch, undefined)
+  reloaded.markVersionReleased(first.id)
+  assert.equal(reloaded.setVersionReleaseTarget(first.id, 'dev'), false)
+  assert.equal(new BacklogStore(file).getVersion(first.id).releaseTargetBranch, 'main')
+})
+
+test('mission summaries survive completion and reload into the version delivery without duplication', (t) => {
+  const root = temporaryRoot(t, 'synkora-mission-summary-')
+  missionUserData = root
+  const missions = new MissionStore()
+  const backlogFile = join(root, 'backlog.json')
+  const backlog = new BacklogStore(backlogFile)
+  const version = backlog.createVersion('project-1', { name: '1.0.0' })
+  const mission = missions.create('project-1', { title: 'Restore search', versionId: version.id, direct: true })
+  const summary = 'A busca voltou a encontrar os itens pelo nome. Agora é possível localizar o que você precisa sem repetir a pesquisa.'
+  missions.update(mission.id, { summary })
+  missions.update(mission.id, { status: 'concluida', branch: undefined, worktree: undefined })
+  const saved = new MissionStore().get(mission.id)
+  assert.equal(saved.summary, summary)
+  backlog.addDelivery(version.id, mission.id, mission.title, saved.summary)
+  const delivered = new BacklogStore(backlogFile).getVersion(version.id).deliveries[0]
+  assert.equal(delivered.summary, summary)
+  const revised = 'A busca encontra itens pelo nome completo ou por parte dele. Os resultados aparecem sem precisar repetir a pesquisa.'
+  backlog.addDelivery(version.id, mission.id, mission.title, revised)
+  backlog.addDelivery(version.id, mission.id, mission.title, revised)
+  const reloaded = new BacklogStore(backlogFile).getVersion(version.id).deliveries
+  assert.equal(reloaded.length, 1)
+  assert.equal(reloaded[0].summary, revised)
+  assert.equal(reloaded[0].id, delivered.id)
+  assert.equal(reloaded[0].at, delivered.at)
+})
+
 test('failed mission persistence never publishes a ghost mission in memory', (t) => {
   const root = temporaryRoot(t, 'synkora-mission-atomicity-')
   missionUserData = join(root, 'missing')

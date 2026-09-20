@@ -1,15 +1,67 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import test from 'node:test'
+import { buildSync } from 'esbuild'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
 import { SCOPE_NOTE, guiContextPanelPresentation } from '../src/renderer/src/guiContextPanel.ts'
+import { guiContextPopoverLayout } from '../src/renderer/src/guiContextPopover.ts'
 import {
   guiExpensiveSwitchNote,
+  guiHeavyConversationTip,
   guiMeterTone,
   guiOdometerPresentation,
   guiSeatQuotaPresentation
 } from '../src/renderer/src/guiCostSignals.ts'
+import * as costSignals from '../src/renderer/src/guiCostSignals.ts'
 
 const readWorkspaceFile = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8')
+
+test('usage weight explicitly remains an estimate and never promises the subscription quota formula', () => {
+  const meter = guiOdometerPresentation(139, 3_596_250, 192_000)
+  assert.match(meter.valueLabel, /estimativa/u)
+  assert.match(meter.hint, /não.*cota|não.*fórmula/u)
+  assert.match(SCOPE_NOTE, /assinatura/u)
+})
+
+test('usage presentation separates a measured round, conversation history and missing parcels', () => {
+  const usage = { apiCalls: 2, inputTokens: 150, cacheWriteTokens: null, cacheReadTokens: 2_000, outputTokens: 30 }
+  const view = costSignals.guiUsageMetersPresentation({
+    conversation: { ...usage, apiCalls: 42, inputTokens: 10_000 },
+    round: { id: 'synthetic-round', usage }
+  })
+  assert.equal(view.conversation.label, 'total da conversa')
+  assert.equal(view.round.label, 'rodada mais recente')
+  assert.equal(view.round.parcels.find(item => item.key === 'cacheWriteTokens').value, 'não informado')
+  assert.equal(view.round.parcels.find(item => item.key === 'inputTokens').value, '150')
+  assert.equal(view.round.weightLabel, null, 'partial counters cannot become a fabricated complete weight')
+  assert.match(view.round.scopeNote, /rodada/u)
+  assert.equal(costSignals.guiUsageMetersPresentation(null), null)
+  const waiting = costSignals.guiUsageMetersPresentation({ conversation: usage, round: { id: 'next', usage: null } })
+  assert.equal(waiting.round.valueLabel, 'aguardando medição')
+})
+
+test('rendered usage groups expose separate scopes and accessible raw parcel disclosure', () => {
+  const compiled = buildSync({ entryPoints: ['src/renderer/src/components/GuiContextPanel.tsx'],
+    bundle: true, platform: 'node', format: 'cjs', write: false, jsx: 'automatic',
+    loader: { '.css': 'empty' }, external: ['react', 'react-dom'] }).outputFiles[0].text
+  const module = { exports: {} }
+  new Function('require', 'module', 'exports', compiled)(createRequire(import.meta.url), module, module.exports)
+  const usage = { apiCalls: 1, inputTokens: 100, cacheWriteTokens: 0, cacheReadTokens: 200, outputTokens: null }
+  const view = costSignals.guiUsageMetersPresentation({ conversation: { ...usage, inputTokens: 5_000 },
+    round: { id: 'synthetic', usage } })
+  const html = renderToStaticMarkup(createElement('dl', { className: 'gui-context-metrics' },
+    createElement(module.exports.GuiUsageGroup, { group: view.round }),
+    createElement(module.exports.GuiUsageGroup, { group: view.conversation })))
+  assert.match(html, /<dt>rodada mais recente<\/dt>/u)
+  assert.match(html, /<dt>total da conversa<\/dt>/u)
+  assert.match(html, /<summary>parcelas em tokens<\/summary>/u)
+  assert.match(html, /<dt>saída<\/dt><dd>não informado<\/dd>/u)
+  assert.match(html, /<dt>entrada nova<\/dt><dd>100<\/dd>/u)
+  assert.match(html, /<dt>entrada nova<\/dt><dd>5\.000<\/dd>/u)
+  assert.doesNotMatch(html, /tokens-peso/u, 'incomplete output cannot produce a complete cost estimate')
+})
 
 test('painel de contexto só mostra a fotografia canônica e preserva números exatos', () => {
   const withCost = guiContextPanelPresentation(51_234, 200_000, 0.0035)
@@ -22,7 +74,7 @@ test('painel de contexto só mostra a fotografia canônica e preserva números e
     contextWindowLabel: '200.000',
     costLabel: '$0.0035',
     scopeNote: SCOPE_NOTE,
-    tooltip: 'contexto: 51.234 de 200.000 tokens · 26% da janela · custo da sessão $0.0035'
+    tooltip: 'contexto: 51.234 de 200.000 tokens · 26% da janela · USD informado pelo motor (sessão) $0.0035'
   })
 
   const withoutCost = guiContextPanelPresentation(0, 200_000, null)
@@ -50,13 +102,13 @@ test('o painel diz o ESCOPO dos números — os dois se leem errado sem isso', (
   // Caso real de 2026-08-17: chat de planejamento RETOMADO, o dono pediu um
   // plano e leu meio milhão de tokens e ~$9,65. Os dois números estavam certos
   // e nenhum era sobre o que ele acabara de pedir.
-  assert.match(SCOPE_NOTE, /conversa inteira/u)
-  assert.match(SCOPE_NOTE, /acumulado desde que a sessão abriu/u)
+  assert.match(SCOPE_NOTE, /última medição/u)
+  assert.match(SCOPE_NOTE, /acumulado informado pelo motor desde que a sessão abriu/u)
   assert.match(component, /<p className="gui-context-scope">\{usage\.scopeNote\}<\/p>/u)
   // O rótulo "usados" prometia o gasto da última pergunta.
   assert.doesNotMatch(component, /<dt>usados<\/dt>/u)
   assert.match(component, /<dt>contexto<\/dt>/u)
-  assert.match(component, /<dt>custo da sessão<\/dt>/u)
+  assert.match(component, /<dt>USD do motor · sessão<\/dt>/u)
   // A nota é texto CORRIDO: --ink-3 dá 3,00:1 sobre --card (medido) e o piso de
   // leitura é 4,5:1. --ink-2 dá 6,32:1 e mantém a hierarquia pelo tamanho.
   assert.match(css, /\.gui-context-scope\s*\{[^}]*color: var\(--ink-2\)/su)
@@ -73,14 +125,39 @@ test('integração usa botão discreto, popover nomeado e restauração de foco'
   assert.match(component, /tabIndex=\{-1\}/u)
   assert.match(component, /event\.key !== 'Escape'/u)
   assert.match(component, /triggerRef\.current\?\.focus/u)
-  assert.match(component, /data-tip=\{usage\.tooltip\}/u)
+  assert.match(component, /data-tip=\{tip\}/u)
   assert.match(component, /usage\.costLabel &&/u)
   assert.match(pane, /<GuiContextPanel/u)
   assert.match(pane, /open=\{openMenu === 'context'\}/u)
   assert.match(pane, /guiContextPanelPresentation\(/u)
   assert.match(css, /\.gui-context-trigger\s*\{/u)
-  assert.match(css, /\.gui-context-popover\s*\{[\s\S]*bottom: calc\(100% \+ 9px\)/u)
+  assert.match(component, /createPortal\(/u)
+  assert.match(component, /closest<HTMLElement>\('\.gui-pane'\)/u)
+  assert.match(component, /gui-context-popover gui-menu-host/u)
+  assert.match(css, /\.gui-context-popover\.gui-menu-host\s*\{[^}]*position: absolute;[^}]*overflow-y: auto/su)
   assert.match(css, /\.gui-context-trigger:focus-visible/u)
+})
+
+test('context dialog stays inside narrow chats even when the compact trigger moves left', () => {
+  for (const width of [180, 240, 280, 320, 420, 900]) {
+    const pane = { left: 41, top: 25, right: 41 + width, bottom: 583 }
+    const box = guiContextPopoverLayout({ left: 91, right: 159, top: 534, bottom: 562 },
+      pane, { width: 1050, height: 700 }, 264)
+    assert.ok(box.left >= pane.left + 8)
+    assert.ok(box.left + box.width <= pane.right - 8)
+    assert.ok(box.top >= pane.top + 8)
+    assert.ok(box.top + Math.min(264, box.maxHeight) < 534)
+  }
+})
+
+test('short context dialogs choose available space and cap scrolling inside the viewport', () => {
+  const pane = { left: -30, right: 300, top: 0, bottom: 500 }
+  const box = guiContextPopoverLayout({ left: 40, right: 100, top: 25, bottom: 53 },
+    pane, { width: 240, height: 200 }, 340)
+  assert.equal(box.left, 8)
+  assert.equal(box.width, 224)
+  assert.equal(box.top, 62)
+  assert.equal(box.maxHeight, 130)
 })
 
 test('o painel de contexto é leitura: o turno em andamento não o fecha', () => {
@@ -125,7 +202,7 @@ test('R25.1 — o odômetro mora no painel, com a física em UMA frase', () => {
   // A linha do odômetro é uma linha da MESMA lista (mesma grade, mesmo popover):
   // custo não ganha painel próprio nem card flutuante. O que muda é a FORMA —
   // rótulo acima do valor, atrás de um fio, porque é outra régua.
-  assert.match(component, /<dt>esta conversa<\/dt>/u)
+  assert.match(component, /<dt>total da conversa<\/dt>/u)
   assert.match(component, /odometer\.valueLabel/u)
   assert.match(component, /odometer\.hint/u)
   assert.match(component, /className="gui-context-physics"/u)
@@ -165,6 +242,33 @@ test('R25.2 — a cota do seat aparece no painel e NUNCA dispara coleta', () => 
   assert.doesNotMatch(body, /claudeUsage|codexUsage|spawn\(/u)
 })
 
+test('R25.3b — conversa pesada avisa no MEDIDOR (tooltip + forma + painel), nunca no fio', () => {
+  // Ordem do dono (2026-09-16): a nota no fio "é feia; um aviso em tooltip
+  // seria melhor". A receita das três saídas continua inteira — só mudou de
+  // casa: tooltip do medidor de contexto, moldura tracejada no chip (forma
+  // antes de cor) e uma linha no painel aberto.
+  assert.equal(guiHeavyConversationTip(149_999), null, 'abaixo do limiar o chip fica quieto')
+  assert.equal(guiHeavyConversationTip(null), null)
+  assert.equal(guiHeavyConversationTip(Number.NaN), null)
+  const tip = guiHeavyConversationTip(453_200)
+  assert.match(tip, /re-lê ~453k tokens a cada mensagem/u, 'o número medido, não um adjetivo')
+  assert.match(tip, /\/compact/u)
+  assert.match(tip, /missão/u)
+  assert.match(tip, /ciente do custo/u)
+
+  const pane = readWorkspaceFile('src/renderer/src/components/GuiPane.tsx')
+  const component = readWorkspaceFile('src/renderer/src/components/GuiContextPanel.tsx')
+  const css = readWorkspaceFile('src/renderer/src/global.css')
+  const sessions = readWorkspaceFile('src/main/guiSessions.ts')
+  assert.match(pane, /guiHeavyConversationTip\(gui\.contextTokens\)/u)
+  assert.match(pane, /heavy=\{heavyTip\}/u)
+  assert.match(component, /const tip = heavy \? /u, 'o tooltip do chip carrega a receita quando pesa')
+  assert.match(component, /heavy \? ' heavy' : ''/u, 'o chip muda de FORMA')
+  assert.match(component, /className="gui-context-heavy"/u, 'a receita também mora no painel aberto')
+  assert.match(css, /\.gui-context-trigger\.heavy\s*\{[^}]*border-style: dashed/su)
+  assert.doesNotMatch(sessions, /command-output', text: note/u, 'o fio não recebe mais a nota')
+})
+
 test('R25.3 — trocar modelo/effort/⚡ em conversa pesada avisa no próprio menu', () => {
   const pane = readWorkspaceFile('src/renderer/src/components/GuiPane.tsx')
 
@@ -184,13 +288,13 @@ test('R25.3 — trocar modelo/effort/⚡ em conversa pesada avisa no próprio me
 test('R25.1 — o odômetro se apresenta em chamadas + peso, com a física em uma frase', () => {
   const odometer = guiOdometerPresentation(139, 3_596_250, 192_000)
   assert.equal(odometer.calls, 139)
-  assert.equal(odometer.valueLabel, '139 chamadas · ~3.6 mi tokens-peso')
-  assert.equal(odometer.hint, 'cada mensagem re-processa o contexto inteiro')
+  assert.equal(odometer.valueLabel, '139 registros de uso · ~3.6 mi tokens-peso (estimativa)')
+  assert.equal(odometer.hint, 'tokens-peso é uma estimativa ponderada; não é cache bruto nem a fórmula da cota da assinatura.')
   assert.equal(odometer.tone, 'hot')
-  assert.match(odometer.tooltip, /esta conversa: 139 chamadas/u)
+  assert.match(odometer.tooltip, /total da conversa: 139 registros de uso/u)
 
   // Singular é singular: "1 chamadas" é despejo de máquina.
-  assert.equal(guiOdometerPresentation(1, 31_250, 30_000).valueLabel, '1 chamada · ~31.3 mil tokens-peso')
+  assert.equal(guiOdometerPresentation(1, 31_250, 30_000).valueLabel, '1 registro de uso · ~31.3 mil tokens-peso (estimativa)')
 
   // TOM pela MESMA régua dos medidores do titlebar, aplicada à cota (não à
   // janela): o limiar da nota (150k) é o 100% dessa régua, então o sinal
@@ -246,7 +350,7 @@ test('R25.2 — a cota do seat mostra o medidor do CLI e a idade da leitura', ()
 
 test('R25.3 — a nota da troca cara só aparece acima do limiar, e é só o número', () => {
   assert.equal(guiExpensiveSwitchNote(149_000), null)
-  assert.equal(guiExpensiveSwitchNote(176_669), 'trocar agora re-escreve ~177k de cache')
+  assert.equal(guiExpensiveSwitchNote(176_669), 'a troca pode afetar o reaproveitamento de ~177k tokens de contexto')
   assert.equal(guiExpensiveSwitchNote(null), null)
   assert.equal(guiExpensiveSwitchNote(Number.NaN), null)
   // Advisory: nenhuma proibição, nenhum dinheiro.

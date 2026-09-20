@@ -15,7 +15,7 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import Module, { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -76,12 +76,15 @@ const gitOffCalls = []
 let gitOffOverride = null
 /** Fotografia tirada NO INSTANTE da chamada — prova de ordem do seam. */
 let gitOffProbe = null
+let executingWorkerGit = false
 const gitAsyncStub = {
   GIT_CHECKPOINT_MARKER: '__SYNKORA_GIT_CHECKPOINT__',
   gitOff: async (fn, ...args) => {
     gitOffCalls.push({ fn, args, probe: gitOffProbe ? gitOffProbe() : undefined })
     if (gitOffOverride) return gitOffOverride(fn, args)
-    return worktreeApi[fn](...args)
+    executingWorkerGit = true
+    try { return worktreeApi[fn](...args) }
+    finally { executingWorkerGit = false }
   },
   gitOffWithCheckpoint: async () => {
     throw new Error('gitOffWithCheckpoint não participa da criação de missão')
@@ -105,6 +108,7 @@ Module._load = function (request, parent, isMain) {
 
 const { registerMissionsIpc } = require(join(COMPILED, 'ipc', 'missions.js'))
 const { createMissionEngine } = require(join(COMPILED, 'missionEngine.js'))
+const { BacklogStore } = require(join(COMPILED, 'backlog.js'))
 const worktreeApi = require(join(COMPILED, 'worktree.js'))
 
 /**
@@ -115,7 +119,8 @@ const worktreeApi = require(join(COMPILED, 'worktree.js'))
  * limpa F6 (2026-08-17): não há mais o que espionar neste caminho.
  */
 function createHarness({
-  versionChoices = { versions: [], defaultVersionId: undefined }
+  versionChoices = { versions: [], defaultVersionId: undefined },
+  configure = () => {}
 } = {}) {
   handlers.clear()
   const calls = []
@@ -169,6 +174,7 @@ function createHarness({
     guiSessions: {},
     killMissionGuiPanes: () => {}
   }
+  configure(ctx, extras)
   registerMissionsIpc(ctx, extras)
   const create = handlers.get('missions:create')
   assert.ok(create, 'o canal missions:create precisa existir')
@@ -374,6 +380,153 @@ test('direct explícito é respeitado — o handler não force-flipa a natureza'
   assert.equal(calls[0].input.direct, false)
 })
 
+// The real UI entry points must survive the persisted release transition,
+// which removes the version branch/worktree while its conversation stays open.
+function releaseWorkspaceHarness(cli = 'codex', contextBriefing, configure = () => {}) {
+  const backlogFile = join(userData, `release-reopen-${randomUUID()}.json`)
+  const backlog = new BacklogStore(backlogFile)
+  const project = { id: 'release-project', name: 'Synthetic project', path: userData }
+  const version = backlog.createVersion(project.id, { name: 'V0.1.3' })
+  backlog.setVersionBranch(version.id, 'version/synthetic', join(userData, 'removed-version'))
+  const seat = { id: 'release-seat', cli }
+  const mission = {
+    id: randomUUID(), projectId: project.id, versionId: version.id,
+    title: 'Synthetic release', missionType: 'release', status: 'ativa',
+    direct: true, seatId: seat.id
+  }
+  const paneId = `gui-dev-${mission.id.slice(0, 8)}`
+  const remembered = {
+    cli, sessionId: 'synthetic-existing-session', permissionMode: 'default'
+  }
+  const sessionReads = []
+  const identities = new Map()
+  const opened = []
+  let liveBacklog = backlog
+  createHarness({ configure: (ctx, extras) => {
+    ctx.projects = { get: (id) => id === project.id ? project : undefined }
+    ctx.missions = { get: (id) => id === mission.id ? mission : undefined }
+    ctx.backlog = { getVersion: (id) => liveBacklog.getVersion(id) }
+    ctx.seats = {
+      get: (id) => id === seat.id ? seat : undefined,
+      preseed: () => {}, configDirOf: () => userData
+    }
+    ctx.mcpPort = 43210 // Args only: no server, CLI or network is started.
+    ctx.paneTokens = new Map()
+    ctx.paneMcpFiles = new Map()
+    ctx.hub = {
+      registerPane: (token, identity) => identities.set(token, identity),
+      identityByToken: (token) => identities.get(token)
+    }
+    ctx.testServerPanes = new Map()
+    ctx.pushAll = (...args) => opened.push(args)
+    extras.guiSessions = {
+      remembered: (id) => {
+        sessionReads.push(id)
+        return id === paneId ? remembered : undefined
+      }
+    }
+    extras.engine.ensureMissionWorktree = () => assert.fail('release must not recreate a worktree')
+    extras.projectContextBriefing = contextBriefing
+    configure(ctx, extras, mission)
+  } })
+  return {
+    project, version, backlog, mission, paneId, remembered, sessionReads, identities, opened,
+    gui: (role = 'dev') => handlers.get('missions:guiSpec')({}, mission.id, role),
+    shell: () => handlers.get('missions:shellSpec')({}, mission.id),
+    launchAndReload: () => {
+      backlog.markVersionReleased(version.id)
+      liveBacklog = new BacklogStore(backlogFile)
+      const persisted = liveBacklog.getVersion(version.id)
+      assert.equal(persisted.status, 'lancada')
+      assert.equal(persisted.worktree, undefined)
+      assert.equal(persisted.branch, undefined)
+    }
+  }
+}
+
+for (const cli of ['codex', 'claude']) {
+  test(`release GUI reopens the same ${cli} conversation after persisted worktree cleanup`, async () => {
+    const h = releaseWorkspaceHarness(cli)
+    const before = await h.gui()
+    assert.equal(before.ok, true, before.error)
+    h.launchAndReload()
+
+    const reopened = await h.gui()
+    assert.equal(reopened.ok, true, reopened.error)
+    assert.equal(reopened.spawn.paneId, before.spawn.paneId)
+    assert.equal(reopened.spawn.paneId, h.paneId)
+    assert.equal(reopened.spawn.cwd, h.project.path)
+    assert.equal(reopened.spawn.resumeSessionId, h.remembered.sessionId)
+    assert.equal(reopened.spawn.firstPrompt, undefined, 'do not repeat the initial briefing')
+    assert.equal(reopened.spawn.permissionMode, h.remembered.permissionMode)
+    assert.deepEqual(h.sessionReads, [h.paneId, h.paneId])
+    assert.deepEqual([...h.identities.values()].map(({ role, cwd, missionId }) => ({ role, cwd, missionId })), [
+      { role: 'gui-release', cwd: h.project.path, missionId: h.mission.id }
+    ])
+    assert.equal(h.mission.status, 'ativa')
+  })
+}
+
+test('mission resume refreshes project orientation without repeating the initial briefing', async () => {
+  let state = 'em desenvolvimento'
+  const calls = []
+  const h = releaseWorkspaceHarness('codex', (projectId, missionId) => {
+    calls.push({ projectId, missionId })
+    return `PROJECT CONTEXT: ${state}`
+  })
+  const before = await h.gui()
+  assert.match(before.spawn.systemPrompt, /PROJECT CONTEXT: em desenvolvimento/u)
+  h.launchAndReload()
+  state = 'lançada'
+  const resumed = await h.gui()
+  assert.match(resumed.spawn.systemPrompt, /PROJECT CONTEXT: lançada/u)
+  assert.doesNotMatch(resumed.spawn.systemPrompt, /PROJECT CONTEXT: em desenvolvimento/u)
+  assert.equal(resumed.spawn.firstPrompt, undefined)
+  assert.deepEqual(calls, Array.from({ length: 2 }, () => ({ projectId: h.project.id, missionId: h.mission.id })))
+})
+
+test('release shell reopens in the project after persisted worktree cleanup', async () => {
+  const h = releaseWorkspaceHarness()
+  h.launchAndReload()
+  const result = await h.shell()
+  assert.equal(result.ok, true, result.error)
+  assert.equal(result.spec.cwd, h.project.path)
+  assert.equal(result.spec.missionId, h.mission.id)
+  assert.equal(h.opened.length, 1)
+  assert.equal(h.opened[0][2], 'shell')
+})
+
+test('release workspace still refuses closed missions and mismatched versions', async () => {
+  const h = releaseWorkspaceHarness()
+  const foreign = h.backlog.createVersion('another-project', { name: 'V0.1.3' })
+  h.launchAndReload()
+  for (const status of ['concluida', 'arquivada', 'integrando']) {
+    h.mission.status = status
+    assert.equal((await h.gui()).ok, false)
+    assert.equal((await h.shell()).ok, false)
+  }
+  h.mission.status = 'ativa'
+  for (const versionId of ['missing-version', foreign.id]) {
+    h.mission.versionId = versionId
+    assert.equal((await h.gui()).ok, false)
+    assert.equal((await h.shell()).ok, false)
+  }
+  assert.deepEqual(h.sessionReads, [])
+  assert.equal(h.identities.size, 0)
+  assert.deepEqual(h.opened, [])
+})
+
+test('release workspace still requires version isolation before launch', async () => {
+  const h = releaseWorkspaceHarness()
+  h.backlog.setVersionBranch(h.version.id, undefined, undefined)
+  const result = await h.gui()
+  assert.equal(result.ok, false)
+  assert.match(result.error, /a versão ainda não tem worktree/u)
+  assert.equal((await h.shell()).ok, false)
+  assert.deepEqual(h.sessionReads, [])
+  assert.equal(h.identities.size, 0)
+})
+
 test('seat removido invalida resume e executor antes de reabrir no mesmo CLI', () => {
   handlers.clear()
   const identityResets = []
@@ -475,31 +628,33 @@ const gitCli = (cwd, args) =>
 
 /** Motor REAL sobre um repositório temporário com versão isolada em worktree —
  *  o mesmo arranjo do caso real (a branch da versão CHECADA na pasta dela). */
-function createEngineOnRealRepository(t) {
+function createEngineOnRealRepository(t, { freshProject = false, withoutGit = false } = {}) {
   const projectPath = mkdtempSync(join(tmpdir(), 'synkora-base-create-'))
   const worktreesRoot = mkdtempSync(join(tmpdir(), 'synkora-base-create-wt-'))
   t.after(() => {
     rmSync(worktreesRoot, { recursive: true, force: true })
     rmSync(projectPath, { recursive: true, force: true })
   })
-  gitCli(projectPath, ['init'])
-  gitCli(projectPath, ['config', 'user.name', 'Synkora Test'])
-  gitCli(projectPath, ['config', 'user.email', 'synkora-test@example.invalid'])
   writeFileSync(join(projectPath, 'base.txt'), 'base\n', 'utf8')
-  gitCli(projectPath, ['add', '-A'])
-  gitCli(projectPath, ['commit', '-m', 'commit inicial'])
-  const mainBranch = gitCli(projectPath, ['branch', '--show-current'])
+  if (!withoutGit) {
+    gitCli(projectPath, ['init'])
+    gitCli(projectPath, ['config', 'user.name', 'Synkora Test'])
+    gitCli(projectPath, ['config', 'user.email', 'synkora-test@example.invalid'])
+    gitCli(projectPath, ['add', '-A'])
+    gitCli(projectPath, ['commit', '-m', 'commit inicial'])
+  }
+  const mainBranch = withoutGit ? undefined : gitCli(projectPath, ['branch', '--show-current'])
 
-  const isolation = worktreeApi.createVersionWorktree(projectPath, worktreesRoot, 'V1.0', 'versaobase')
-  assert.ok(isolation, 'a versão precisa nascer isolada, como no caso real')
+  const isolation = freshProject ? undefined : worktreeApi.createVersionWorktree(projectPath, worktreesRoot, 'V1.0', 'versaobase')
+  if (!freshProject) assert.ok(isolation, 'a versão precisa nascer isolada, como no caso real')
   const version = {
-    id: 'versaobase',
+    id: freshProject ? randomUUID() : 'versaobase',
     projectId: 'proj-1',
     name: 'V1.0',
     status: 'aberta',
     deliveries: [],
-    branch: isolation.branch,
-    worktree: isolation.dir,
+    branch: isolation?.branch,
+    worktree: isolation?.dir,
     createdAt: '2026-08-18T00:00:00.000Z',
     updatedAt: '2026-08-18T00:00:00.000Z'
   }
@@ -507,6 +662,7 @@ function createEngineOnRealRepository(t) {
   const missionsStore = new Map()
   const published = []
   const audited = []
+  const signals = []
   const ctx = {
     projects: { get: (id) => (id === 'proj-1' ? { id: 'proj-1', path: projectPath } : undefined) },
     missions: {
@@ -527,6 +683,7 @@ function createEngineOnRealRepository(t) {
         return mission
       },
       get: (id) => missionsStore.get(id),
+      list: (projectId) => [...missionsStore.values()].filter(mission => mission.projectId === projectId),
       update: (id, patch) => {
         const current = missionsStore.get(id)
         if (!current) return undefined
@@ -552,7 +709,7 @@ function createEngineOnRealRepository(t) {
     blackbox: { record: (event) => audited.push(event) },
     mainStalls: {},
     hub: { publish: (event) => published.push(event) },
-    pushAll: () => {},
+    pushAll: (...args) => signals.push(args),
     syncBoard: () => {},
     scheduleProgressSnapshot: () => {},
     orchPaneId: (projectId, missionId) => `${projectId}--${missionId}`,
@@ -605,14 +762,150 @@ function createEngineOnRealRepository(t) {
     version,
     published,
     audited,
+    signals,
     advanceMainOutsideSynkora,
     versionSha,
     missionOf: (id) => missionsStore.get(id),
+    updateMission: (id, patch) => ctx.missions.update(id, patch),
     /** Quantas missões JÁ derivaram worktree — a régua de ordem do seam. */
     missionsWithWorktree: () =>
       [...missionsStore.values()].filter((mission) => mission.worktree).length
   }
 }
+
+for (const withoutGit of [false, true]) test(`first mission creation keeps every Git operation off the main thread (withoutGit=${withoutGit})`, async (t) => {
+  const h = createEngineOnRealRepository(t, { freshProject: true, withoutGit })
+  const mainThreadGit = []
+  worktreeApi.setGitObserver(({ args }) => {
+    if (!executingWorkerGit) mainThreadGit.push(args[0])
+  })
+  t.after(() => worktreeApi.setGitObserver(null))
+  const mission = await h.engine.createMissionImpl('proj-1', { title: 'Synthetic first mission', direct: true }, 'user')
+  assert.ok(mission?.worktree, 'first mission must have its own workspace')
+  assert.ok(h.version.worktree, 'first version must have its own workspace')
+  assert.deepEqual(mainThreadGit, [], 'Git checkout must not block the Electron main thread')
+  assert.ok(gitOffCalls.some(call => call.fn === 'createVersionWorktree'))
+  assert.ok(gitOffCalls.some(call => call.fn === 'createMissionWorktree'))
+  if (withoutGit) assert.ok(gitOffCalls.some(call => call.fn === 'initGitRepo'))
+})
+
+function registerEngineWorkspaceHarness(h) {
+  createHarness({ configure: (ctx, extras) => {
+    ctx.projects = { get: () => ({ id: 'proj-1', path: h.projectPath }) }
+    ctx.missions = { get: id => h.missionOf(id) }
+    ctx.integrationQueue = { getByMission: () => undefined }
+    ctx.testServerPanes = new Map()
+    ctx.pushAll = () => {}
+    extras.engine = h.engine
+    ctx.seats = { list: () => [] }
+    extras.guiSessions = { remembered: () => undefined }
+  } })
+}
+
+test('reopening a mission prepares and proves its workspace off the main thread', async (t) => {
+  const h = createEngineOnRealRepository(t)
+  const mission = await h.engine.createMissionImpl('proj-1', { title: 'Synthetic reopen', direct: true }, 'user')
+  const mainThreadGit = []
+  worktreeApi.setGitObserver(({ args }) => {
+    if (!executingWorkerGit) mainThreadGit.push(args[0])
+  })
+  t.after(() => worktreeApi.setGitObserver(null))
+  registerEngineWorkspaceHarness(h)
+  const result = await handlers.get('missions:guiSpec')({}, mission.id, 'dev')
+  assert.equal(result.needsSeat, true, result.error)
+  const shell = await handlers.get('missions:shellSpec')({}, mission.id)
+  assert.equal(shell.spec.cwd, mission.worktree)
+  assert.deepEqual(mainThreadGit, [], 'selecting the project must not run synchronous Git')
+})
+
+test('simultaneous first missions share one version and keep separate workspaces', async (t) => {
+  const h = createEngineOnRealRepository(t, { freshProject: true })
+  const [first, second] = await Promise.all(['First', 'Second'].map(title =>
+    h.engine.createMissionImpl('proj-1', { title, direct: true }, 'user')))
+  assert.ok(first?.worktree)
+  assert.ok(second?.worktree)
+  assert.notEqual(first.worktree, second.worktree)
+  assert.equal(first.baseBranch, h.version.branch)
+  assert.equal(second.baseBranch, h.version.branch)
+  assert.equal(gitOffCalls.filter(call => call.fn === 'createVersionWorktree').length, 1)
+})
+
+test('recovering mission metadata refreshes the project card after reopening', async (t) => {
+  const h = createEngineOnRealRepository(t)
+  const mission = await h.engine.createMissionImpl('proj-1', { title: 'Synthetic recovery', direct: true }, 'user')
+  h.updateMission(mission.id, { branch: undefined })
+  h.signals.length = 0
+  registerEngineWorkspaceHarness(h)
+  const result = await handlers.get('missions:guiSpec')({}, mission.id, 'dev')
+  assert.equal(result.needsSeat, true, result.error)
+  assert.equal(h.missionOf(mission.id).branch, mission.branch)
+  assert.ok(h.signals.some(([channel, projectId]) => channel === 'missions:changed' && projectId === 'proj-1'))
+})
+
+test('repeated project clicks join pending preparation and allow retry after worker failure', async (t) => {
+  const h = createEngineOnRealRepository(t)
+  const mission = await h.engine.createMissionImpl('proj-1', { title: 'Synthetic pending', direct: true }, 'user')
+  let rejectWorker
+  const workerReply = new Promise((_resolve, reject) => { rejectWorker = reject })
+  let enterWorker
+  const entered = new Promise(resolve => { enterWorker = resolve })
+  gitOffOverride = (fn, args) => {
+    if (fn === 'ensureWorktreeEnvironment') { enterWorker(); return workerReply }
+    return worktreeApi[fn](...args)
+  }
+  const first = h.engine.ensureMissionWorktree(mission.id)
+  assert.equal(typeof first?.then, 'function')
+  await entered
+  const second = h.engine.ensureMissionWorktree(mission.id)
+  assert.equal(second, first, 'repeated selection must reuse the pending preparation')
+  await new Promise(resolve => setImmediate(resolve))
+  const rejection = assert.rejects(first, /synthetic worker failure/)
+  rejectWorker(new Error('synthetic worker failure'))
+  await rejection
+  gitOffOverride = null
+  assert.equal((await h.engine.ensureMissionWorktree(mission.id)).worktree, mission.worktree)
+})
+
+test('archiving during workspace proof prevents both chat and shell from opening', async (t) => {
+  const h = createEngineOnRealRepository(t)
+  const mission = await h.engine.createMissionImpl('proj-1', { title: 'Synthetic archive race', direct: true }, 'user')
+  registerEngineWorkspaceHarness(h)
+  let finishProof
+  const proof = new Promise(resolve => { finishProof = resolve })
+  let enterProof
+  const entered = new Promise(resolve => { enterProof = resolve })
+  gitOffOverride = (fn, args) => {
+    if (fn === 'resolveMissionWorkspace') { enterProof(); return proof }
+    return worktreeApi[fn](...args)
+  }
+  const opening = handlers.get('missions:guiSpec')({}, mission.id, 'dev')
+  await entered
+  h.updateMission(mission.id, { status: 'arquivada' })
+  finishProof(mission.worktree)
+  const result = await opening
+  assert.equal(result.ok, false)
+  assert.equal(result.needsSeat, undefined, 'the stale proof must not reach chat selection')
+  assert.match(result.error, /mudou durante a preparação/)
+  assert.equal((await handlers.get('missions:shellSpec')({}, mission.id)).ok, false)
+})
+
+test('reabrir uma missão existente repõe env ausente e preserva configuração própria', async (t) => {
+  const h = createEngineOnRealRepository(t)
+  const mission = await h.engine.createMissionImpl('proj-1', { title: 'Synthetic local environment', direct: true }, 'user')
+  assert.ok(mission?.worktree)
+  writeFileSync(join(h.projectPath, '.env'), 'SYNTHETIC_MODE=project\n')
+  writeFileSync(join(h.projectPath, '.env.local'), 'SYNTHETIC_PORT=4200\n')
+  writeFileSync(join(h.projectPath, '.env.staging.local'), 'SYNTHETIC_MODE=staging\n')
+  await h.engine.ensureMissionWorktree(mission.id)
+  assert.equal(readFileSync(join(mission.worktree, '.env'), 'utf8'), 'SYNTHETIC_MODE=project\n')
+  assert.equal(readFileSync(join(mission.worktree, '.env.staging.local'), 'utf8'), 'SYNTHETIC_MODE=staging\n')
+  writeFileSync(join(mission.worktree, '.env'), 'SYNTHETIC_MODE=mission\n')
+  unlinkSync(join(mission.worktree, '.env.local'))
+  await h.engine.ensureMissionWorktree(mission.id)
+  assert.equal(readFileSync(join(mission.worktree, '.env'), 'utf8'), 'SYNTHETIC_MODE=mission\n')
+  assert.equal(readFileSync(join(mission.worktree, '.env.local'), 'utf8'), 'SYNTHETIC_PORT=4200\n')
+  assert.equal(gitCli(mission.worktree, ['status', '--porcelain']), '')
+})
 
 test('missão nova nunca nasce de base atrasada: a versão é adiantada antes do worktree', async (t) => {
   const harness = createEngineOnRealRepository(t)
@@ -1128,7 +1421,8 @@ test('integração aguarda os previews antes do merge e novamente antes da limpe
   await h.engine.startMissionIntegration(mission.id, 'user')
   gitOffProbe = () => [...stages]
   const result = await h.engine.runMissionIntegration('proj-1', mission.id)
-  assert.match(result, /INTEGRADA/u)
+  assert.match(result, /MERGE GRAVADO/u)
+  assert.doesNotMatch(result, /^INTEGRADA/u, 'o agente não pode anunciar a integração antes de a pasta ser liberada')
   await new Promise((resolve) => setImmediate(resolve))
   assert.ok(gitOffCalls.find(({ fn }) => fn === 'mergeTaskWorktree').probe.includes('closed-1'), 'o primeiro fechamento precisa terminar antes de mesclar')
   assert.equal(existsSync(join(mission.worktree, '.git')), true)
@@ -1139,6 +1433,115 @@ test('integração aguarda os previews antes do merge e novamente antes da limpe
   assert.ok(gitOffCalls.find(({ fn }) => fn === 'removeWorktreeAndBranch').probe.includes('closed-2'), 'não remove arquivos enquanto o preview está encerrando')
   assert.equal(h.missionOf(mission.id).status, 'concluida')
   assert.equal(h.integrationQueue.getByMission(mission.id), undefined)
+})
+
+test('boot aguarda o preview da missão já integrada e preserva a origem se o encerramento falhar', async (t) => {
+  let recovering = false
+  let failClosing = true
+  const closedRoots = []
+  let releaseClosing
+  const waiting = new Promise(resolve => { releaseClosing = resolve })
+  const h = createIntegrationHarness(t, {
+    afterIntegrationReply: () => {},
+    closeTestServersUnder: async root => {
+      if (!recovering) return
+      closedRoots.push(root)
+      if (failClosing) throw new Error('synthetic preview close failure')
+      await waiting
+    }
+  })
+  const mission = await h.missionWithDelivery('Preview no boot', 'boot.txt', 'entrega\n')
+  await h.engine.startMissionIntegration(mission.id, 'user')
+  await h.engine.runMissionIntegration('proj-1', mission.id)
+  const integrated = h.targetSha()
+  const intentFile = join(h.projectPath, '.synkora', 'integrations', `${mission.id}.intent`)
+  recovering = true
+  await h.engine.recoverMissionIntegrationIntents('proj-1')
+  assert.equal(closedRoots.length, 1)
+  assert.equal(existsSync(join(mission.worktree, '.git')), true)
+  assert.equal(existsSync(intentFile), true)
+  assert.notEqual(h.missionOf(mission.id).status, 'concluida')
+  failClosing = false
+  const recovery = h.engine.recoverMissionIntegrationIntents('proj-1')
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(existsSync(join(mission.worktree, '.git')), true, 'aguarda a confirmação antes de remover')
+  releaseClosing()
+  await recovery
+  assert.deepEqual(closedRoots, [mission.worktree, mission.worktree])
+  assert.equal(existsSync(join(mission.worktree, '.git')), false)
+  assert.equal(existsSync(intentFile), false)
+  assert.equal(h.missionOf(mission.id).status, 'concluida')
+  assert.equal(h.targetSha(), integrated, 'recuperação não faz outro merge')
+  assert.equal(h.integrationQueue.getByMission(mission.id), undefined)
+})
+
+test('boot reprova o destino alterado durante a espera do preview antes de remover a origem', async (t) => {
+  let recovering = false
+  const h = createIntegrationHarness(t, {
+    afterIntegrationReply: () => {},
+    closeTestServersUnder: async () => {
+      if (!recovering) return
+      await new Promise(resolve => setImmediate(resolve))
+      writeFileSync(join(h.version.worktree, 'base.txt'), 'edição sintética durante a espera\n')
+    }
+  })
+  const mission = await h.missionWithDelivery('Destino em movimento', 'boot-race.txt', 'entrega\n')
+  await h.engine.startMissionIntegration(mission.id, 'user')
+  await h.engine.runMissionIntegration('proj-1', mission.id)
+  recovering = true
+  await h.engine.recoverMissionIntegrationIntents('proj-1')
+  assert.equal(existsSync(join(mission.worktree, '.git')), true)
+  assert.equal(existsSync(join(h.projectPath, '.synkora', 'integrations', `${mission.id}.intent`)), true)
+  assert.notEqual(h.missionOf(mission.id).status, 'concluida')
+  assert.equal(h.integrationQueue.getByMission(mission.id).block.code, 'target_repair_pending')
+  assert.match(h.published.at(-1).text, /mudou durante o encerramento/u)
+})
+
+test('integration waits for managed Mobile and Expo cleanup before merging or deleting the source', async (t) => {
+  let release, started
+  const cleanup = new Promise(resolve => { release = resolve })
+  const entered = new Promise(resolve => { started = resolve })
+  t.after(() => release())
+  const h = createIntegrationHarness(t, { killMissionGuiPanes: async () => { started(); await cleanup } })
+  const mission = await h.missionWithDelivery('Mobile cleanup', 'mobile-cleanup.txt', 'synthetic delivery\n')
+  await h.engine.startMissionIntegration(mission.id, 'user')
+  const run = h.engine.runMissionIntegration('proj-1', mission.id)
+  await entered
+  assert.equal(existsSync(join(h.version.worktree, 'mobile-cleanup.txt')), false, 'merge must wait for the process to release its cwd')
+  assert.equal(existsSync(join(mission.worktree, '.git')), true, 'source remains available until cleanup completes')
+  release()
+  await run
+  assert.equal(existsSync(join(h.version.worktree, 'mobile-cleanup.txt')), true)
+  assert.equal(existsSync(mission.worktree), false)
+})
+
+test('mission deletion rechecks archived state after awaiting Mobile and Expo cleanup', async (t) => {
+  const h = createIntegrationHarness(t)
+  const mission = await h.missionWithDelivery('Mobile deletion race', 'keep-source.txt', 'synthetic delivery\n')
+  mission.status = 'arquivada'
+  let release, entered, removed = 0
+  const cleanup = new Promise(resolve => { release = resolve })
+  const started = new Promise(resolve => { entered = resolve })
+  t.after(() => release())
+  createHarness({ configure: (ctx, extras) => {
+    ctx.projects.get = () => ({ id: 'proj-1', path: h.projectPath })
+    ctx.missions = { get: () => mission, remove: () => { removed++ } }
+    ctx.integrationQueue = { getByMission: () => undefined }
+    ctx.ptys.kill = () => {}
+    ctx.backlog.releaseMissionItems = () => {}
+    ctx.maestro.forget = () => {}
+    ctx.hub.purgeMissionEvents = () => {}
+    ctx.pushAll = () => {}
+    extras.guiSessions.forgetWhere = () => {}
+    extras.killMissionGuiPanes = async () => { entered(); await cleanup }
+  } })
+  const deleting = handlers.get('missions:remove')({}, mission.id)
+  await started
+  mission.status = 'ativa'
+  release()
+  assert.equal(await deleting, false)
+  assert.equal(removed, 0)
+  assert.equal(existsSync(join(mission.worktree, '.git')), true)
 })
 
 test('integration_run entrega o resultado antes de matar o dev e limpar a origem', async (t) => {
@@ -1157,7 +1560,8 @@ test('integration_run entrega o resultado antes de matar o dev e limpar a origem
   assert.equal(kills.some((call) => call.id === mission.id && !call.keepPaneId), false,
     'o dev não pode morrer esperando o retorno da própria ferramenta')
   assert.equal(replies.length, 1)
-  assert.match(run, /INTEGRADA/u)
+  assert.match(run, /MERGE GRAVADO/u)
+  assert.match(run, /encerre o turno/iu, 'a receita do fecho adiado continua na resposta')
   assert.equal(existsSync(join(h.version.worktree, 'reply.txt')), true)
   assert.equal(existsSync(join(mission.worktree, '.git')), true, 'a origem vive até o recibo')
   assert.equal(h.integrationQueue.getByMission(mission.id).state, 'merging')
@@ -1198,10 +1602,233 @@ test('falha antes do merge mantém o dev vivo e o mesmo ticket pronto para corri
   assert.equal(h.engine.integrationDraining.has('proj-1'), false)
 })
 
+test('committed failure waits for the MCP receipt before attempting recovery', async (t) => {
+  const replies = []
+  const kills = []
+  const h = createIntegrationHarness(t, {
+    afterIntegrationReply: (id, text, finish) => replies.push({ id, text, finish }),
+    killMissionGuiPanes: (id, keepPaneId) => kills.push({ id, keepPaneId })
+  })
+  const mission = await h.missionWithDelivery('Post-commit failure', 'committed.txt', 'delivery\n')
+  await h.engine.startMissionIntegration(mission.id, 'user')
+  gitOffOverride = (fn, args) => {
+    const result = worktreeApi[fn](...args)
+    return fn === 'mergeTaskWorktree'
+      ? { ...result, ok: false, detail: 'synthetic failure after the commit' }
+      : result
+  }
+  await h.engine.runMissionIntegration('proj-1', mission.id)
+  assert.equal(replies.length, 1)
+  assert.equal(kills.some(call => !call.keepPaneId), false)
+  assert.equal(existsSync(join(mission.worktree, '.git')), true)
+  const merged = h.targetSha()
+  gitOffOverride = null
+  assert.match(await replies[0].finish(), /INTEGRADA/u)
+  assert.equal(h.targetSha(), merged)
+  assert.equal(gitOffCalls.filter(({ fn }) => fn === 'mergeTaskWorktree').length, 1)
+})
+
+test('repair guiSpec reopens at the project root without recreating a partial worktree', async () => {
+  const h = releaseWorkspaceHarness('codex', undefined, (ctx, _extras, mission) => {
+    mission.missionType = 'dev'
+    mission.worktree = join(userData, 'partially-removed-source')
+    mission.branch = 'mission/synthetic'
+    ctx.integrationQueue = { getByMission: () => ({ state: 'blocked', block: {
+      owner: 'orchestrator', code: 'target_repair_pending', detail: 'synthetic cleanup failure'
+    } }) }
+    ctx.plans = { list: () => [] }
+  })
+  const result = await h.gui()
+  assert.equal(result.ok, true, result.error)
+  assert.equal(result.spawn.cwd, h.project.path)
+  assert.equal(result.spawn.resumeSessionId, h.remembered.sessionId)
+  assert.equal(existsSync(h.mission.worktree), false)
+})
+
+test('agent finalizes the approved repair ticket and keeps its recovery chat alive', async (t) => {
+  const replies = []
+  const kills = []
+  const h = createIntegrationHarness(t, {
+    afterIntegrationReply: (id, text, finish, recovery) => replies.push({ id, text, finish, recovery }),
+    killMissionGuiPanes: (id, keepPaneId) => kills.push({ id, keepPaneId }),
+    paneCwd: () => h.projectPath
+  })
+  const mission = await h.missionWithDelivery('Repair by agent', 'agent-repair.txt', 'delivery\n')
+  const next = await h.missionWithDelivery('Next delivery', 'after-repair.txt', 'next\n')
+  await h.engine.startMissionIntegration(mission.id, 'user')
+  await h.engine.startMissionIntegration(next.id, 'user')
+  await h.engine.runMissionIntegration('proj-1', mission.id)
+  const merged = h.targetSha()
+  const ticketId = h.integrationQueue.getByMission(mission.id).id
+  gitOffOverride = (fn, args) => fn === 'removeWorktreeAndBranch' ? false : worktreeApi[fn](...args)
+  await replies[0].finish()
+  gitOffOverride = null
+  assert.equal(typeof replies[0].recovery, 'function', 'failed cleanup must resume the agent')
+  assert.equal(replies[0].recovery(), h.projectPath, 'repair runs outside the folder being removed')
+  h.livePanes.add(guiMissionPaneId('dev', mission.id))
+  assert.match(await h.engine.runMissionIntegration('another-project', mission.id), /não encontrei/u)
+  const nextTicket = h.integrationQueue.getByMission(next.id)
+  h.integrationQueue.requireTargetRepair(next.id, 'synthetic second repair')
+  assert.match(await h.engine.runMissionIntegration('proj-1', next.id), /aguarde a vez/u)
+  assert.equal(h.integrationQueue.getByMission(next.id).id, nextTicket.id)
+  const status = await h.engine.missionIntegrationStatus('proj-1', mission.id)
+  assert.match(status, /chame integration_run/u)
+  assert.doesNotMatch(status, /peça ao dono para clicar/u)
+  gitOffOverride = (fn, args) => fn === 'gitCommitReached' ? false : worktreeApi[fn](...args)
+  assert.match(await h.engine.runMissionIntegration('proj-1', mission.id), /o Git ainda não prova/u)
+  assert.equal(h.integrationQueue.getByMission(mission.id).id, ticketId)
+  assert.equal(existsSync(join(mission.worktree, '.git')), true, 'the agent cannot clean up without proof')
+  gitOffOverride = null
+  rmSync(join(mission.worktree, '.git'))
+  const before = gitOffCalls.length
+  const result = await h.engine.runMissionIntegration('proj-1', mission.id)
+  assert.match(result, /finalização concluída/u)
+  assert.equal(h.targetSha(), merged)
+  assert.equal(h.missionOf(mission.id).status, 'concluida')
+  assert.equal(h.integrationQueue.getByMission(mission.id), undefined)
+  assert.equal(h.integrationQueue.getByMission(next.id).isHead, true)
+  assert.equal(h.missionOf(next.id).status, 'ativa')
+  assert.equal(existsSync(next.worktree), true)
+  assert.equal(kills.at(-1).keepPaneId, guiMissionPaneId('dev', mission.id))
+  assert.equal(gitOffCalls.slice(before).some(({ fn }) => ['mergeTaskWorktree', 'createMissionWorktree'].includes(fn)), false)
+  assert.equal(h.audited.find(event => event.event === 'mission-finalization-retry')?.actor, 'agent')
+  assert.equal(replies[0].recovery(), undefined, 'finished/cancelled tickets never resurrect the agent')
+  assert.ok(ticketId)
+})
+
+test('reopening a repair ticket wakes the agent with finalization instructions', async (t) => {
+  const h = createIntegrationHarness(t)
+  const mission = await h.missionWithDelivery('Reopen repair', 'reopen.txt', 'delivery\n')
+  await h.engine.startMissionIntegration(mission.id, 'user')
+  h.integrationQueue.requireTargetRepair(mission.id, 'synthetic cleanup failure')
+  const paneId = guiMissionPaneId('dev', mission.id)
+  h.livePanes.add(paneId)
+  const before = h.stimuli.length
+  const notesBefore = h.notesOf(paneId).length
+  h.engine.restimulateIntegrationOnOpen(paneId, 'proj-1')
+  assert.equal(h.stimuli.length, before + 1)
+  assert.match(h.stimuli.at(-1).text, /integration_run/u)
+  assert.match(h.stimuli.at(-1).text, /[Nn]ão.*merge/u)
+  assert.match(h.stimuli.at(-1).text, /que VOCÊ iniciou/u, 'a receita nomeia a causa comum: processo do próprio agente')
+  assert.doesNotMatch(h.stimuli.at(-1).text, /peça ao dono para clicar/u)
+  // Reabrir (inclusive a retomada automática na raiz) não escreve nota de
+  // máquina no fio: o dono já leu a nota do fecho; o agente fala em seguida.
+  assert.equal(h.notesOf(paneId).length, notesBefore, 'a reabertura não duplica a nota do fecho')
+})
+
+test('agent still in the source receives the retry reply before finalization closes it', async (t) => {
+  const replies = []
+  const kills = []
+  const h = createIntegrationHarness(t, {
+    afterIntegrationReply: (id, text, finish, recovery, phase) => replies.push({ id, text, finish, recovery, phase }),
+    killMissionGuiPanes: (id, keepPaneId) => kills.push({ id, keepPaneId })
+  })
+  const mission = await h.missionWithDelivery('Retry receipt', 'retry-receipt.txt', 'delivery\n')
+  await h.engine.startMissionIntegration(mission.id, 'user')
+  await h.engine.runMissionIntegration('proj-1', mission.id)
+  gitOffOverride = (fn, args) => fn === 'removeWorktreeAndBranch' ? false : worktreeApi[fn](...args)
+  await replies[0].finish()
+  gitOffOverride = null
+  const merged = h.targetSha()
+  const before = kills.length
+  const reply = await h.engine.runMissionIntegration('proj-1', mission.id)
+  assert.match(reply, /Encerre o turno/u)
+  assert.equal(kills.length, before, 'the MCP caller stays alive until the reply')
+  assert.equal(replies.length, 2)
+  assert.equal(replies[1].phase, 'finalization')
+  assert.equal(h.engine.integrationDraining.has('proj-1'), true)
+  assert.match(await replies[1].finish(), /finalização concluída/u)
+  assert.equal(h.targetSha(), merged)
+  assert.equal(h.engine.integrationDraining.has('proj-1'), false)
+  assert.equal(gitOffCalls.filter(({ fn }) => fn === 'mergeTaskWorktree').length, 1)
+})
+
+test('retomar finalização recupera a origem sem .git e libera a fila sem repetir o merge', async (t) => {
+  const replies = []
+  let retrying = false
+  let releaseClosing, enteredClosing
+  const closing = new Promise(resolve => { releaseClosing = resolve })
+  const entered = new Promise(resolve => { enteredClosing = resolve })
+  const h = createIntegrationHarness(t, {
+    afterIntegrationReply: (id, text, finish) => replies.push({ id, text, finish }),
+    closeTestServersUnder: async () => {
+      if (retrying) { enteredClosing(); await closing }
+    }
+  })
+  const mission = await h.missionWithDelivery('Finalizacao pendente', 'retry.txt', 'entrega\n')
+  const next = await h.missionWithDelivery('Aguardando finalizacao', 'next.txt', 'proxima\n')
+  await h.engine.startMissionIntegration(mission.id, 'user')
+  await h.engine.startMissionIntegration(next.id, 'user')
+  await h.engine.runMissionIntegration('proj-1', mission.id)
+  const merged = h.targetSha()
+  gitOffOverride = (fn, args) => fn === 'removeWorktreeAndBranch' ? false : worktreeApi[fn](...args)
+  await replies[0].finish()
+  gitOffOverride = null
+  rmSync(join(mission.worktree, '.git'))
+  const creations = gitOffCalls.filter(call => call.fn === 'createMissionWorktree').length
+  assert.equal(h.integrationQueue.getByMission(mission.id).block.code, 'target_repair_pending')
+  gitOffOverride = (fn, args) => fn === 'gitCommitReached' ? false : worktreeApi[fn](...args)
+  assert.match(await h.engine.startMissionIntegration(mission.id, 'user'), /o Git ainda não prova/u)
+  assert.equal(existsSync(mission.worktree), true, 'sem prova do merge não limpa nem rearma a integração')
+  assert.equal(h.integrationQueue.getByMission(mission.id).state, 'blocked')
+  gitOffOverride = null
+  retrying = true
+  const retried = h.engine.startMissionIntegration(mission.id, 'user')
+  await entered
+  try {
+    assert.match(await h.engine.startMissionIntegration(mission.id, 'user'), /já está em andamento/u)
+    assert.match(await h.engine.runMissionIntegration('proj-1', next.id), /em andamento/u)
+  } finally { releaseClosing() }
+  assert.match(await retried, /finalização concluída/u)
+  assert.equal(h.missionOf(mission.id).status, 'concluida')
+  assert.equal(h.integrationQueue.getByMission(mission.id), undefined)
+  assert.equal(h.integrationQueue.getByMission(next.id).isHead, true)
+  assert.equal(h.missionOf(next.id).status, 'ativa')
+  assert.equal(existsSync(next.worktree), true)
+  assert.equal(existsSync(mission.worktree), false)
+  assert.equal(h.targetSha(), merged)
+  assert.equal(gitOffCalls.filter(call => call.fn === 'mergeTaskWorktree').length, 1)
+  assert.equal(gitOffCalls.filter(call => call.fn === 'createMissionWorktree').length, creations)
+  assert.equal(h.engine.integrationDraining.has('proj-1'), false)
+  assert.match(await h.engine.startMissionIntegration(mission.id, 'user'), /já integrada/u)
+  assert.equal(h.targetSha(), merged)
+})
+
+test('retomar finalização preserva a origem quando o ticket muda durante a espera do preview', async (t) => {
+  const replies = []
+  let cancelDuringRetry = false
+  let mission
+  const h = createIntegrationHarness(t, {
+    afterIntegrationReply: (id, text, finish) => replies.push({ id, text, finish }),
+    closeTestServersUnder: async () => {
+      if (cancelDuringRetry) {
+        await new Promise(resolve => setImmediate(resolve))
+        h.integrationQueue.cancel(mission.id)
+      }
+    }
+  })
+  mission = await h.missionWithDelivery('Ticket alterado', 'ticket.txt', 'entrega\n')
+  await h.engine.startMissionIntegration(mission.id, 'user')
+  await h.engine.runMissionIntegration('proj-1', mission.id)
+  gitOffOverride = (fn, args) => fn === 'removeWorktreeAndBranch' ? false : worktreeApi[fn](...args)
+  await replies[0].finish()
+  gitOffOverride = null
+  const removals = gitOffCalls.filter(call => call.fn === 'removeWorktreeAndBranch').length
+  const merged = h.targetSha()
+  cancelDuringRetry = true
+  assert.match(await h.engine.startMissionIntegration(mission.id, 'user'), /finalização continua pendente/u)
+  assert.notEqual(h.missionOf(mission.id).status, 'concluida')
+  assert.equal(existsSync(mission.worktree), true)
+  assert.equal(gitOffCalls.filter(call => call.fn === 'removeWorktreeAndBranch').length, removals)
+  assert.equal(h.targetSha(), merged)
+  assert.equal(h.engine.integrationDraining.has('proj-1'), false)
+})
+
 test('origem alterada depois do recibo é preservada e a falha de limpeza não repete o merge', async (t) => {
   const replies = []
   const h = createIntegrationHarness(t, {
-    afterIntegrationReply: (id, text, finish) => replies.push({ id, text, finish })
+    afterIntegrationReply: (id, text, finish) => replies.push({ id, text, finish }),
+    paneCwd: () => h.projectPath
   })
   const mission = await h.missionWithDelivery('Origem preservada', 'kept.txt', 'entrega\n')
   await h.engine.startMissionIntegration(mission.id, 'user')
@@ -1209,11 +1836,18 @@ test('origem alterada depois do recibo é preservada e a falha de limpeza não r
   const merged = h.targetSha()
   writeFileSync(join(mission.worktree, 'kept.txt'), 'edicao tardia\n', 'utf8')
   const final = await replies[0].finish()
-  assert.match(final, /JÁ FOI GRAVADO/u)
+  // A NOTA DO FECHO ADIADO É PARA O DONO (print de 2026-09-16): a receita do
+  // agente viaja pelo bastidor (estímulo), nunca pelo fio.
+  assert.match(final, /pasta da missão ainda está presa/u)
+  assert.doesNotMatch(final, /integration_run|Consulte|JÁ FOI GRAVADO|intent preservado/u)
+  assert.doesNotMatch(final, /arquivos do destino|processo que está segurando/u)
   assert.equal(h.integrationQueue.getByMission(mission.id).block.code, 'target_repair_pending')
   assert.equal(existsSync(join(mission.worktree, '.git')), true)
   assert.equal(h.engine.integrationDraining.has('proj-1'), false)
-  assert.match(await h.engine.runMissionIntegration('proj-1', mission.id), /JÁ está gravado/u)
+  assert.match(await h.engine.runMissionIntegration('proj-1', mission.id), /finalização continua pendente/u)
+  assert.match(await h.engine.startMissionIntegration(mission.id, 'user'), /finalização continua pendente/u)
+  assert.notEqual(h.missionOf(mission.id).status, 'concluida')
+  assert.equal(readFileSync(join(mission.worktree, 'kept.txt'), 'utf8'), 'edicao tardia\n')
   assert.equal(h.targetSha(), merged)
   assert.equal(gitOffCalls.filter((call) => call.fn === 'mergeTaskWorktree').length, 1)
 })
@@ -1343,6 +1977,7 @@ test('R17: o ⇪ de uma missão com VERSÃO manda a rajada inteira para o gitWor
       'hasGitCommit', //             ensureMissionWorktree: o repo tem commit?
       'ensureSynkoraGitExcludes', // ensureMissionWorktree: .synkora invisível
       'isExpectedWorktree', //       ensureMissionWorktree: worktree DESTA missão
+      'ensureWorktreeEnvironment', // configurações locais ausentes, sem sobrescrita
       'hasGitCommit', //             projeto git? (sem git não há merge)
       'resolveMissionWorkspace', //  o worktree isolado, provado
       'isExpectedVersionWorktree', // R18.3: o ISOLAMENTO da versão (era o
