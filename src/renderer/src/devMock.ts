@@ -14,6 +14,9 @@ import type {
   FileTreeResult
 } from '../../preload/index'
 
+// Browser preview: the "Tamanho real" calibration lives only for this page.
+const previewCalibration = new Map<string, number>()
+
 /**
  * Skills no preview de browser: um retrato REPRESENTATIVO do seed v3 (a lei
  * fixa, as duas alas, o kit de planejamento) + biblioteca com os três estados
@@ -840,6 +843,7 @@ export function installDevMock(): void {
         ok: false,
         error: 'forçar a leitura só funciona no app'
       }),
+      cancelOwnerMessage: async () => ({ ok: false, error: 'cancelar uma mensagem pendente só funciona no app' }),
       kill: async () => ({ ok: true }),
       state: async () => ({ events: [], cursor: 0, exists: false, alive: false }),
       workspaceFiles: async () => ({ ok: false, error: 'arquivos só funcionam no app' }),
@@ -869,6 +873,11 @@ export function installDevMock(): void {
       attach: async () => ({ ok: false, error: 'anexos só funcionam no app' }),
       attachFolder: async () => ({ ok: false, error: 'anexos só funcionam no app' }),
       attachDropped: async () => ({ ok: false, error: 'anexos só funcionam no app' }),
+      browserReferencesList: async () => ({ ok: true, references: [] }),
+      revealBrowserReference: async () => ({ ok: false, error: 'Referências da página só funcionam no app.' }),
+      removeBrowserReference: async () => ({ ok: false, references: [], error: 'referências da página só funcionam no app' }),
+      consumeBrowserReferences: async () => ({ ok: false, references: [], error: 'referências da página só funcionam no app' }),
+      onBrowserReferencesChanged: () => () => undefined,
       attachmentPreview: async () => ({ ok: false, error: 'prévias só funcionam no app' }),
       attachmentAction: async () => ({ ok: false, error: 'anexos só funcionam no app' })
     },
@@ -920,6 +929,44 @@ export function installDevMock(): void {
       onChanged: () => () => undefined
     },
     // ————— fim do BLOCO NOVO do browser —————
+    // A browser-only preview has no SDK or native device session.
+    mobile: {
+      monitorScale: async () => ({ ok: true, value: null }),
+      calibrationRead: async key => ({ ok: true, value: previewCalibration.get(key) ?? null }),
+      calibrationWrite: async (key, pixelsPerMm) => { if (pixelsPerMm === null) previewCalibration.delete(key); else previewCalibration.set(key, pixelsPerMm); return { ok: true, value: true } },
+      onCalibrationChanged: () => () => undefined,
+      detach: async () => ({ ok: false, error: 'Abra esta missão no app para destacar um aparelho.' }),
+      focusDetached: async () => ({ ok: false, error: 'O preview não tem uma janela de aparelho.' }),
+      dock: async () => ({ ok: false, error: 'O preview não tem uma janela de aparelho.' }),
+      acquireView: async () => ({ ok: false, error: 'O preview não tem uma sessão de simulador.' }),
+      releaseView: async () => ({ ok: true, value: undefined }),
+      expoInspect: async () => ({ ok: true, value: { project: { kind: 'other', dependenciesInstalled: false, hasDevClient: false,
+        message: 'Abra esta missão no aplicativo Synkora para reconhecer o projeto.' }, status: 'idle', addresses: [] } }),
+      expoStart: async () => ({ ok: false, error: 'Abra esta missão no app para iniciar o Expo Go.' }),
+      expoStop: async () => ({ ok: false, error: 'O preview não tem um projeto Expo em execução.' }),
+      expoOpenAndroid: async () => ({ ok: false, error: 'Abra esta missão no app para usar o Expo Go no Android.' }),
+      expoInstallGo: async () => ({ ok: false, error: 'Abra esta missão no app para instalar o Expo Go no Android.' }),
+      inspect: async () => ({ ok: true, value: {
+        hostPlatform: 'unsupported', devices: [], sessions: [],
+        platforms: [
+          { platform: 'android', title: 'Android', supported: false, available: false, inputAvailable: false,
+            reason: 'Os simuladores funcionam no aplicativo Synkora. Abra esta missão no app.', setupSteps: [],
+            docsUrl: 'https://developer.android.com/studio/run/managing-avds' },
+          { platform: 'ios', title: 'iOS', supported: false, available: false, inputAvailable: false,
+            reason: 'O simulador iOS funciona no macOS com Xcode.', setupSteps: [],
+            docsUrl: 'https://developer.apple.com/documentation/xcode' }
+        ]
+      } }),
+      start: async () => ({ ok: false, error: 'Abra esta missão no app para iniciar um simulador.' }),
+      stop: async () => ({ ok: false, error: 'O preview não tem uma sessão de simulador.' }),
+      capture: async () => ({ ok: false, error: 'O preview não tem uma tela de simulador.' }),
+      act: async () => ({ ok: false, error: 'O controle do simulador só funciona no app.' }),
+      pointer: async () => ({ ok: false, error: 'Os gestos do simulador só funcionam no app.' }),
+      setVideoVisible: async () => ({ ok: false, error: 'O vídeo do simulador só funciona no app.' }),
+      ackVideo: () => undefined,
+      onChanged: () => () => undefined,
+      onVideo: () => () => undefined
+    },
     hub: {
       onEvent: () => () => undefined,
       onCommunication: () => () => undefined

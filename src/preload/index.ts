@@ -1,4 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron'
+import type { MobileApi, MobilePhoneApi, MobileVideoDelivery } from '../shared/mobileSimulator'
+export type { MobileApi, MobileAction, MobileFrame, MobileSession, MobileState, MobileVideoPacket } from '../shared/mobileSimulator'
+export type { MobileExpoProject, MobileExpoState, MobileExpoStartRequest } from '../shared/mobileExpo'
 import type { ProgressOverlaySnapshot } from '../main/progressSnapshot'
 import type { ProgressOpenTarget } from '../main/progressNavigation'
 export type { ProgressOpenTarget } from '../main/progressNavigation'
@@ -29,9 +32,16 @@ import type {
   GuiAttachmentDescriptor
 } from '../main/guiAttachments'
 import type { GuiMissionRole } from '../main/guiMissionContracts'
+import type {
+  GuiBrowserReference,
+  GuiBrowserReferencesChanged,
+  GuiBrowserReferencesResult
+} from '../main/guiBrowserReferenceTypes'
+export type { GuiBrowserReference, GuiBrowserReferencesChanged, GuiBrowserReferencesResult }
 import type { GuiAlertPayload } from '../main/guiNotices'
 import type {
   GuiFileChoice,
+  GuiFileOpenMode,
   GuiFileOpenResult,
   GuiFilePreview
 } from '../main/guiFileResolver'
@@ -100,7 +110,7 @@ export type {
  *  MESMA declaração do motor — sem espelho para desencontrar. */
 export type { GuiHelperOwnerDismissResult }
 export type { GuiAlertPayload }
-export type { GuiFileChoice, GuiFileOpenResult, GuiFilePreview }
+export type { GuiFileChoice, GuiFileOpenMode, GuiFileOpenResult, GuiFilePreview }
 /** Saída do arquivo CITADO NO FIO para fora do app (rodada 7, C1 — metade do
  *  chat): programa padrão do sistema ou pasta com ele selecionado. */
 export type { GuiFileExternalOpenMode, GuiFileExternalOpenResult }
@@ -326,6 +336,9 @@ export interface Version {
  *  RETRATO de uma subida que a aba Versões lê (R27F2). Nasce no sucesso do
  *  release; a aba só consome. */
 export interface VersionReleaseRecord {
+  /** Shared receipt also consumed by renderer/store.ts. */
+  changes?: import('../shared/releaseChanges').ReleaseChangeRecord[]
+  branch?: string
   id: string
   projectId: string
   versionId: string
@@ -1074,8 +1087,22 @@ const api = {
       paneId: string,
       text: string,
       messageId: string,
-      attachments?: GuiAttachmentDescriptor[]
-    ): Promise<GuiResult> => ipcRenderer.invoke('gui:send', paneId, text, messageId, attachments),
+      attachments?: GuiAttachmentDescriptor[],
+      browserReferences?: GuiBrowserReference[]
+    ): Promise<GuiResult> => ipcRenderer.invoke('gui:send', paneId, text, messageId, attachments, browserReferences),
+    browserReferencesList: (paneId: string): Promise<GuiBrowserReferencesResult> =>
+      ipcRenderer.invoke('gui:browser-references-list', paneId),
+    revealBrowserReference: (paneId: string, id: string): Promise<import('../shared/guiBrowserReferences').GuiBrowserReferenceRevealResult> =>
+      ipcRenderer.invoke('gui:browser-reference-reveal', paneId, id),
+    removeBrowserReference: (paneId: string, id: string): Promise<GuiBrowserReferencesResult> =>
+      ipcRenderer.invoke('gui:browser-references-remove', paneId, id),
+    consumeBrowserReferences: (paneId: string, ids: string[]): Promise<GuiBrowserReferencesResult> =>
+      ipcRenderer.invoke('gui:browser-references-consume', paneId, ids),
+    onBrowserReferencesChanged: (cb: (payload: GuiBrowserReferencesChanged) => void): (() => void) => {
+      const listener = (_e: IpcRendererEvent, payload: GuiBrowserReferencesChanged): void => cb(payload)
+      ipcRenderer.on('gui:browser-references-changed', listener)
+      return () => ipcRenderer.removeListener('gui:browser-references-changed', listener)
+    },
     /** A fila viaja com texto, anexos e opcoes numa unica operacao do main. */
     deliverQueued: (
       paneId: string,
@@ -1130,6 +1157,8 @@ const api = {
      *  mostra na linha de aviso). O par mora em `src/main/ipc/gui.ts`. */
     forceOwnerMessage: (paneId: string, messageId: string): Promise<GuiResult> =>
       ipcRenderer.invoke('gui:forceOwnerMessage', paneId, messageId),
+    cancelOwnerMessage: (paneId: string, messageId: string): Promise<GuiResult> =>
+      ipcRenderer.invoke('gui:cancelOwnerMessage', paneId, messageId),
     kill: (paneId: string): Promise<GuiResult> => ipcRenderer.invoke('gui:kill', paneId),
     /** Replay para a remontagem (o main guarda ~500 eventos por pane). */
     state: (paneId: string): Promise<{
@@ -1149,9 +1178,10 @@ const api = {
     fileOpen: (
       paneId: string,
       reference: string,
-      selectedPath?: string
+      selectedPath?: string,
+      mode?: GuiFileOpenMode
     ): Promise<GuiFileOpenResult> =>
-      ipcRenderer.invoke('gui:fileOpen', paneId, reference, selectedPath),
+      ipcRenderer.invoke('gui:fileOpen', paneId, reference, selectedPath, mode),
     /** Rodada 7 (C1, metade do CHAT): manda o arquivo citado no fio para FORA do
      *  app — programa padrão do sistema (`default`) ou pasta com ele selecionado
      *  (`reveal`). MESMA cerca do `fileOpen`: a raiz é o `cwd` do pane e o
@@ -1542,6 +1572,44 @@ const api = {
    * (projetos, ajustes, chats) segue com o porteiro host-only e recusa a janela
    * destacada; só `browser:*` tem o porteiro duplo.
    */
+  mobile: {
+    monitorScale: () => ipcRenderer.invoke('mobile:monitorScale'),
+    calibrationRead: key => ipcRenderer.invoke('mobile:calibrationRead', key),
+    calibrationWrite: (key, pixelsPerMm) => ipcRenderer.invoke('mobile:calibrationWrite', key, pixelsPerMm),
+    onCalibrationChanged: callback => {
+      const listener = (): void => callback()
+      ipcRenderer.on('mobile:calibrationChanged', listener)
+      return () => { ipcRenderer.removeListener('mobile:calibrationChanged', listener) }
+    },
+    expoInspect: missionId => ipcRenderer.invoke('mobile:expoInspect', missionId),
+    expoStart: (missionId, request) => ipcRenderer.invoke('mobile:expoStart', missionId, request),
+    expoStop: missionId => ipcRenderer.invoke('mobile:expoStop', missionId),
+    expoOpenAndroid: (missionId, sessionId) => ipcRenderer.invoke('mobile:expoOpenAndroid', missionId, sessionId),
+    expoInstallGo: (missionId, sessionId) => ipcRenderer.invoke('mobile:expoInstallGo', missionId, sessionId),
+    inspect: missionId => ipcRenderer.invoke('mobile:inspect', missionId),
+    start: (missionId, request) => ipcRenderer.invoke('mobile:start', missionId, request),
+    stop: (missionId, sessionId) => ipcRenderer.invoke('mobile:stop', missionId, sessionId),
+    detach: (missionId, sessionId) => ipcRenderer.invoke('mobile:detach', missionId, sessionId),
+    focusDetached: (missionId, sessionId) => ipcRenderer.invoke('mobile:focusDetached', missionId, sessionId),
+    dock: (missionId, sessionId) => ipcRenderer.invoke('mobile:dock', missionId, sessionId),
+    acquireView: (missionId, sessionId) => ipcRenderer.invoke('mobile:acquireView', missionId, sessionId),
+    releaseView: (missionId, sessionId, consumerId) => ipcRenderer.invoke('mobile:releaseView', missionId, sessionId, consumerId),
+    capture: (missionId, sessionId, consumerId) => ipcRenderer.invoke('mobile:capture', missionId, sessionId, consumerId),
+    act: (missionId, sessionId, action, consumerId) => ipcRenderer.invoke('mobile:act', missionId, sessionId, action, consumerId),
+    pointer: (missionId, sessionId, input, consumerId) => ipcRenderer.invoke('mobile:pointer', missionId, sessionId, input, consumerId),
+    setVideoVisible: (missionId, sessionId, visible, consumerId) => ipcRenderer.invoke('mobile:setVideoVisible', missionId, sessionId, visible, consumerId),
+    ackVideo: (missionId, sessionId, streamId, timestampUs, consumerId) => ipcRenderer.send('mobile:videoAck', missionId, sessionId, streamId, timestampUs, consumerId),
+    onChanged: callback => {
+      const listener = (_event: IpcRendererEvent, missionId: string): void => callback(missionId)
+      ipcRenderer.on('mobile:changed', listener)
+      return () => { ipcRenderer.removeListener('mobile:changed', listener) }
+    },
+    onVideo: callback => {
+      const listener = (_event: IpcRendererEvent, packet: MobileVideoDelivery): void => callback(packet)
+      ipcRenderer.on('mobile:video', listener)
+      return () => { ipcRenderer.removeListener('mobile:video', listener) }
+    }
+  } satisfies MobileApi,
   browser: {
     /** Only the main app navigation owner publishes dock eligibility. */
     setDockMission: (missionId: string | null): void =>
@@ -1899,8 +1967,42 @@ export type SynkoraProgressOverlayApi = typeof progressOverlayApi
 
 const isSynVoiceOverlay = process.argv.includes('--synvoice-overlay')
 const isProgressOverlay = process.argv.includes('--progress-overlay')
+const isMobilePhone = process.argv.includes('--mobile-phone')
 
-if (isProgressOverlay) {
+const mobilePhoneApi: MobilePhoneApi = {
+  describe: () => ipcRenderer.invoke('mobile:phone:describe'),
+  acquireView: () => ipcRenderer.invoke('mobile:phone:acquireView'),
+  releaseView: token => ipcRenderer.invoke('mobile:phone:releaseView', token),
+  capture: token => ipcRenderer.invoke('mobile:phone:capture', token),
+  act: (action, token) => ipcRenderer.invoke('mobile:phone:act', action, token),
+  pointer: (input, token) => ipcRenderer.invoke('mobile:phone:pointer', input, token),
+  setVideoVisible: (visible, token) => ipcRenderer.invoke('mobile:phone:setVideoVisible', visible, token),
+  ackVideo: (streamId, timestampUs, token) => ipcRenderer.send('mobile:phone:videoAck', streamId, timestampUs, token),
+  monitorScale: () => ipcRenderer.invoke('mobile:phone:monitorScale'),
+  calibrationRead: key => ipcRenderer.invoke('mobile:phone:calibrationRead', key),
+  calibrationWrite: (key, pixelsPerMm) => ipcRenderer.invoke('mobile:phone:calibrationWrite', key, pixelsPerMm),
+  onCalibrationChanged: callback => {
+    const listener = (): void => callback()
+    ipcRenderer.on('mobile:phone:calibrationChanged', listener)
+    return () => { ipcRenderer.removeListener('mobile:phone:calibrationChanged', listener) }
+  },
+  resize: geometry => ipcRenderer.invoke('mobile:phone:resize', geometry),
+  dock: () => ipcRenderer.invoke('mobile:phone:dock'),
+  onChanged: callback => {
+    const listener = (): void => callback()
+    ipcRenderer.on('mobile:phone:changed', listener)
+    return () => { ipcRenderer.removeListener('mobile:phone:changed', listener) }
+  },
+  onVideo: callback => {
+    const listener = (_event: IpcRendererEvent, packet: MobileVideoDelivery): void => callback(packet)
+    ipcRenderer.on('mobile:phone:video', listener)
+    return () => { ipcRenderer.removeListener('mobile:phone:video', listener) }
+  }
+}
+
+if (isMobilePhone) {
+  contextBridge.exposeInMainWorld('synkoraMobilePhone', mobilePhoneApi)
+} else if (isProgressOverlay) {
   contextBridge.exposeInMainWorld('synkoraProgressOverlay', progressOverlayApi)
 } else if (isSynVoiceOverlay) contextBridge.exposeInMainWorld('synkoraOverlay', overlayApi)
 else contextBridge.exposeInMainWorld('synkora', api)

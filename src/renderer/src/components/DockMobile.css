@@ -1,0 +1,126 @@
+.workspace-panel[data-workspace-panel="mobile"] .workspace-panel-body { overflow: hidden; }
+.workspace-panel[data-workspace-panel="mobile"] .dock-sec-body { padding: 0; overflow: hidden; }
+.dock-mobile { display: flex; flex: 1; flex-direction: column; gap: 0; height: 100%; min-width: 0; min-height: 0; overflow: auto; color: var(--ink); font: 11px/1.5 var(--mono); }
+.mobile-native { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; }
+.mobile-native[hidden] { display: none; }
+.mobile-project-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--ok); }
+.dock-mobile.is-phone-focused > .mobile-platforms, .dock-mobile.is-phone-focused .mobile-device-row, .dock-mobile.is-phone-focused .mobile-setup { display: none; }
+.dock-mobile button, .dock-mobile input, .dock-mobile select, .dock-mobile summary { font: inherit; }
+.dock-mobile button { cursor: pointer; }
+.dock-mobile button:disabled, .dock-mobile input:disabled, .dock-mobile select:disabled { opacity: .45; cursor: default; }
+.dock-mobile button:focus-visible, .dock-mobile input:focus-visible, .dock-mobile select:focus-visible, .dock-mobile summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.mobile-platforms { display: flex; flex: none; align-items: center; gap: 4px; padding: 8px 10px 0; }
+.mobile-platforms > button:not(.mobile-discover) { display: inline-flex; align-items: center; gap: 7px; padding: 5px 11px; color: var(--ink-2); border: 1px solid transparent; border-radius: 5px; background: transparent; }
+.mobile-platforms > button.is-selected { color: var(--ink); background: var(--paper-2); border-color: var(--line-strong); }
+.mobile-platforms > button span { font-size: 9px; color: var(--ink-2); }
+.mobile-platforms .mobile-discover { margin-left: auto; }
+.mobile-device-row { display: flex; flex: none; gap: 6px; padding: 6px 10px 4px; }
+.mobile-device-row select { flex: 1; width: 0; min-width: 0; padding: 6px 7px; border: 1px solid var(--line-strong); border-radius: 5px; background: var(--card); color: var(--ink); text-overflow: ellipsis; }
+.mobile-device-row select:disabled { opacity: .72; }
+.mobile-button { flex: none; min-height: 29px; padding: 5px 9px; border: 1px solid var(--line-strong); border-radius: 5px; background: var(--card); color: var(--ink); font-weight: 600 !important; }
+.mobile-button:hover:not(:disabled) { background: var(--paper-2); }
+.mobile-button.mobile-start { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+.mobile-button.mobile-start:hover:not(:disabled) { background: var(--accent-deep); border-color: var(--accent-deep); }
+.mobile-button.mobile-stop { color: var(--err); }
+.mobile-icon-button { display: inline-flex; flex: none; align-items: center; justify-content: center; width: 29px; height: 29px; padding: 4px; border: 1px solid transparent; border-radius: 5px; color: var(--ink-2); background: transparent; }
+.mobile-icon-button:hover:not(:disabled) { background: var(--paper-2); color: var(--ink); }
+.mobile-notice { display: flex; flex: none; flex-direction: column; align-items: flex-start; gap: 5px; margin: 0 10px 8px; padding: 8px 10px; border-left: 2px solid var(--err); background: color-mix(in srgb, var(--err) 6%, var(--card)); color: var(--err); overflow-wrap: anywhere; }
+.mobile-notice button { padding: 0; border: 0; background: transparent; color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
+.mobile-setup { flex: none; margin: 0 10px 8px; padding: 10px 11px; border: 1px solid var(--line); border-radius: 6px; background: var(--paper); color: var(--ink-2); overflow-wrap: anywhere; }
+.mobile-setup strong { color: var(--ink); font-weight: 600; }
+.mobile-setup p { margin: 5px 0; }
+.mobile-setup ol { margin: 7px 0; padding-left: 18px; }
+.mobile-setup li + li { margin-top: 4px; }
+.mobile-viewport-group { position: relative; display: flex; flex: 1 0 240px; flex-direction: column; min-height: 240px; margin: 0 6px 6px; overflow: hidden; }
+.mobile-viewport { position: relative; flex: 1; min-height: 190px; min-width: 0; container-type: size; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; border-radius: 8px; background: radial-gradient(ellipse at 50% 70%, color-mix(in srgb, var(--ink) 7%, transparent), transparent 65%); }
+.mobile-phone-stage { display: flex; box-sizing: border-box; align-items: center; justify-content: center; min-width: 100%; min-height: 100%; padding: 6px; }
+.mobile-view-toolbar { display: flex; flex: none; flex-wrap: nowrap; align-items: center; gap: 2px; height: 30px; min-height: 30px; padding: 0 2px 2px; }
+.mobile-device-controls { display: flex; flex: 1; min-width: 0; align-items: center; gap: 6px; }
+.mobile-window-controls { display: flex; flex: none; align-items: center; gap: 2px; }
+.mobile-view-toolbar .mobile-icon-button { width: 24px; height: 24px; padding: 0; }
+.mobile-view-toolbar .mobile-icon-button svg { width: 15px; height: 15px; }
+.mobile-toolbar-sep { flex: none; width: 1px; height: 12px; margin: 0 3px; background: var(--line); }
+.mobile-expand-button { display: inline-flex; flex: none; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0; border: 1px solid var(--line); border-radius: 4px; background: var(--card); color: var(--ink); }
+.mobile-expand-button:hover { background: var(--paper-2); }
+.mobile-expand-button svg { width: 14px; height: 14px; }
+.mobile-input-status { display: inline-flex; flex: none; align-items: center; width: 6px; color: var(--ink-3); }
+.mobile-input-status i { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+.mobile-input-status.is-connected { color: var(--ok); }
+.mobile-pointer-notice { position: absolute; z-index: 4; top: 32px; left: 8px; right: 8px; padding: 6px 9px; border: 1px solid var(--line); border-radius: 5px; background: var(--paper); color: var(--err); font-size: 10px; overflow-wrap: anywhere; pointer-events: none; }
+.mobile-phone-shell { --mobile-bezel: 6px; --mobile-chin: 0px; --mobile-radius: clamp(15px, 7cqw, 33px); --mobile-shell-elevation: 0 7px 11px rgb(38 32 25 / 14%), 0 1px 2px rgb(0 0 0 / 25%); position: relative; flex: none;
+  padding: calc(var(--mobile-bezel) + var(--mobile-chin)) var(--mobile-bezel); border-radius: var(--mobile-radius); background: linear-gradient(140deg, #454747, #111415 25%, #282b2d 72%, #4c4f50);
+  box-shadow: inset 0 0 0 1px #717373, inset 0 0 0 3px #17191a, var(--mobile-shell-elevation); }
+.mobile-phone-display { position: relative; width: 100%; aspect-ratio: var(--mobile-screen-ratio); overflow: hidden; border-radius: max(2px, calc(var(--mobile-radius) - var(--mobile-bezel))); background: #090c0e; box-shadow: 0 0 0 1px #090c0e; isolation: isolate; }
+.mobile-phone-display.is-interactive { cursor: pointer; touch-action: none; user-select: none; }
+.mobile-touch-feedback { position: absolute; z-index: 3; width: 24px; height: 24px; transform: translate(-50%, -50%); border: 1px solid rgb(255 255 255 / 80%); border-radius: 50%; background: rgb(30 35 40 / 16%); box-shadow: 0 0 0 1px rgb(0 0 0 / 20%); pointer-events: none; }
+.mobile-phone-camera { position: absolute; z-index: 2; top: 7px; left: 50%; width: 9px; height: 9px; transform: translateX(-50%); border-radius: 50%; background: #080a0b; box-shadow: 0 0 0 1px rgb(255 255 255 / 8%); pointer-events: none; }
+.mobile-phone-camera > i { position: absolute; inset: 2px; border-radius: 50%; background: radial-gradient(circle at 35% 35%, #243746, #070a0c 70%); }
+.mobile-phone-shell.frame-iphone-island .mobile-phone-camera { top: 6px; width: 27%; max-width: 78px; height: 17px; border-radius: 20px; }
+.mobile-phone-shell.frame-iphone-notch .mobile-phone-camera { top: 0; width: 34%; max-width: 105px; height: 19px; border-radius: 0 0 12px 12px; }
+.mobile-phone-shell.frame-iphone-island .mobile-phone-camera > i, .mobile-phone-shell.frame-iphone-notch .mobile-phone-camera > i { inset: 5px 7px 5px auto; width: 7px; }
+.mobile-phone-shell.frame-iphone .mobile-phone-camera, .mobile-phone-shell.frame-iphone-home .mobile-phone-camera { display: none; }
+.mobile-phone-shell.frame-iphone-home { --mobile-radius: 26px; }
+.mobile-phone-shell.frame-iphone-home .mobile-phone-display { border-radius: 2px; }
+.mobile-phone-home { position: absolute; bottom: 7px; left: 50%; width: 21px; height: 21px; transform: translateX(-50%); border: 1px solid #666968; border-radius: 50%; background: #111415; box-shadow: inset 0 1px 2px #000; pointer-events: none; }
+.mobile-phone-earpiece { position: absolute; top: 14px; left: 50%; width: 27px; height: 3px; transform: translateX(-50%); border-radius: 2px; background: #050708; box-shadow: 0 1px 0 #5558; pointer-events: none; }
+.mobile-phone-shell[data-profile-id="pixel-7"] { --mobile-radius: 26px; }
+.mobile-phone-shell[data-profile-id="pixel-9"] { --mobile-radius: 37px; background: linear-gradient(145deg, #737a73, #262c27 30%, #111713 72%, #737d72); }
+.mobile-phone-shell.frame-galaxy { --mobile-radius: 27px; background: linear-gradient(100deg, #929796, #171d21 2%, #151a1e 98%, #929796); box-shadow: inset 0 0 0 1px #c0c5c3, inset 0 0 0 2px #21272a, var(--mobile-shell-elevation); }
+.mobile-phone-shell[data-profile-id="galaxy-a54"] { --mobile-radius: 29px; padding-top: var(--mobile-bezel); padding-bottom: calc(var(--mobile-bezel) + 2 * var(--mobile-chin)); background: linear-gradient(130deg, #5f6260, #1c201d 25%, #181d19 75%, #717a6b); box-shadow: inset 0 0 0 1px #979c94, inset 0 0 0 3px #111713, var(--mobile-shell-elevation); }
+.mobile-phone-shell.frame-galaxy-ultra { --mobile-radius: 7px; --mobile-shell-elevation: 0 6px 12px rgb(38 32 25 / 14%), 0 1px 2px rgb(0 0 0 / 18%); background: linear-gradient(105deg, #8c8d85, #333631 5%, #75766e 47%, #82837b 93%, #3b3f39); box-shadow: inset 0 0 0 1px #6d726b, inset 0 0 0 2px #111613, var(--mobile-shell-elevation); }
+.mobile-phone-shell.frame-galaxy-ultra .mobile-phone-display { box-shadow: 0 0 0 1px #090c0e; }
+.mobile-phone-shell[data-size-mode="physical"].frame-pixel { --mobile-shell-elevation: 0 6px 12px rgb(38 32 25 / 14%); background: linear-gradient(120deg, #b7bdb7, #7b827d 5%, #a0a79e 85%, #d1d5cd); box-shadow: inset 0 0 0 1px #6a726b, inset 0 0 0 2px #c9cfc6, var(--mobile-shell-elevation); }
+.mobile-phone-shell[data-size-mode="physical"].frame-galaxy { --mobile-shell-elevation: 0 6px 12px rgb(38 32 25 / 14%); background: linear-gradient(110deg, #d2d6d0, #999f99 5%, #b2b9ae 93%, #d5d9d0); box-shadow: inset 0 0 0 1px #6e776c, inset 0 0 0 2px #d6dbd0, var(--mobile-shell-elevation); }
+.mobile-phone-shell[data-size-mode="physical"] .mobile-phone-display { box-shadow: 0 0 0 1.5px #242925; }
+.mobile-phone-shell.frame-galaxy .mobile-phone-camera, .mobile-phone-shell.frame-galaxy-ultra .mobile-phone-camera { top: 6px; width: 7px; height: 7px; }
+.mobile-hardware-button { position: absolute; width: 3px; border-radius: 2px; background: linear-gradient(90deg, #242728, #676b6c); box-shadow: 0 0 0 .5px rgb(0 0 0 / 30%); pointer-events: none; }
+.mobile-hardware-volume { left: -2px; top: 21%; height: 12%; max-height: 65px; }
+.mobile-hardware-power { right: -2px; top: 32%; height: 8%; max-height: 43px; }
+.mobile-phone-shell.frame-pixel .mobile-hardware-volume { left: auto; right: -2px; top: 32%; }
+.mobile-phone-shell.frame-pixel .mobile-hardware-power { top: 18%; }
+.mobile-phone-shell.frame-galaxy .mobile-hardware-volume, .mobile-phone-shell.frame-galaxy-ultra .mobile-hardware-volume { left: auto; right: -2px; top: 18%; }
+.mobile-phone-shell.frame-galaxy-ultra .mobile-hardware-button { border-radius: 1px; background: linear-gradient(90deg, #4e4c44, #a6a094); }
+.mobile-phone-shell.is-landscape { padding: var(--mobile-bezel) calc(var(--mobile-bezel) + var(--mobile-chin)); }
+.mobile-phone-shell.is-landscape[data-profile-id="galaxy-a54"] { padding: var(--mobile-bezel) calc(var(--mobile-bezel) + 2 * var(--mobile-chin)) var(--mobile-bezel) var(--mobile-bezel); }
+.mobile-phone-shell.is-landscape .mobile-phone-camera { left: 7px; top: 50%; transform: translateY(-50%); }
+.mobile-phone-shell.is-landscape.frame-iphone-island .mobile-phone-camera { width: 17px; height: 27%; max-height: 78px; }
+.mobile-phone-shell.is-landscape.frame-iphone-notch .mobile-phone-camera { left: 0; width: 19px; height: 34%; max-height: 105px; border-radius: 0 12px 12px 0; }
+.mobile-phone-shell.is-landscape.frame-iphone-island .mobile-phone-camera > i, .mobile-phone-shell.is-landscape.frame-iphone-notch .mobile-phone-camera > i { inset: 7px 5px auto; width: 7px; height: 7px; }
+.mobile-phone-shell.is-landscape .mobile-phone-home { left: auto; top: 50%; right: 7px; bottom: auto; transform: translateY(-50%); }
+.mobile-phone-shell.is-landscape .mobile-phone-earpiece { left: 14px; top: 50%; width: 3px; height: 27px; transform: translateY(-50%); }
+.mobile-phone-shell.is-landscape .mobile-hardware-volume { top: -2px; left: 21%; height: 3px; width: 12%; }
+.mobile-phone-shell.is-landscape .mobile-hardware-power { top: auto; right: 30%; bottom: -2px; width: 8%; height: 3px; }
+.mobile-phone-shell.is-landscape.frame-pixel .mobile-hardware-volume { top: -2px; right: auto; left: 32%; }
+.mobile-phone-shell.is-landscape.frame-pixel .mobile-hardware-power { top: -2px; right: auto; left: 18%; bottom: auto; }
+.mobile-phone-shell.is-landscape.frame-galaxy .mobile-hardware-volume, .mobile-phone-shell.is-landscape.frame-galaxy-ultra .mobile-hardware-volume { top: -2px; right: auto; left: 18%; }
+.mobile-phone-shell.is-landscape.frame-galaxy .mobile-hardware-power, .mobile-phone-shell.is-landscape.frame-galaxy-ultra .mobile-hardware-power { top: -2px; right: auto; left: 32%; bottom: auto; }
+.mobile-screen { position: absolute; inset: 0; display: block; width: 100%; height: 100%; object-fit: contain; pointer-events: none; user-select: none; }
+.mobile-screen[hidden] { display: none; }
+.mobile-phone-display.has-error .mobile-screen { opacity: .15; }
+.mobile-viewport-message { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 9px; padding: 24px 12px; color: #a4adb3; text-align: center; overflow: auto; overflow-wrap: anywhere; }
+.mobile-viewport-message > svg { width: 31px; height: 40px; color: #77848b; margin-bottom: 4px; }
+.mobile-viewport-message strong { font-weight: 600; color: #e8ecee; }
+.mobile-viewport-message span { font-size: 10px; line-height: 1.6; }
+.mobile-startup-indicator { display: block; flex: none; width: 26px; height: 26px; margin-bottom: 6px; border: 2px solid #303b41; border-top-color: #c5d0d6; border-radius: 50%; animation: mobile-startup-turn 1.1s linear infinite; }
+@keyframes mobile-startup-turn { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .mobile-startup-indicator { animation: none; } }
+.mobile-viewport-group.is-detached { min-height: 0; flex: 1 1 0; margin: 0 6px 6px; }
+.mobile-viewport-group.is-detached .mobile-viewport { min-height: 0; background: transparent; }
+/* The detached phone is the window itself: no outer drop shadow to clip at the window edge; the inset rings stay. */
+.mobile-viewport-group.is-detached .mobile-phone-shell { --mobile-shell-elevation: 0 0 0 0 transparent; }
+.mobile-input-row { display: flex; gap: 6px; }
+.mobile-text-entry input, .mobile-input-row input { flex: 1; width: 0; min-width: 0; padding: 6px 8px; border: 1px solid var(--line-strong); border-radius: 5px; background: var(--card); color: var(--ink); }
+.mobile-text-entry input::placeholder, .mobile-input-row input::placeholder { color: var(--ink-2); opacity: .75; }
+.mobile-text-entry .mobile-icon-button { border-color: var(--line-strong); background: var(--paper); }
+.mobile-tools { flex: none; border-top: 1px solid var(--line); }
+.mobile-tools > summary { padding: 8px 12px; color: var(--ink-2); cursor: pointer; user-select: none; }
+.mobile-tools > summary:hover { background: var(--paper); }
+.mobile-tools-body { display: grid; gap: 10px; padding: 2px 10px 12px; }
+.mobile-tools label { display: block; margin-bottom: 4px; font-size: 10px; color: var(--ink-2); }
+.mobile-field-note { display: block; margin-top: 4px; font-size: 9px; color: var(--ink-2); }
+.mobile-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+@container workspace-panel (max-width: 290px) {
+  .mobile-platforms, .mobile-device-row { padding-left: 6px; padding-right: 6px; }
+  .mobile-viewport-group { margin-left: 4px; margin-right: 4px; }
+  .mobile-platforms > button:not(.mobile-discover) { padding-left: 7px; padding-right: 7px; }
+}

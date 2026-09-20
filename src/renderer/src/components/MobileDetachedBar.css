@@ -1,0 +1,15 @@
+/* Detached phone window: one 28px strip above the device. The strip is the
+ * drag handle; every button opts out of dragging. Transparent window behind,
+ * so the strip carries its own paper, hairline and radius. */
+.mobile-detached-bar { display: flex; flex: none; align-items: center; gap: 2px; height: 28px; min-height: 28px; padding: 0 2px 0 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--paper); color: var(--ink); font: 11px/1 var(--mono); -webkit-app-region: drag; user-select: none; }
+.mobile-detached-title { display: flex; flex: 1; min-width: 0; align-items: center; gap: 6px; overflow: hidden; }
+.mobile-detached-title > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; font-weight: 600; }
+.mobile-detached-dot { flex: none; width: 5px; height: 5px; border-radius: 50%; background: var(--ink-3); }
+.mobile-detached-dot.is-connected { background: var(--ok); }
+.mobile-detached-bar button { -webkit-app-region: no-drag; display: inline-flex; flex: none; align-items: center; justify-content: center; gap: 3px; min-width: 24px; height: 24px; padding: 0 4px; border: 1px solid transparent; border-radius: 4px; background: transparent; color: var(--ink-2); font: 10px/1 var(--mono); cursor: pointer; }
+.mobile-detached-bar button:hover:not(:disabled) { background: var(--paper-2); color: var(--ink); }
+.mobile-detached-bar button:disabled { opacity: .45; cursor: default; }
+.mobile-detached-bar button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.mobile-detached-bar button svg { width: 13px; height: 13px; pointer-events: none; }
+.mobile-detached-close { font-size: 15px; }
+.mobile-detached-sep { flex: none; width: 1px; height: 12px; margin: 0 3px; background: var(--line); }

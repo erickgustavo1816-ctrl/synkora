@@ -1,0 +1,26 @@
+.mobile-calibration-backdrop { position: fixed; z-index: 1200; inset: 0; display: flex; align-items: center; justify-content: center; padding: 20px; background: rgb(38 36 31 / 24%); color: var(--ink); font: 12px/1.6 var(--mono); }
+.mobile-calibration-dialog { width: 484px; max-width: 100%; max-height: 100%; overflow: auto; padding: 22px; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--paper); box-shadow: 0 18px 50px rgb(38 36 31 / 22%); }
+.mobile-calibration-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--ink-2); font-size: 9px; letter-spacing: .12em; }
+.mobile-calibration-heading button { width: 25px; height: 25px; padding: 0; border: 0; font-size: 20px; line-height: 1; background: transparent; color: var(--ink-2); }
+.mobile-calibration-dialog h2 { margin: 13px 0 8px; font-size: 20px; font-weight: 600; letter-spacing: -.04em; }
+.mobile-calibration-dialog p { margin: 0; }
+.mobile-calibration-dialog strong { font-weight: 600; }
+.mobile-calibration-dialog button, .mobile-calibration-dialog input { font: inherit; }
+.mobile-calibration-dialog button { cursor: pointer; }
+.mobile-calibration-dialog button:focus-visible, .mobile-calibration-dialog input:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.mobile-calibration-ruler-area { width: 100%; padding: 14px 0 30px; margin: 15px 0 5px; overflow: auto; }
+.mobile-calibration-ruler { position: relative; height: 25px; margin: 0 auto; border-top: 2px solid var(--ink); background: linear-gradient(to bottom, color-mix(in srgb, var(--accent) 9%, transparent), transparent); }
+.mobile-calibration-ruler i { position: absolute; top: 0; height: 6px; border-left: 1px solid var(--ink-2); }
+.mobile-calibration-ruler i.is-half { height: 11px; }
+.mobile-calibration-ruler i.is-centimetre { height: 18px; border-color: var(--ink); }
+.mobile-calibration-ruler i span { position: absolute; top: 22px; transform: translateX(-50%); font-size: 10px; font-style: normal; }
+.mobile-calibration-adjust { display: flex; align-items: center; gap: 12px; }
+.mobile-calibration-adjust button { flex: none; width: 31px; height: 31px; padding: 0; border: 1px solid var(--line-strong); border-radius: 5px; color: var(--ink); background: var(--card); font-size: 17px; }
+.mobile-calibration-adjust input { flex: 1; width: 0; min-width: 0; height: 20px; accent-color: var(--accent); }
+.mobile-calibration-dialog .mobile-calibration-hint { margin-top: 14px; color: var(--ink-2); font-size: 10px; }
+.mobile-calibration-dialog .mobile-calibration-error { margin-top: 10px; color: var(--err); font-size: 10px; }
+.mobile-calibration-reset { margin-top: 12px; padding: 0; border: 0; background: transparent; color: var(--ink-2); font-size: 10px !important; text-decoration: underline; text-underline-offset: 3px; }
+.mobile-calibration-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 23px; }
+.mobile-calibration-actions button { padding: 8px 11px; white-space: nowrap; border: 1px solid var(--line-strong); border-radius: 5px; background: transparent; color: var(--ink); font-size: 11px; }
+.mobile-calibration-actions button.is-primary { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+.mobile-calibration-actions button:disabled { opacity: .45; cursor: default; }

@@ -1,0 +1,10 @@
+html.mobile-phone-page,
+html.mobile-phone-page body,
+html.mobile-phone-page #root { background: transparent !important; min-width: 0; min-height: 0; width: 100%; height: 100%; overflow: hidden; }
+.mobile-phone-window { height: 100%; width: 100%; display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: 6px; box-sizing: border-box; color: var(--ink); background: transparent; }
+.mobile-phone-window > .mobile-viewport-group { flex: 1; min-height: 0; margin-top: 0; }
+.mobile-phone-window-notice { flex: 0 0 auto; padding: 10px; margin-top: 6px; border-radius: 8px; background: var(--paper); font: 11px/1.5 var(--mono); }
+.mobile-detached-status { display: grid; gap: 9px; align-content: start; padding: 18px 12px; font: 11px/1.5 var(--mono); color: var(--ink-2); }
+.mobile-detached-status strong { color: var(--ink); }
+.mobile-detached-status-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.mobile-button.mobile-detach-button { flex: 0 0 30px; width: 30px; padding: 0; font-size: 19px; }

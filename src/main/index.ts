@@ -18,17 +18,18 @@ import {
   alignWorktreeFromSnapshot,
   currentBranch,
   ensureSynkoraGitExcludes,
-  gitCommitReached,
   gitHead,
-  isExactCleanPreCasSnapshot,
   isWorktreeClean,
   isExpectedVersionWorktree,
+  inspectReleaseTarget,
   pruneWorktrees,
   remoteAheadOf,
-  removeWorktreeAndBranch,
   setGitObserver
 } from './worktree'
 import { MissionStore } from './missions'
+import { buildMissionSummaries } from './missionSummary'
+import { ProjectContextStore } from './projectContextStore'
+import { buildProjectContextTools } from './projectContextTools'
 import { PlanStore } from './plans'
 import { activeMasterPlan, planReleaseLock } from './planReleaseLock'
 import { releaseDoneDecision, releaseStatusText, runReleaseForChat } from './releaseChat'
@@ -41,6 +42,10 @@ import {
   type ReleaseBumpOutcome
 } from './releasePublish'
 import { ReleasesStore, type ReleaseRecordBump, type ReleaseRecordPush } from './releasesStore'
+import { ReleaseChangesStore } from './releaseChangesStore'
+import { buildReleaseChanges } from './releaseChanges'
+import { releaseIdentityError, resolveReleaseChangeScope } from './releaseChangesScope'
+import { releaseChangesProbe } from './releaseChangesGit'
 import { IntegrationQueueStore } from './integrationQueue'
 import type { MainContext } from './mainContext'
 import {} from './cliSessionTransplant'
@@ -132,6 +137,9 @@ import {
 } from './browserPopoutWindow'
 import { registerBrowserIpc } from './ipc/browser'
 import { buildGuiBrowserTools, type GuiBrowserToolkit } from './guiBrowserTools'
+import { createMobileIntegration } from './mobileIntegration'
+import { MobileMonitorScaleDetector } from './mobileMonitorScale'
+import { createMobileMonitorReader } from './mobileMonitorWindow'
 // SKILLS 3.0 (2026-09-08 — design DESIGN_HARNESS_DO_MODELO, fatia 5.D): as três
 // tools com que o agente monta o harness da missão. O motor mora nos módulos
 // `skills*` (catálogo curado, download pinado, materialização, rastro); aqui é só
@@ -252,6 +260,7 @@ let abortVoiceRequests: () => void = () => {}
 // blindagem CHECK 17 contra overlays existia só por causa dele).
 let uiSender: Electron.WebContents | null = null
 let mainWindow: BrowserWindow | null = null
+let bindMobileOwnerWindow: (window: BrowserWindow) => void = () => {}
 // COSTURA DE PUSH DA FASE 3 (docs/FASE3_PLANO.md §3-D3): o destino de um push
 // é a VIEW, não "a janela". A Fase 3 tinha uma SEGUNDA superfície (a
 // WebContentsView do canvas de panes) e a família push classificava canal →
@@ -501,12 +510,13 @@ function resolveAppIcon(): string | undefined {
 }
 
 /** Views do renderer que ganham janela própria (a `main` não tem query). */
-const ALLOWED_RENDERER_VIEWS = new Set(['synvoice-overlay', 'progress-overlay', 'browser-popout'])
+const ALLOWED_RENDERER_VIEWS = new Set(['synvoice-overlay', 'progress-overlay', 'browser-popout', 'mobile-phone'])
 /** Chaves de query permitidas ALÉM de `view`, POR view. O pop-out do browser é
  *  a primeira janela da casa que precisa saber DE QUEM ela é: a missão e o
  *  projeto viajam na URL (os overlays só carregavam `view`). */
 const ALLOWED_RENDERER_VIEW_QUERY: Record<string, readonly string[]> = {
-  'browser-popout': ['missionId', 'projectId']
+  'browser-popout': ['missionId', 'projectId'],
+  'mobile-phone': ['windowId']
 }
 /** Valor de query aceito: id da casa (uuid) e nada de exótico. */
 const SAFE_RENDERER_QUERY_VALUE = /^[A-Za-z0-9._:-]{1,120}$/
@@ -562,7 +572,7 @@ function trustedRendererOrigin(rawOrigin: string): boolean {
 
 function trustedRendererView(
   rawUrl: string,
-  view: 'main' | 'synvoice-overlay' | 'progress-overlay' | 'browser-popout'
+  view: 'main' | 'synvoice-overlay' | 'progress-overlay' | 'browser-popout' | 'mobile-phone'
 ): boolean {
   if (!trustedRendererUrl(rawUrl)) return false
   try {
@@ -835,6 +845,7 @@ function createWindow(): BrowserWindow {
     }
   })
   mainWindow = win
+  bindMobileOwnerWindow(win)
   const mainWebContentsId = win.webContents.id
 
   // O renderer só pede áudio. Autorizar `media` sem conferir o tipo também
@@ -2101,8 +2112,15 @@ function toggleProgressOverlay(): void {
 // colateral desejado: locks separados = dev e instalado podem rodar JUNTOS.
 if (app.isPackaged) {
   const packagedData = join(process.env['LOCALAPPDATA'] ?? app.getPath('appData'), 'Synkora')
+  mkdirSync(packagedData, { recursive: true })
   app.setPath('userData', packagedData)
   app.setPath('sessionData', packagedData)
+} else if (process.platform === 'darwin') {
+  // Case-insensitive APFS must not merge development and installed stores.
+  const developmentData = join(app.getPath('appData'), 'Synkora-Dev')
+  mkdirSync(developmentData, { recursive: true })
+  app.setPath('userData', developmentData)
+  app.setPath('sessionData', developmentData)
 }
 
 // O app NÃO pode morrer sozinho em silêncio (aconteceu em campo): erros não
@@ -2391,13 +2409,25 @@ app.whenReady().then(async () => {
   // R27F2 — o RETRATO das subidas (entidade por release, no sucesso). A aba
   // Versões lê daqui; o fato continua sendo version.status no backlog.
   const releases = new ReleasesStore(join(app.getPath('userData'), 'releases.json'))
+  const releaseChangesStore = new ReleaseChangesStore(join(app.getPath('userData'), 'release-changes.json'))
+  const releaseMutationLocks = new Set<string>()
   const backlog = new BacklogStore()
+  const projectContext = buildProjectContextTools({
+    projects, missions, versions: backlog, plans,
+    notes: new ProjectContextStore(join(app.getPath('userData'), 'project-context.json')),
+    inspect: (cwd, heads) => gitOff('projectContextSnapshot', cwd, heads),
+    audit: (event, identity, detail) => blackbox.record({
+      cat: 'mcp', event, ids: { projectId: identity.projectId, missionId: identity.missionId, paneId: identity.paneId },
+      detail
+    })
+  })
   const maestro = new MaestroStore()
   const settings = new SettingsStore()
   endBootStores()
   // Stores are in-memory; filesystem availability alone uses a short cache.
   // Streaming GUI events never trigger a disk read for every token.
   let guiSessions: GuiSessionRegistry | undefined
+  let releaseMobileController: ((paneId: string) => void) | undefined
   const progressProjectPaths = new Map<string, { path: string; checkedAt: number; missing: boolean }>()
   progressSnapshotSource = (revision) => {
     const allProjects = projects.list()
@@ -2600,7 +2630,10 @@ app.whenReady().then(async () => {
     ensureProjectRuntimeWritable: (...args) => ensureProjectRuntimeWritable(...args),
     maestroPaneId: (...args) => maestroPaneId(...args),
     orchPaneId: (...args) => orchPaneId(...args),
-    unregisterPane: (...args) => unregisterPane(...args),
+    unregisterPane: (...args) => {
+      releaseMobileController?.(args[0])
+      return unregisterPane(...args)
+    },
     cleanPaneMcpFile: (...args) => cleanPaneMcpFile(...args),
     abortVoiceRequests: () => abortVoiceRequests(),
     pushBoard: (channel, ...args) => pushBoard(channel, ...args),
@@ -2848,7 +2881,8 @@ app.whenReady().then(async () => {
 
   function writeVersionReleaseIntent(
     projectPath: string,
-    version: { id: string; name: string; projectId: string; worktree?: string }
+    version: { id: string; name: string; projectId: string; worktree?: string },
+    expectedTarget?: { branch?: string; head?: string }
   ): VersionReleaseIntent {
     ensureSynkoraGitExcludes(projectPath)
     if (!version.worktree) throw new Error('worktree da versão ausente')
@@ -2858,6 +2892,8 @@ app.whenReady().then(async () => {
     if (!targetHead) throw new Error('não foi possível identificar o commit atual da base')
     const targetBranch = currentBranch(projectPath)
     if (!targetBranch) throw new Error('não foi possível identificar a branch atual da base')
+    if (expectedTarget && (targetBranch !== expectedTarget.branch || targetHead !== expectedTarget.head))
+      throw new Error('o destino mudou após a preparação; leia release_status antes de tentar novamente')
     const directory = join(projectPath, '.synkora', 'releases')
     const file = versionReleaseIntentPath(projectPath, version.id)
     const temporary = `${file}.tmp-${process.pid}-${Date.now()}`
@@ -2899,20 +2935,22 @@ app.whenReady().then(async () => {
     }
   }
 
-  function recoverVersionReleaseIntents(projectId: string): void {
+  async function recoverVersionReleaseIntents(projectId: string, onlyVersionId?: string): Promise<Map<string, string>> {
+    const outcomes = new Map<string, string>()
     const project = projects.get(projectId)
-    if (!project) return
+    if (!project) return outcomes
     try {
       ensureSynkoraGitExcludes(project.path)
     } catch {
-      return
+      return outcomes
     }
     const directory = join(project.path, '.synkora', 'releases')
     let entries: string[] = []
     try {
-      entries = readdirSync(directory).filter((entry) => entry.endsWith('.intent'))
+      entries = readdirSync(directory).filter((entry) => entry.endsWith('.intent') &&
+        (!onlyVersionId || entry === `${onlyVersionId}.intent`))
     } catch {
-      return
+      return outcomes
     }
     for (const entry of entries) {
       const versionId = entry.slice(0, -'.intent'.length)
@@ -2921,8 +2959,13 @@ app.whenReady().then(async () => {
         clearVersionReleaseIntent(project.path, versionId)
         continue
       }
+      if (releaseChangesStore.list(projectId, versionId).some((record) => record.state === 'prepared')) {
+        outcomes.set(versionId, 'há uma correção pendente; repita release_save com o mesmo requestId antes de recuperar a subida')
+        continue
+      }
       if (version.status !== 'lancada') {
-        if (!versionIsolationIsValid(project.path, version)) {
+        if (!versionIsolationIsNarrow(version)) {
+          outcomes.set(versionId, 'identidade da versão ausente ou compartilhada; Repare a identidade e repita release_run')
           hub.publish({
             projectId,
             kind: 'error',
@@ -2932,22 +2975,11 @@ app.whenReady().then(async () => {
           })
           continue
         }
-        let intent: VersionReleaseIntent | undefined
+        let intent: unknown
         try {
-          const parsed = JSON.parse(readFileSync(join(directory, entry), 'utf8')) as VersionReleaseIntent
-          if (
-            parsed.id !== versionId ||
-            parsed.projectId !== projectId ||
-            !/^[0-9a-f]{40,64}$/i.test(parsed.sourceHead) ||
-            !/^[0-9a-f]{40,64}$/i.test(parsed.targetHead ?? '') ||
-            !parsed.targetBranch?.trim() ||
-            resolve(parsed.targetDir).toLocaleLowerCase('en-US') !==
-              resolve(project.path).toLocaleLowerCase('en-US')
-          ) {
-            throw new Error('intent inconsistente')
-          }
-          intent = parsed
+          intent = JSON.parse(readFileSync(join(directory, entry), 'utf8'))
         } catch {
+          outcomes.set(versionId, 'marcador de publicação inválido; preserve a versão e repare o marcador antes de repetir release_run')
           hub.publish({
             projectId,
             kind: 'error',
@@ -2956,73 +2988,56 @@ app.whenReady().then(async () => {
           })
           continue
         }
-        if (
-          currentBranch(project.path) !== intent.targetBranch ||
-          gitCommitReached(project.path, intent.targetHead!) !== true ||
-          gitCommitReached(project.path, intent.sourceHead) !== true
-        ) {
-          if (
-            isExactCleanPreCasSnapshot(
-              version.worktree,
-              intent.sourceHead,
-              project.path,
-              intent.targetHead!,
-              intent.targetBranch!
-            )
-          ) {
-            // Queda depois do journal, mas antes do CAS: ambas as fotografias
-            // continuam exatamente intactas. Só esta prova libera nova tentativa.
-            clearVersionReleaseIntent(project.path, versionId)
-            continue
-          }
-          if (!existsSync(version.worktree)) {
-            hub.publish({
-              projectId,
-              kind: 'error',
-              text: `o worktree da versão ${version.name} desapareceu, mas o Git não prova que seu commit chegou à base; preservei o estado para reparo`,
-              actor: 'harness'
-            })
-          }
+        // Copy the identity: stores/UI may change while the worker or scoped
+        // preview shutdown yields. No cleanup may use a mutated source pair.
+        const input = { projectId, projectPath: project.path,
+          worktreesRoot: join(app.getPath('userData'), 'worktrees', projectId),
+          version: { id: version.id, projectId, branch: version.branch, worktree: version.worktree }, intent }
+        const stillCurrent = (): boolean => {
+          const current = backlog.getVersion(versionId)
+          return Boolean(current && current.status === 'aberta' && current.projectId === projectId &&
+            projects.get(projectId)?.path === input.projectPath &&
+            current.branch === input.version.branch && current.worktree === input.version.worktree &&
+            versionIsolationIsNarrow(current))
+        }
+        const proof = await gitOff('probeReleaseRecovery', input).catch(() => ({ state: 'blocked' as const,
+          reason: 'não foi possível consultar o Git; confira o acesso ao projeto e repita release_run' }))
+        if (!stillCurrent()) {
+          outcomes.set(versionId, 'a identidade da versão mudou durante a recuperação; leia release_status antes de repetir release_run')
           continue
         }
-        if (
-          isWorktreeClean(project.path) !== true &&
-          !alignWorktreeFromSnapshot(project.path, intent.targetHead!)
-        ) {
-          hub.publish({
-            projectId,
-            kind: 'error',
-            text: `a publicação da versão ${version.name} está provada no Git, mas os arquivos da base ainda não puderam ser alinhados com segurança. Preservei o intent e a versão para nova tentativa no próximo boot.`,
-            actor: 'harness',
-            urgent: true
-          })
+        if (proof.state === 'retry') {
+          // Both exact pre-merge snapshots survived. Clear only the marker;
+          // the next explicit release_run starts a new attempt with its gates.
+          clearVersionReleaseIntent(project.path, versionId)
+          outcomes.set(versionId, 'a tentativa parou antes da integração; a fotografia permanece intacta. Leia release_status e repita release_run')
           continue
         }
-        if (!version.worktree || !version.branch) {
-          hub.publish({
-            projectId,
-            kind: 'error',
-            text: `a publicação da versão ${version.name} chegou à base, mas faltam metadados para provar a limpeza da origem; preservei intent e status para reparo`,
-            actor: 'harness',
-            urgent: true
-          })
+        if (proof.state === 'blocked') {
+          outcomes.set(versionId, proof.reason)
+          hub.publish({ projectId, kind: 'error', text: `versão ${version.name}: ${proof.reason}`, actor: 'harness', urgent: true })
           continue
         }
-        if (
-          !removeWorktreeAndBranch(
-            project.path,
-            version.worktree,
-            version.branch,
-            intent.sourceHead
-          )
-        ) {
-          hub.publish({
-            projectId,
-            kind: 'error',
-            text: `a publicação da versão ${version.name} chegou à base, mas a branch/worktree de origem divergiu ou não pôde ser removida sem força; preservei tudo para reparo`,
-            actor: 'harness',
-            urgent: true
-          })
+        try {
+          await closeTestServersUnder(input.version.worktree)
+          lspManager.invalidate(input.version.worktree)
+        } catch {
+          outcomes.set(versionId, 'a subida está gravada, mas o encerramento da prévia falhou; feche a prévia dessa versão e repita release_run')
+          continue
+        }
+        if (!stillCurrent()) {
+          outcomes.set(versionId, 'a identidade da versão mudou durante a recuperação; leia release_status antes de repetir release_run')
+          continue
+        }
+        const finished = await gitOff('finishReleaseRecovery', input, proof.targetHead).catch(() => ({ state: 'blocked' as const,
+          reason: 'a finalização foi interrompida; preserve as pastas e repita release_run para conferir o estado gravado' }))
+        if (finished.state === 'blocked') {
+          outcomes.set(versionId, finished.reason)
+          hub.publish({ projectId, kind: 'error', text: `versão ${version.name}: ${finished.reason}`, actor: 'harness', urgent: true })
+          continue
+        }
+        if (!stillCurrent()) {
+          outcomes.set(versionId, 'a versão mudou durante a finalização; preserve o marcador e confira a identidade antes de repetir release_run')
           continue
         }
       }
@@ -3030,28 +3045,9 @@ app.whenReady().then(async () => {
       if (version.status !== 'lancada') {
         backlog.markVersionReleased(versionId)
       }
-      // O REGISTRO acompanha o fato (a versão provada na base): a missão de
-      // release não tem mais o que operar. Sem isto, uma subida reconciliada
-      // por boot deixava o release eternamente "rodando" no board (incidente
-      // de 2026-08-20 — a limpeza falha porque o chat do release mora DENTRO
-      // do worktree da versão e segura o diretório no Windows).
-      //
-      // R38 (2026-08-29) — aqui NÃO entra a sonda de pane viva que a
-      // reconciliação de leitura ganhou (missionEngine.missionsWithIntegration),
-      // e o motivo é VERIFICADO, não presumido: este bloco tem UM chamador só
-      // (o laço de `projects.list()` do whenReady, ~350 linhas abaixo) e ele
-      // roda ANTES de `guiSessions = registerGuiIpc(...)` — o registro de
-      // conversas ainda nem existe, e o Map dele nasce vazio a cada boot. Não
-      // há chat vivo a roubar: no boot, todo release é órfão por construção.
-      for (const m of missions.list(projectId)) {
-        if (
-          m.versionId === versionId &&
-          missionTypeOf(m) === 'release' &&
-          (m.status === 'ativa' || m.status === 'integrando')
-        ) {
-          missions.update(m.id, { status: 'concluida' })
-        }
-      }
+      // Recovery proves the ascent, not the delivery. Keep the release chat
+      // active across restart so release_save / release_push / release_done
+      // can finish any remaining correction or publication.
       emitBacklogChanged(projectId)
       // R27F2 — a reconciliação também AVISA A TELA (mesma régua do fecho
       // vivo): no boot o push cai no vazio, inofensivo; rodando com o app
@@ -3059,6 +3055,7 @@ app.whenReady().then(async () => {
       pushAll('missions:changed', projectId)
       syncBoard(projectId)
       clearVersionReleaseIntent(project.path, versionId)
+      outcomes.set(versionId, `finalização da versão ${version.name} recuperada; a integração já estava gravada e não foi repetida. Leia release_status e use release_push para concluir o envio pendente`)
       hub.publish({
         projectId,
         kind: 'merge',
@@ -3066,11 +3063,18 @@ app.whenReady().then(async () => {
         actor: 'harness'
       })
     }
+    return outcomes
   }
 
   async function releaseVersionImpl(versionId: string, actor: string): Promise<string> {
     const version = backlog.getVersion(versionId)
     if (!version) return 'versão não encontrada'
+    if (releaseMutationLocks.has(version.projectId))
+      return 'uma operação de release está em andamento; aguarde e leia release_status'
+    releaseMutationLocks.add(version.projectId)
+    try {
+    if (releaseChangesStore.list(version.projectId, versionId).some((record) => record.state === 'prepared'))
+      return 'há uma correção pendente; leia release_status e repita release_save com o mesmo requestId antes de subir'
     const project = projects.get(version.projectId)
     try {
       if (project) ensureSynkoraGitExcludes(project.path)
@@ -3078,10 +3082,16 @@ app.whenReady().then(async () => {
       return error instanceof Error ? error.message : String(error)
     }
     if (!project) return 'projeto não encontrado'
+    if (existsSync(versionReleaseIntentPath(project.path, version.id))) {
+      const recovered = await recoverVersionReleaseIntents(version.projectId, version.id)
+      return recovered.get(version.id) ?? 'não foi possível recuperar a finalização; preserve as pastas, confira o acesso ao projeto e repita release_run'
+    }
     if (version.status === 'lancada') {
       clearVersionReleaseIntent(project.path, version.id)
       return `a versão ${version.name} já foi lançada`
     }
+    const releaseTarget = await gitOff('inspectReleaseTarget', project.path, version.releaseTargetBranch)
+    if (releaseTarget.error) return releaseTarget.error
     // Servidor de teste do dono no worktree da versão fecha antes do merge.
     if (version.worktree) await closeTestServersUnder(version.worktree)
     // Pelo mesmo motivo, o servidor de LINGUAGEM daquela raiz (R14): o
@@ -3154,8 +3164,10 @@ app.whenReady().then(async () => {
     })
     if (planLock) return planLock.message
     if (existsSync(versionReleaseIntentPath(project.path, version.id))) {
-      return `a versão ${version.name} já possui um journal de publicação pendente; reinicie o Synkora para reconciliá-lo com segurança antes de tentar novamente`
+      return `a versão ${version.name} ganhou um marcador de recuperação durante a preparação; leia release_status e repita release_run para finalizar a tentativa anterior`
     }
+    const targetPrepared = await gitOff('prepareReleaseTarget', project.path, releaseTarget)
+    if (!targetPrepared.ok) return targetPrepared.error ?? 'não foi possível preparar o destino da release'
     let releaseIntent: VersionReleaseIntent
     try {
       releaseIntent = writeVersionReleaseIntent(project.path, {
@@ -3163,7 +3175,7 @@ app.whenReady().then(async () => {
         name: version.name,
         projectId: version.projectId,
         worktree: version.worktree
-      })
+      }, releaseTarget)
     } catch (error) {
       return `não subi a versão: não consegui gravar o ponto seguro de recuperação (${error instanceof Error ? error.message : String(error)})`
     }
@@ -3360,6 +3372,7 @@ app.whenReady().then(async () => {
         ...(releaseMission ? { missionId: releaseMission.id } : {}),
         actor,
         mergeDetail: releaseDetail,
+        branch: targetBranch,
         push: releasePush,
         ...(releaseBump ? { bump: releaseBump } : {}),
         publishRequired: publishSignalForOutcome.hasReleaseScript,
@@ -3369,6 +3382,9 @@ app.whenReady().then(async () => {
       // sem retrato — o hub e o backlog seguem contando o fato.
     }
     return releaseOutcome
+    } finally {
+      releaseMutationLocks.delete(version.projectId)
+    }
   }
 
 
@@ -3628,6 +3644,7 @@ app.whenReady().then(async () => {
   const browserPanes: BrowserPaneManager = createBrowserManager({
     window: () => mainWindow,
     record: (input) => blackbox.record(input),
+    prepareReference: (missionId, projectId) => guiSessions?.prepareBrowserReference(missionId, projectId),
     // O `pushAll` da casa só fala com a janela principal; a janela destacada é
     // uma superfície do app como outra qualquer e precisa do mesmo repaint.
     push: (channel, ...args) => {
@@ -3636,7 +3653,54 @@ app.whenReady().then(async () => {
     },
     popouts: browserPopouts
   })
-  const killMissionGuiPanes = (missionId: string, keepPaneId?: string): void => {
+  const mobileMonitors = new MobileMonitorScaleDetector()
+  const invalidateMobileMonitor = (): void => mobileMonitors.invalidate()
+  screen.on('display-added', invalidateMobileMonitor)
+  screen.on('display-removed', invalidateMobileMonitor)
+  screen.on('display-metrics-changed', invalidateMobileMonitor)
+  const readMobileMonitorScale = (requestingWindow: BrowserWindow) => createMobileMonitorReader({
+    read: () => mobileMonitors.read(),
+    current: () => {
+      if (!['win32', 'darwin'].includes(process.platform) || requestingWindow.isDestroyed()) return null
+      const display = screen.getDisplayMatching(requestingWindow.getBounds())
+      const center = { x: Math.round(display.bounds.x + display.bounds.width / 2), y: Math.round(display.bounds.y + display.bounds.height / 2) }
+      return { platform: process.platform === 'darwin' ? 'darwin' as const : 'win32' as const,
+        displayId: display.id, displayBounds: { ...display.bounds }, scaleFactor: display.scaleFactor,
+        centerPx: process.platform === 'win32' ? screen.dipToScreenPoint(center) : center }
+    }
+  })()
+  const mobile = createMobileIntegration(ctx, {
+    monitorScale: readMobileMonitorScale,
+    calibrationFile: join(app.getPath('userData'), 'mobile-calibration.json'),
+    phone: {
+      preloadFile: join(__dirname, '../preload/index.js'),
+      ownerBounds: () => ctx.mainWindow && !ctx.mainWindow.isDestroyed() ? ctx.mainWindow.getBounds() : undefined,
+      rendererUrl: windowId => {
+        const devUrl = !app.isPackaged ? process.env['ELECTRON_RENDERER_URL'] : undefined
+        const url = new URL(devUrl || pathToFileURL(join(__dirname, '../renderer/index.html')).href)
+        url.search = ''; url.hash = ''
+        url.searchParams.set('view', 'mobile-phone'); url.searchParams.set('windowId', windowId)
+        if (!trustedRendererView(url.href, 'mobile-phone')) throw new Error('Mobile phone renderer unavailable')
+        return url.href
+      },
+      trustedUrl: (rawUrl, windowId) => {
+        if (!trustedRendererView(rawUrl, 'mobile-phone')) return false
+        const url = new URL(rawUrl)
+        return !url.hash && url.searchParams.size === 2 && url.searchParams.get('windowId') === windowId
+      }
+    },
+    cacheRoot: join(app.getPath('userData'), 'mobile', 'expo-go'),
+    inputServerPath: app.isPackaged
+      ? join(process.resourcesPath, 'mobile', 'scrcpy', 'scrcpy-server-v4.1.jar')
+      : join(__dirname, '../../build/vendor/scrcpy/scrcpy-server-v4.1.jar'),
+    helperOf: paneId => paneId.startsWith(GUI_HELPER_MCP_PANE_PREFIX)
+      ? guiHelperEngine.get(paneId.slice(GUI_HELPER_MCP_PANE_PREFIX.length)) : undefined
+  })
+  releaseMobileController = mobile.releaseController
+  bindMobileOwnerWindow = mobile.bindOwnerWindow
+  mobile.installQuit(app)
+  const killMissionGuiPanes = (missionId: string, keepPaneId?: string): Promise<void> => {
+    const closing = mobile.closeMission(missionId)
     guiSessions?.killWhere((paneId) => paneId !== keepPaneId && isGuiMissionPaneId(paneId, missionId))
     // O servidor de linguagem tem `cwd` DENTRO do worktree, igual aos chats:
     // este ponto é chamado logo antes de toda remoção de worktree de missão (o
@@ -3652,13 +3716,17 @@ app.whenReady().then(async () => {
     // que ficaria órfã na tela é pior ainda: ela mostraria a missão que o dono
     // acabou de fechar.
     browserPanes.closeMission(missionId)
+    return closing
   }
   // Onda C: os chats do PROJETO (hoje só o de planejamento, `gui-plan-<id8>`)
   // rodam na RAIZ do universo — morrem quando essa raiz sai debaixo deles
   // (relocação, exclusão do projeto). Os de MISSÃO não entram aqui: o cwd
   // deles é o worktree em userData, que sobrevive aos dois gestos.
-  const killProjectGuiPanes = (projectId: string): void => {
+  const killProjectGuiPanes = (projectId: string): Promise<void> => {
+    // Removal/relocation revokes simulator sessions even when only the owner used them.
+    const closing = missions.list(projectId).map(mission => mobile.closeMission(mission.id))
     guiSessions?.killWhere((paneId) => isGuiPlanningPaneId(paneId, projectId))
+    return Promise.all(closing).then(() => undefined)
   }
   // MISSÕES → missionEngine.ts (fase 1, commit 6d). Missões + fila de
   // integração nascem no engine; os aliases abaixo mantêm os call sites do
@@ -3677,10 +3745,11 @@ app.whenReady().then(async () => {
     noteInGuiPane,
     announceToGuiPane,
     killMissionGuiPanes,
-    afterIntegrationReply: (missionId, text, finish) => {
-      if (guiSessions) guiSessions.afterIntegrationReply(guiMissionPaneId('dev', missionId), text, finish)
+    afterIntegrationReply: (missionId, text, finish, recoveryCwd, phase) => {
+      if (guiSessions) guiSessions.afterIntegrationReply(guiMissionPaneId('dev', missionId), text, finish, recoveryCwd, phase)
       else setImmediate(() => { void finish() })
     },
+    paneCwd: paneId => guiSessions?.cwdOf(paneId),
     // R38 — a sonda de VIDA do chat, para a rede de reconciliação parar de
     // pescar conversa viva. `has` é a resposta do próprio registro ("sessão do
     // pane: ausente = nunca criada ou já encerrada"), e o `?.` cobre o boot:
@@ -3832,7 +3901,10 @@ app.whenReady().then(async () => {
     // D3 — A ABA DO AJUDANTE MORRE COM ELE: o dispose do processo (done/failed/
     // cancelled/interrupted) fecha as abas cujo dono é o `helper-mcp-<id>`. A
     // bancada é do ajudante; o registro que fica são os shots em .synkora/browser/.
-    onHelperDisposed: (helperId) => browserPanes.closeTabsOf(guiHelperMcpPaneId(helperId)),
+    onHelperDisposed: (helperId) => {
+      mobile.releaseController(guiHelperMcpPaneId(helperId))
+      browserPanes.closeTabsOf(guiHelperMcpPaneId(helperId))
+    },
     onChange: (change) => guiSessions?.noteHelperChange(change),
     log: (entry) =>
       blackbox.record({
@@ -3999,6 +4071,51 @@ app.whenReady().then(async () => {
     }
   }
 
+  const releaseChanges = buildReleaseChanges({
+    store: releaseChangesStore,
+    locks: releaseMutationLocks,
+    resolve: (id) => {
+      const mission = id.missionId ? missions.get(id.missionId) : undefined
+      const version = mission?.versionId ? backlog.getVersion(mission.versionId) : undefined
+      const project = version ? projects.get(version.projectId) : undefined
+      const latest = backlog.listVersions(id.projectId).filter((v) => v.status === 'lancada')
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0]
+      return resolveReleaseChangeScope({
+        identity: id, mission, version, project,
+        isolationValid: Boolean(project && version?.status === 'aberta' && versionIsolationIsValid(project.path, version)),
+        intentPending: Boolean(project && version && existsSync(versionReleaseIntentPath(project.path, version.id))),
+        latestVersionId: latest?.id,
+        mainBranch: project ? currentBranch(project.path) ?? undefined : undefined,
+        recordedMainBranch: version ? releases.listForVersion(version.id)[0]?.branch : undefined
+      })
+    },
+    probe: releaseChangesProbe,
+    prepare: (target, input) => gitOff('prepareReleaseChange', target, input),
+    apply: (target, record) => gitOff('applyReleaseChange', target, record),
+    push: (target, head, savedShas) => gitOff('pushReleaseChanges', target, head, savedShas),
+    changed: emitBacklogChanged,
+    audit: (event, scope, changeId) => blackbox.record({
+      cat: 'merge', event, actor: 'agent-release',
+      ids: { projectId: scope.projectId, missionId: scope.missionId, ticketId: scope.versionId },
+      detail: { ...(changeId ? { changeId } : {}) }
+    })
+  })
+
+  const missionSummaries = buildMissionSummaries({
+    missions,
+    reconcile: (mission) => missionEngine.reconcileConcludedMission(
+      mission.projectId, mission.id, `Missão integrada: ${mission.title}.`
+    ).ok,
+    changed: (projectId) => {
+      emitMissionsChanged(projectId)
+      emitBacklogChanged(projectId)
+    },
+    audit: (mission) => blackbox.record({
+      cat: 'merge', event: 'mission-summary-saved', actor: 'agent-dev',
+      ids: { projectId: mission.projectId, missionId: mission.id }
+    })
+  })
+
   const mcpApi: McpApi = {
     ...buildPlansApi(ctx, {
       proposePlanToPane: (paneId, draft) =>
@@ -4049,10 +4166,12 @@ app.whenReady().then(async () => {
           ...(candidate.versionId ? { versionId: candidate.versionId } : {})
         }))
       })
-      const statusMainBranch = currentBranch(project.path) ?? undefined
+      const statusTarget = inspectReleaseTarget(project.path,
+        version.releaseTargetBranch ?? (version.status === 'lancada' ? releases.listForVersion(version.id)[0]?.branch : undefined))
+      const statusMainBranch = statusTarget.branch
       // R28 — leitura LOCAL do origin (get-url + rev-list): mesma classe leve
       // dos gits síncronos que esta fotografia já faz; nenhuma rede sai daqui.
-      const statusRemote = remoteAheadOf(project.path, statusMainBranch ?? 'main')
+      const statusRemote = statusMainBranch ? remoteAheadOf(project.path, statusMainBranch) : undefined
       // R29 — a sonda de publicação: o agente sabe ANTES do release_run se a
       // subida termina no push ou na caixa. Leitura local de um arquivo
       // pequeno — mesma classe leve do resto da fotografia.
@@ -4077,9 +4196,11 @@ app.whenReady().then(async () => {
       }
       return releaseStatusText({
         version,
+        changes: releaseChanges.inspect(id),
+        target: statusTarget,
         mainBranch: statusMainBranch,
         versionHead: version.worktree ? gitHead(version.worktree) : undefined,
-        mainHead: gitHead(project.path),
+        mainHead: statusTarget.head,
         ...(statusRemote
           ? {
               remote: {
@@ -4102,12 +4223,41 @@ app.whenReady().then(async () => {
         releaseIntentPending: existsSync(versionReleaseIntentPath(project.path, version.id))
       })
     },
+    releaseTarget: async (id, branch) => {
+      const scope = releaseChanges.inspect(id)
+      if (scope.error) return scope.error
+      const mission = id.missionId ? missions.get(id.missionId) : undefined
+      const version = mission?.versionId ? backlog.getVersion(mission.versionId) : undefined
+      const project = version ? projects.get(version.projectId) : undefined
+      if (!version || !project || version.status !== 'aberta') return 'o destino só pode ser escolhido antes da subida desta versão'
+      if (scope.pending) return 'há uma correção pendente; reconcilie release_save antes de mudar o destino'
+      if (releaseMutationLocks.has(project.id)) return 'uma operação de release está em andamento; aguarde e leia release_status'
+      releaseMutationLocks.add(project.id)
+      try {
+        const target = await gitOff('inspectReleaseTarget', project.path, branch)
+        if (target.error) return target.error
+        if (!backlog.setVersionReleaseTarget(version.id, branch)) return 'a versão mudou; leia release_status antes de escolher o destino'
+        emitBacklogChanged(project.id)
+        blackbox.record({ cat: 'merge', event: 'release-target-selected', actor: 'agent-release',
+          ids: { projectId: project.id, missionId: mission!.id }, detail: { branch } })
+        return `destino da versão ${version.name} definido como ${branch}. A pasta do projeto continua em ${target.currentBranch}; release_run prepara o destino e executa a subida. Leia release_status e prossiga com o pedido já autorizado pelo dono.`
+      } finally { releaseMutationLocks.delete(project.id) }
+    },
     releaseRun: async (id) => {
       const mission = id.missionId ? missions.get(id.missionId) : undefined
       const version = mission?.versionId ? backlog.getVersion(mission.versionId) : undefined
       if (!mission || !version)
         return 'esta conversa não está ligada a uma versão — nada subiu para a main.'
       const runProject = projects.get(version.projectId)
+      const authorityError = releaseIdentityError({ identity: id, mission, version, project: runProject })
+      if (authorityError) return authorityError
+      // An interrupted cleanup has no live source scope. Authenticate first,
+      // then let the locked release runner recover only its existing journal.
+      const recoveryPending = runProject && existsSync(versionReleaseIntentPath(runProject.path, version.id))
+      const correctionStatus = releaseChanges.inspect(id)
+      if (correctionStatus.error && !recoveryPending) return correctionStatus.error
+      if (version.status === 'lancada' && !recoveryPending)
+        return 'a versão já subiu; leia release_status, use release_save/release_push para correções e release_done quando a entrega estiver concluída.'
       return runReleaseForChat(
         {
           run: (versionId, actor) => releaseVersionImpl(versionId, actor),
@@ -4121,6 +4271,8 @@ app.whenReady().then(async () => {
         version.id
       )
     },
+    releaseSave: (id, input) => releaseChanges.save(id, input),
+    releasePush: (id, expectedHead) => releaseChanges.push(id, expectedHead),
     // R38 — O FECHO É DO AGENTE. A plumbing do fecho é a MESMA de sempre
     // (missions.update + emitBacklogChanged + missions:changed + syncBoard);
     // o que mudou é o GATILHO: era a ascensão, agora é a decisão do agente.
@@ -4131,6 +4283,7 @@ app.whenReady().then(async () => {
       const doneProject = version ? projects.get(version.projectId) : undefined
       const decision = releaseDoneDecision({
         version,
+        changes: releaseChanges.inspect(id),
         publishRequired: doneProject ? releaseProductPublishesBox(doneProject.path) : false
         // `boxConfirmed` fica AUSENTE de propósito: o veredito do `npm run
         // release` mora no shell do agente e a release publicada mora na rede.
@@ -4179,10 +4332,14 @@ app.whenReady().then(async () => {
       id.missionId
         ? missionEngine.missionIntegrationStatus(id.projectId, id.missionId)
         : 'esta conversa não está ligada a uma missão — não há fila de integração a consultar.',
-    integrationRun: async (id) =>
-      id.missionId
-        ? missionEngine.runMissionIntegration(id.projectId, id.missionId)
-        : 'esta conversa não está ligada a uma missão — nada foi mesclado.',
+    missionSummary: (id, summary) => missionSummaries.save(id, summary).text,
+    commentary: (id, message) => guiSessions?.commentary(id, message) ??
+      { ok: false, error: 'conversa indisponível; escreva a atualização como texto normal no chat' },
+    integrationRun: async (id, summary) => {
+      const receipt = missionSummaries.prepareIntegration(id, summary)
+      if (!receipt.ok) return receipt.text
+      return missionEngine.runMissionIntegration(id.projectId, id.missionId!)
+    },
     // R14 — o kit de CÓDIGO dos quatro papéis. Objeto, não função: cada método
     // já escreve a própria caixa-preta com a RAIZ junto (ver o comentário do
     // `McpApi.lsp`), então o proxy de instrumentação abaixo o deixa passar
@@ -4192,11 +4349,13 @@ app.whenReady().then(async () => {
     // (`gui-delegator` sem ser reviewer, e `ajudante`). Objeto, não função —
     // ver o comentário do `McpApi.browser`.
     browser: guiBrowserTools,
+    mobile: mobile.toolkit,
     // SKILLS (2026-09-08): o kit dos três papéis que PRODUZEM (dev, planejador e
     // ajudante — o reviewer fica fora pela mesma cerca do browser). Objeto, não
     // função, pelo mesmo motivo dos dois acima: o proxy de instrumentação abaixo
     // só enxerga membros-função, e cada método já escreve o próprio diário.
     skills: guiSkillTools,
+    context: projectContext,
     hub
   }
 
@@ -4318,7 +4477,9 @@ app.whenReady().then(async () => {
                   }
                 : undefined,
               detail: {
-                args: args.slice(id ? 1 : 0),
+                args: prop === 'commentary'
+                  ? [{ chars: typeof args[1] === 'string' ? args[1].length : 0 }]
+                  : args.slice(id ? 1 : 0),
                 ...(err === undefined
                   ? {
                       result:
@@ -4445,8 +4606,9 @@ app.whenReady().then(async () => {
     // sem configs ainda
   }
 
-  // RECUPERAÇÃO PÓS-FECHAMENTO/CRASH: nenhum processo sobrevive, mas a FASE
-  // sobrevive. DEV interrompido volta ao backlog; REVIEW/QA ficam exatamente
+  // RECUPERAÇÃO PÓS-FECHAMENTO/CRASH: previews desacoplados podem sobreviver;
+  // a reconciliação aguarda seu encerramento antes de limpar a origem.
+  // DEV interrompido volta ao backlog; REVIEW/QA ficam exatamente
   // no gate que já estava rodando, sobre o mesmo worktree. Assim um restart
   // nunca paga outra implementação por causa de um gate perdido.
   for (const p of projects.list()) {
@@ -4457,8 +4619,10 @@ app.whenReady().then(async () => {
       runtimeWritable = false
     }
     if (runtimeWritable) {
-      recoverMissionIntegrationIntents(p.id)
-      recoverVersionReleaseIntents(p.id)
+      await recoverMissionIntegrationIntents(p.id)
+      releaseMutationLocks.add(p.id)
+      try { await recoverVersionReleaseIntents(p.id) }
+      finally { releaseMutationLocks.delete(p.id) }
     }
     for (const m of missions.list(p.id)) {
       if (m.status === 'integrando') missions.update(m.id, { status: 'ativa' })
@@ -4597,6 +4761,7 @@ app.whenReady().then(async () => {
     assertBrowserSender: assertBrowserSurfaceSender,
     browser: browserPanes
   })
+  mobile.registerIpc(assertMainRendererSender)
   // PANE GUI (Synkora 2.0, onda A — docs/GUI_PANE_CONTRACT.md): sessão de chat
   // por pane. Nenhum CLI filho sobrevive ao quit.
   // O VIGIA DE VERSÃO PÓS-BOOT (2026-09-01): o binário pode mudar com o app de
@@ -4606,6 +4771,7 @@ app.whenReady().then(async () => {
   // esquece as listas, o titlebar acende "CLIs atualizados".
   const cliVersionWatch = startCliVersionWatch({ intervalMs: 5 * 60_000 })
   guiSessions = registerGuiIpc(ctx, {
+    browser: browserPanes,
     assertAppRendererSender,
     waitForCliStable: (cli) => {
       // Fora do caminho crítico de propósito: o pane não espera o `--version`;
@@ -4679,8 +4845,12 @@ app.whenReady().then(async () => {
     releaseVersionImpl,
     versionIsolationIsValid,
     invalidateLspRoot: (root) => lspManager.invalidate(root),
-    listVersionReleases: (versionId) => releases.listForVersion(versionId),
-    listProjectReleases: (projectId) => releases.list(projectId)
+    listVersionReleases: (versionId) => releases.listForVersion(versionId).map((record) => ({
+      ...record, changes: releaseChangesStore.list(record.projectId, record.versionId)
+    })),
+    listProjectReleases: (projectId) => releases.list(projectId).map((record) => ({
+      ...record, changes: releaseChangesStore.list(record.projectId, record.versionId)
+    }))
   })
   registerMaestroIpc(ctx, {
     engine: maestroEngine,
@@ -4693,6 +4863,7 @@ app.whenReady().then(async () => {
     surveySystemPromptFile
   })
   registerMissionsIpc(ctx, {
+    projectContextBriefing: projectContext.briefing,
     engine: missionEngine,
     maestroEngine,
     orchKey,
