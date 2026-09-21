@@ -21,7 +21,7 @@ export function guiChildNeedsTermination(
 }
 
 /** Encerra a árvore do CLI, não apenas o shell intermediário do Windows. */
-export function terminateGuiProcessTree(child: ChildProcess): void {
+export async function terminateGuiProcessTree(child: ChildProcess): Promise<void> {
   // Depois de `close`, o PID pode ser reutilizado por outro processo. Nunca
   // execute taskkill usando apenas o pid histórico de um filho já terminado.
   if (!guiChildNeedsTermination(child.exitCode, child.signalCode)) return
@@ -34,6 +34,7 @@ export function terminateGuiProcessTree(child: ChildProcess): void {
   const command = guiTreeKillCommand(process.platform, child.pid)
   if (command) {
     const fallback = (): void => {
+      if (!guiChildNeedsTermination(child.exitCode, child.signalCode)) return
       try {
         child.kill()
       } catch {
@@ -46,11 +47,17 @@ export function terminateGuiProcessTree(child: ChildProcess): void {
         windowsHide: true,
         stdio: 'ignore'
       })
-      killer.once('error', fallback)
-      killer.once('close', (code) => {
-        if (code !== 0) fallback()
+      await new Promise<void>((resolve) => {
+        killer.once('error', () => {
+          fallback()
+          resolve()
+        })
+        killer.once('close', (code) => {
+          if (code !== 0) fallback()
+          resolve()
+        })
+        killer.unref()
       })
-      killer.unref()
       return
     } catch {
       fallback()

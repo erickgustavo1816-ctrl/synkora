@@ -21,6 +21,7 @@ import { limitGuiToolInput } from './guiToolInput'
 import { codexCallParcelsFromTokenUsage, codexContextFromTokenUsage } from './codexTokenUsage'
 import { guiCodexUsageSample } from './guiRequestUsage'
 import { terminateGuiProcessTree } from './guiProcessTree'
+import { CodexStartup, isCodexSqliteStartupFailure } from './codexStartup'
 import {
   guiCodexErrorWillRetry,
   guiCodexToolCompletion,
@@ -195,6 +196,12 @@ interface RpcResponse {
 interface PendingRpc {
   resolve: (msg: RpcResponse) => void
   timer: NodeJS.Timeout
+}
+
+interface CodexProcessExit {
+  closed: Promise<void>
+  code?: number | null
+  error?: Error
 }
 
 interface PendingTurnStart {
@@ -461,7 +468,10 @@ export class CodexSession {
   personaSent = true
   readyAnnounced = false
   caps: CliCaps | null = null
-  private child: ChildProcessWithoutNullStreams
+  private child: ChildProcessWithoutNullStreams | null = null
+  private processExit?: CodexProcessExit
+  private startup: CodexStartup
+  private starting = true
   private emit: (evt: SessionEvent) => void
   private persona: string
   private protocol = new GuiProtocolStream()
@@ -538,18 +548,85 @@ export class CodexSession {
     }
     if (opts.configDir) env['CODEX_HOME'] = opts.configDir
     for (const [key, value] of Object.entries(opts.extraEnv ?? {})) env[key] = value
+    this.startup = new CodexStartup(env, opts.cwd)
+    this.initDone = this.initialize(env)
+  }
+
+  private async initialize(env: Record<string, string>): Promise<void> {
+    try {
+      for (let attempt = 0; attempt < 2 && !this.killed; attempt++) {
+        if (!await this.startup.wait()) {
+          if (!this.killed) {
+            this.emit({ type: 'fatal', text: 'o Codex anterior ainda está encerrando; tente abrir a conversa novamente' })
+            this.kill()
+          }
+          return
+        }
+        if (this.killed) return
+        const exit = this.spawnProcess(env)
+        const resp = await this.request('initialize', {
+          clientInfo: { name: 'synkora', title: 'Synkora', version: '0.1.0' },
+          ...(this.opts.interactiveQuestions ? { capabilities: { experimentalApi: true } } : {})
+        })
+        if (this.killed || this.closed) return
+        if (resp.error || exit.code !== undefined) {
+          if (attempt === 0 && resp.error && !exit.error &&
+              isCodexSqliteStartupFailure(exit.code, this.stderrTail)) continue
+          const text = exit.error ? this.spawnFailureText(exit.error)
+            : exit.code !== undefined ? this.processExitText(exit.code)
+            : `handshake do codex falhou: ${resp.error?.message}`
+          this.emit({ type: 'fatal', text })
+          this.kill()
+          return
+        }
+        this.starting = false
+        this.notify('initialized', {})
+        void this.loadCaps()
+        return
+      }
+    } catch (error) {
+      if (!this.killed && !this.closed) {
+        this.emit({ type: 'fatal', text: this.spawnFailureText(error) })
+        this.kill()
+      }
+    } finally {
+      this.starting = false
+    }
+  }
+
+  private spawnFailureText(error: unknown): string {
+    return sessionSpawnFailureText({
+      message: error instanceof Error ? error.message : String(error),
+      code: (error as NodeJS.ErrnoException | undefined)?.code,
+      cwd: this.opts.cwd,
+      cwdExists: Boolean(this.opts.cwd) && existsSync(this.opts.cwd)
+    })
+  }
+
+  private processExitText(code: number | null): string {
+    const err = this.stderrTail.trim()
+    return `o painel codex encerrou (exit ${code})${err ? ` · ${firstLines(err, 300)}` : ''}`
+  }
+
+  private spawnProcess(env: Record<string, string>): CodexProcessExit {
+    this.protocol = new GuiProtocolStream()
+    this.stderrTail = ''
 
     // shell:true para o PATH do env resolver o binário (mesmo padrão do chat
     // antigo). `-c` é opção do PRÓPRIO subcomando `app-server` (sondado no
     // 0.147: `codex app-server -c mcp_servers.…` sobe e responde o initialize),
     // e os valores chegam sem aspas de propósito — o shell não escapa nada.
-    this.child = spawn('codex', ['app-server', ...(opts.extraArgs ?? [])], {
-      cwd: opts.cwd,
+    const child = this.child = spawn('codex', ['app-server', ...(this.opts.extraArgs ?? [])], {
+      cwd: this.opts.cwd,
       env,
       shell: process.platform === 'win32'
     })
+    let resolveClose!: () => void
+    const exit: CodexProcessExit = { closed: new Promise<void>(resolve => { resolveClose = resolve }) }
+    this.processExit = exit
 
-    this.child.stdout.on('data', (d: Buffer) => {
+    child.stdout.on('data', (d: Buffer) => {
+      if (child !== this.child || this.killed || this.closed) return
       const chunk = this.protocol.push(d)
       for (const line of chunk.lines) {
         this.handleLine(line)
@@ -562,73 +639,52 @@ export class CodexSession {
       }
       this.resetIdle()
     })
-    this.child.stderr.on('data', (d: Buffer) => {
+    child.stderr.on('data', (d: Buffer) => {
+      if (child !== this.child) return
       this.stderrTail = (this.stderrTail + d.toString()).slice(-1000)
     })
-    this.child.on('error', (e) => {
-      this.closed = true
-      this.cancelLiveCodexAgents()
-      this.clearIdle()
-      this.clearTurnSilence()
-      this.clearInterruptGuard()
-      this.clearTurnStartGuard()
-      this.clearTurnErrorGuard()
-      this.cancelPendingInteractions()
+    child.on('error', (e) => {
+      if (child !== this.child) return
+      exit.error = e
       this.failPendingRpcs(e.message)
-      // ENOENT de spawn quase nunca e o binario: no Windows um `cwd` que
-      // sumiu falha NOMEANDO o executavel. Traduzir so o caso provado.
-      this.emit({
-        type: 'fatal',
-        text: sessionSpawnFailureText({
-          message: e.message,
-          code: (e as NodeJS.ErrnoException).code,
-          cwd: this.opts.cwd,
-          cwdExists: Boolean(this.opts.cwd) && existsSync(this.opts.cwd)
-        })
-      })
+      if (!this.starting && !this.killed && !this.closed) {
+        this.cancelLiveCodexAgents()
+        this.emit({ type: 'fatal', text: this.spawnFailureText(e) })
+        this.kill()
+      }
     })
-    this.child.on('close', (code) => {
-      const failedBeforeClose = this.closed
-      this.closed = true
+    child.on('close', (code) => {
+      exit.code = code
+      resolveClose()
+      if (child !== this.child) return
       const final = this.protocol.end()
       for (const line of final.lines) this.handleLine(line)
-      // Cada card do sub-agente fecha ANTES do terminal da conversa: o processo
-      // morreu e ninguém mais vai reportar por eles.
-      this.cancelLiveCodexAgents()
-      this.clearIdle()
-      this.clearTurnSilence()
-      this.clearInterruptGuard()
-      this.clearTurnStartGuard()
-      this.clearTurnErrorGuard()
-      this.cancelPendingInteractions()
       this.failPendingRpcs('o painel codex encerrou')
-      for (const w of this.capsWaiters.splice(0)) w(this.caps)
-      if (!this.killed && !failedBeforeClose) {
-        const err = this.stderrTail.trim()
-        this.emit({
-          type: 'fatal',
-          text: `o painel codex encerrou (exit ${code})${err ? ` · ${firstLines(err, 300)}` : ''}`
-        })
-      }
-      this.emit({ type: 'closed', code })
+      if (this.starting && !this.killed) return
+      this.finishClose(code, this.killed ? undefined : this.processExitText(code))
     })
+    return exit
+  }
 
-    this.initDone = this.request('initialize', {
-      clientInfo: { name: 'synkora', title: 'Synkora', version: '0.1.0' },
-      ...(opts.interactiveQuestions ? { capabilities: { experimentalApi: true } } : {})
-    }).then((resp) => {
-      if (resp.error) {
-        this.emit({ type: 'fatal', text: `handshake do codex falhou: ${resp.error.message}` })
-        this.kill()
-        return
-      }
-      this.notify('initialized', {})
-      void this.loadCaps()
-    })
+  private finishClose(code: number | null, fatalText?: string): void {
+    if (this.closed) return
+    this.closed = true
+    this.cancelLiveCodexAgents()
+    this.clearIdle()
+    this.clearTurnSilence()
+    this.clearInterruptGuard()
+    this.clearTurnStartGuard()
+    this.clearTurnErrorGuard()
+    this.cancelPendingInteractions()
+    this.failPendingRpcs('o painel codex encerrou')
+    for (const w of this.capsWaiters.splice(0)) w(this.caps)
+    if (fatalText) this.emit({ type: 'fatal', text: fatalText })
+    this.emit({ type: 'closed', code })
   }
 
   get alive(): boolean {
-    return !this.killed && !this.closed && this.child.exitCode === null && this.child.signalCode === null
+    return !this.killed && !this.closed && (this.starting ||
+      Boolean(this.child && this.child.exitCode === null && this.child.signalCode === null))
   }
 
   /** Modelo/effort são por turno no Codex — só cwd/seat exigem processo novo. */
@@ -1081,6 +1137,7 @@ export class CodexSession {
   kill(): void {
     if (this.killed) return
     this.killed = true
+    this.startup?.cancel()
     this.cancelLiveCodexAgents()
     this.cancelPendingInteractions()
     this.pendingSendOperations.clear()
@@ -1095,13 +1152,18 @@ export class CodexSession {
     this.clearTurnStartGuard()
     this.clearTurnErrorGuard()
     this.failPendingRpcs('painel codex encerrado')
-    terminateGuiProcessTree(this.child)
+    for (const w of this.capsWaiters?.splice(0) ?? []) w(this.caps)
+    if (this.child) {
+      const terminated = terminateGuiProcessTree(this.child)
+      this.startup?.retire(Promise.all([terminated, this.processExit?.closed]).then(() => undefined))
+    }
+    if (!this.child || this.processExit?.code !== undefined) this.finishClose(this.processExit?.code ?? null)
   }
 
   // ————— internos —————
 
   private request(method: string, params: Record<string, unknown>): Promise<RpcResponse> {
-    if (!this.alive) return Promise.resolve({ error: { message: 'painel codex morto' } })
+    if (!this.alive || !this.child) return Promise.resolve({ error: { message: 'painel codex morto' } })
     const id = this.nextId++
     return new Promise((resolve) => {
       const timer = setTimeout(() => {
@@ -1135,6 +1197,7 @@ export class CodexSession {
   }
 
   private write(obj: unknown): void {
+    if (!this.child || this.killed || this.closed) return
     try {
       this.child.stdin.write(JSON.stringify(obj) + '\n')
     } catch (e) {
@@ -1710,6 +1773,7 @@ export class CodexSession {
       this.request('model/list', {}),
       this.request('account/read', {})
     ])
+    if (!this.alive) return
     const data = (models.result?.['data'] ?? []) as {
       id?: string
       model?: string
@@ -1753,6 +1817,7 @@ export class CodexSession {
 
   private async openThread(): Promise<boolean> {
     await this.initDone
+    if (!this.alive) return false
     const base: Record<string, unknown> = {
       cwd: this.opts.cwd,
       developerInstructions: this.persona

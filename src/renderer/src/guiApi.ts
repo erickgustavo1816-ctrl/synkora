@@ -140,6 +140,7 @@ export interface GuiReplayState {
   cursor: number
   exists: boolean
   alive: boolean
+  permissionMode?: GuiPermissionMode
 }
 
 // ————— espelho do SessionEvent do main —————
@@ -541,6 +542,7 @@ interface GuiBridge {
     cursor?: number
     exists?: boolean
     alive?: boolean
+    permissionMode?: GuiPermissionMode
   }>
   workspaceFiles: (paneId: string) => Promise<GuiWorkspaceFilesResult>
   fileOpen: (
@@ -913,7 +915,8 @@ export const guiApi = {
         exists,
         // Ponte antiga nao informava vida; assumir viva quando ela afirmava
         // que a entrada existia evita abrir dois processos durante upgrade.
-        alive: typeof res?.alive === 'boolean' ? res.alive : exists
+        alive: typeof res?.alive === 'boolean' ? res.alive : exists,
+        permissionMode: res?.permissionMode
       }
     } catch {
       return { events: [], cursor: 0, exists: false, alive: false }

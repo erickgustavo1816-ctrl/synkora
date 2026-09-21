@@ -78,7 +78,7 @@ function threadSession({ suppressNativeAgents, resumeSessionId, resumeFails = fa
   session.emit = () => undefined
   session.killed = false
   session.closed = false
-  session.child = { exitCode: 0, signalCode: null }
+  session.child = { exitCode: null, signalCode: null }
   session.initDone = Promise.resolve()
   session.request = async (method, params) => {
     calls.push({ method, params })

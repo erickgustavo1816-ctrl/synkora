@@ -48,16 +48,19 @@ createServer(async (req, res) => {
     // scripts/harness/nome.tsx NA HORA com o esbuild — sem passo de build e
     // sem bundle commitado. O test-workspace-panel-layout faz o mesmo para o
     // Electron headless; aqui é para o olho, no Browser pane.
-    if (target.endsWith('.js') && target.startsWith(harnessDir)) {
-      const source = target.slice(0, -3) + '.tsx'
+    if (/\.(js|css)$/.test(target) && target.startsWith(harnessDir)) {
+      const source = target.replace(/\.(js|css)$/, '.tsx')
       if (existsSync(source)) {
         const { build } = await import('esbuild')
         const out = await build({
           entryPoints: [source], bundle: true, write: false,
-          platform: 'browser', format: 'iife', jsx: 'automatic'
+          platform: 'browser', format: 'iife', jsx: 'automatic',
+          outfile: source.slice(0, -4) + '.js'
         })
-        res.writeHead(200, { 'content-type': 'text/javascript', 'cache-control': 'no-store' })
-        res.end(out.outputFiles[0].text)
+        const asset = out.outputFiles.find(file => file.path === target)
+        if (!asset) throw new Error('bundle sem esse asset')
+        res.writeHead(200, { 'content-type': types[extname(target)], 'cache-control': 'no-store' })
+        res.end(asset.contents)
         return
       }
     }
