@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { GuiProgressTracker } from '../src/main/guiProgress.ts'
-import { GuiSessionRegistry } from '../.tmp/gui-sessions-test/guiSessions.js'
-import { GuiHelperEngine } from '../.tmp/gui-sessions-test/guiHelperSessions.js'
+import { GuiSessionRegistry } from '../.tmp/gui-sessions-test/main/guiSessions.js'
+import { GuiHelperEngine } from '../.tmp/gui-sessions-test/main/guiHelperSessions.js'
 
 const identity = { paneId: 'gui-dev-mission1', projectId: 'project1' }
 const AT = '2026-09-04T12:00:00.000Z'

@@ -34,16 +34,16 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client'
-import { Hub } from '../.tmp/gui-lsp-tools-test/hub.js'
-import { startMcpServer } from '../.tmp/gui-lsp-tools-test/mcpServer.js'
+import { Hub } from '../.tmp/gui-lsp-tools-test/main/hub.js'
+import { startMcpServer } from '../.tmp/gui-lsp-tools-test/main/mcpServer.js'
 import {
   buildGuiLspTools,
   lspExtensionsLabel,
   LSP_DIAGNOSTICS_FILES_MAX,
   LSP_DIAGNOSTICS_ITEM_CAP,
   LSP_TOOL_NAMES
-} from '../.tmp/gui-lsp-tools-test/guiLspTools.js'
-import { LspError } from '../.tmp/gui-lsp-tools-test/lsp/lspSession.js'
+} from '../.tmp/gui-lsp-tools-test/main/guiLspTools.js'
+import { LspError } from '../.tmp/gui-lsp-tools-test/main/lsp/lspSession.js'
 
 /** O kit de código, literal e ordenado. Ferramenta nova aqui é decisão de
  *  produto e TEM de quebrar este teste — mesmo contrato do PLANNER_TOOLS. */

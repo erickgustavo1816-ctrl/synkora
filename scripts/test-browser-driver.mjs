@@ -44,30 +44,30 @@ import {
   BROWSER_WAIT_MAX_MS,
   BrowserDriverRegistry,
   BrowserDriverSession
-} from '../.tmp/browser-driver-test/browserDriver.js'
+} from '../.tmp/browser-driver-test/main/browserDriver.js'
 import {
   contrastRatio,
   effectiveBackground,
   isLargeText,
   parseCssColor,
   wcagVerdict
-} from '../.tmp/browser-driver-test/browserProbe.js'
+} from '../.tmp/browser-driver-test/main/browserProbe.js'
 import {
   BROWSER_SHOT_DIR,
   BROWSER_SHOT_MAX_WIDTH,
   freshnessStamp
-} from '../.tmp/browser-driver-test/browserShot.js'
+} from '../.tmp/browser-driver-test/main/browserShot.js'
 import {
   BROWSER_ENGINE_OFF,
   BROWSER_NO_MISSION,
   BROWSER_NO_TAB,
   BROWSER_TOOL_NAMES,
   buildGuiBrowserTools
-} from '../.tmp/browser-driver-test/guiBrowserTools.js'
-import { GUI_DELEGATE_CLAUDE_ALLOWED_TOOLS } from '../.tmp/browser-driver-test/guiDelegateMcp.js'
-import { GUI_HELPER_LSP_CLAUDE_ALLOWED_TOOLS } from '../.tmp/browser-driver-test/guiHelperLspMcp.js'
-import { Hub } from '../.tmp/browser-driver-test/hub.js'
-import { startMcpServer } from '../.tmp/browser-driver-test/mcpServer.js'
+} from '../.tmp/browser-driver-test/main/guiBrowserTools.js'
+import { GUI_DELEGATE_CLAUDE_ALLOWED_TOOLS } from '../.tmp/browser-driver-test/main/guiDelegateMcp.js'
+import { GUI_HELPER_LSP_CLAUDE_ALLOWED_TOOLS } from '../.tmp/browser-driver-test/main/guiHelperLspMcp.js'
+import { Hub } from '../.tmp/browser-driver-test/main/hub.js'
+import { startMcpServer } from '../.tmp/browser-driver-test/main/mcpServer.js'
 
 // ————————————————————————————————————————————————————————————————
 // O DOM SINTÉTICO — o mínimo que o PAGE_SCRIPT e o PROBE_SCRIPT tocam

@@ -39,6 +39,9 @@ crasha.
   da delegação (helpers MCP sem aba) + rodadas 5-6 (o ciclo redondo).
 - `docs/SKILLS.md` — curadoria da biblioteca de skills (volta com kit mínimo
   quando o dono decidir).
+- `docs/ATUALIZACAO_AUTOMATICA.md` — como o Synkora instalado se atualiza
+  (Action no repo privado → release no repo público `synkora-releases` →
+  electron-updater + selo no pé do rail) e a configuração única do dono.
 
 ## Delegação (subagentes sem aba — 2026-08-18)
 

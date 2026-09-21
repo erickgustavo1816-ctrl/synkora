@@ -1,0 +1,2 @@
+# Preserve the bundled library bytes on checkout, including Windows with core.autocrlf=true.
+* -text

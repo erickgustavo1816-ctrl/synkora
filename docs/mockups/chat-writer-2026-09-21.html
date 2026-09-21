@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<title>mockup · a escrita do chat (um escritor só)</title>
+<style>
+/* recorte do global.css real do Synkora (tokens + fio) */
+:root {
+  --paper: #efe9dc; --paper-2: #e8e1d0; --card: #f6f1e6;
+  --ink: #262019; --ink-2: #5f574a; --ink-3: #948b78;
+  --line: #d9d1bd; --line-strong: #b8ae95;
+  --accent: #d96c3f; --accent-deep: #c05a2e; --ok: #3e9b5f; --err: #b54036; --warn: #d9a23f;
+  --panel: #26241f; --panel-2: #2e2b25; --panel-ink: #efe8d6; --panel-ink-2: #b3aa93;
+  --mono: 'Cascadia Code', Consolas, 'Courier New', monospace;
+  --gui-fill-2: rgba(38, 32, 25, 0.06);
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--paper); color: var(--ink); font: 12.5px/1.55 var(--mono); }
+body { padding: 28px 32px 60px; }
+h1 { font-size: 15px; margin: 0 0 6px; letter-spacing: 0.02em; }
+h2 { font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-2); margin: 0 0 8px; }
+p.lead { max-width: 900px; color: var(--ink-2); margin: 0 0 18px; }
+.grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 22px; align-items: start; }
+.pane { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px 16px; min-height: 420px; }
+.pane header { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 10px; border-bottom: 1px solid var(--line); padding-bottom: 8px; }
+.pane header .tag { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-3); }
+.pane.bad header .tag { color: var(--err); }
+.pane.good header .tag { color: var(--ok); }
+.thread { display: flex; flex-direction: column; gap: 12px; min-height: 330px; }
+.controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 18px 0 22px; }
+button { font: inherit; text-transform: uppercase; letter-spacing: 0.06em; font-size: 11px; padding: 7px 12px; border: 1px solid var(--ink); border-radius: 6px; background: var(--card); color: var(--ink); cursor: pointer; }
+button.primary { background: var(--ink); color: var(--paper); }
+button:active { transform: scale(0.97); }
+label.sw { display: inline-flex; gap: 6px; align-items: center; color: var(--ink-2); font-size: 11.5px; margin-left: 8px; }
+.meter { margin-left: auto; color: var(--ink-3); font-size: 11px; font-variant-numeric: tabular-nums; }
+
+/* ——— o fio, como no app ——— */
+.gui-msg { display: flex; flex-direction: column; gap: 4px; animation: rise 160ms ease both; }
+.gui-msg-text { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink); }
+.gui-msg.stream .gui-msg-text { color: var(--ink-2); }
+@keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.gui-tool { display: flex; align-items: center; gap: 8px; border-radius: 6px; background: var(--gui-fill-2); padding: 6px 10px; font-size: 11.5px; color: var(--ink-2); animation: rise 160ms ease both; }
+.gui-tool b { color: var(--ink); }
+.gui-tool .path { color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.gui-tool .ok { margin-left: auto; color: var(--ok); }
+.gui-pulse { display: flex; gap: 8px; align-items: center; border-radius: 6px; background: var(--gui-fill-2); padding: 6px 10px; font-size: 11.5px; color: var(--ink-2); }
+.gui-pulse .dots { display: inline-flex; gap: 3px; }
+.gui-pulse .dots i { width: 4px; height: 4px; border-radius: 50%; background: var(--accent); animation: dot 1.1s ease-in-out infinite; }
+.gui-pulse .dots i:nth-child(2) { animation-delay: 0.15s; } .gui-pulse .dots i:nth-child(3) { animation-delay: 0.3s; }
+@keyframes dot { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }
+
+/* HOJE: cursor bloco piscando no acento */
+.stream-cursor-old { color: var(--accent); animation: blinkc 1s step-end infinite; }
+@keyframes blinkc { 50% { opacity: 0; } }
+
+/* NOVO: a palavra assenta (fade 220ms, do valor atual — idade negativa), o caret é uma
+   barra fina que respira, não pisca; ao terminar, o caret some e NADA mais mexe. */
+.w { animation: settle 220ms var(--ease-out) both; }
+@keyframes settle { from { opacity: 0.15; } to { opacity: 1; } }
+.caret { display: inline-block; width: 2px; height: 1em; vertical-align: -0.15em; margin-left: 1px; background: var(--accent); border-radius: 1px; animation: breathe 1.2s ease-in-out infinite; }
+@keyframes breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+.reduced .w { animation: none; } .reduced .caret { animation: none; }
+
+.note { font-size: 11px; color: var(--ink-3); margin-top: 10px; }
+.spec { margin-top: 26px; max-width: 980px; }
+.spec table { border-collapse: collapse; width: 100%; font-size: 11.5px; }
+.spec td, .spec th { border-top: 1px solid var(--line); padding: 7px 8px; text-align: left; vertical-align: top; }
+.spec th { width: 220px; color: var(--ink-2); font-weight: 700; }
+.legend { display: flex; gap: 18px; font-size: 11px; color: var(--ink-3); margin-top: 6px; }
+</style>
+</head>
+<body>
+<h1>A escrita do chat — um escritor só</h1>
+<p class="lead">O mesmo roteiro de eventos nos dois lados: o commentary chega (parágrafo 1), 400 ms depois a fala seguinte começa a chegar em rajadas (parágrafo 2), depois um comando roda. À esquerda, o que acontece hoje. À direita, a regra nova.</p>
+
+<div class="controls">
+  <button class="primary" id="play">reproduzir</button>
+  <button id="burst">rajada grande (2.000 caracteres)</button>
+  <label class="sw"><input type="checkbox" id="reduced" /> reduzir movimento (prefers-reduced-motion)</label>
+  <span class="meter" id="meter">—</span>
+</div>
+
+<div class="grid">
+  <section class="pane bad">
+    <header><strong>HOJE</strong><span class="tag">dois relógios · troca de container ao terminar</span></header>
+    <div class="thread" id="old"></div>
+    <div class="note">Cada mensagem tem o próprio timer de 52 ms/palavra: as duas digitam juntas. Ao fechar, o bloco é recriado e re-anima (pisca). Uma rajada de 2.000 caracteres leva ~16 s para ser lida.</div>
+  </section>
+  <section class="pane good">
+    <header><strong>NOVO</strong><span class="tag">um escritor por conversa · cadência adaptativa · sem troca de DOM</span></header>
+    <div class="thread" id="new"></div>
+    <div class="note">Só o parágrafo mais antigo escreve; o resto espera a vez (e tudo que vem depois dele também). O atraso em relação ao texto recebido fica abaixo de ~1 s: rajada grande acelera a cadência, palavra a palavra, sem pular. Ao terminar, o caret some e nada mais se move.</div>
+  </section>
+</div>
+
+<div class="spec">
+  <h2>a régua</h2>
+  <table>
+    <tr><th>um escritor</th><td>Por conversa, só o item de fala mais antigo ainda não revelado escreve. Falas seguintes, cartões de ferramenta e cartões de decisão que vêm DEPOIS dele aguardam — a ordem do fio nunca mente.</td></tr>
+    <tr><th>cadência</th><td>Base: 1 palavra por tique, com o tique dado pela velocidade escolhida em Ajustes (20 palavras/s = 50 ms). Se o que está pendente levaria mais que o atraso máximo (padrão 1 s) para ser lido, o passo cresce o suficiente para caber no teto — 2, 3, N palavras por tique. Texto já completo drena em ≤ 600 ms. Nunca revela meia palavra. Velocidade 0 = instantâneo.</td></tr>
+    <tr><th>a palavra assenta</th><td>Cada passo entra com fade de 220 ms (opacidade 0,15 → 1). Como o markdown re-pinta o último bloco a cada tique, as últimas 4 palavras são re-envolvidas com <code>animation-delay</code> negativo igual à idade — a animação continua do valor atual, nunca recomeça.</td></tr>
+    <tr><th>caret</th><td>Barra fina de 2 px no acento que respira (1,2 s), no fim do texto em revelação. Some ao terminar. Sem bloco ▍ piscando.</td></tr>
+    <tr><th>sem troca de DOM</th><td>O mesmo container serve o streaming e a mensagem final; ao terminar só a classe <code>stream</code> e o caret saem. O <code>rise</code> toca uma vez, quando o item nasce.</td></tr>
+    <tr><th>cor</th><td>Enquanto escreve, tinta <code>--ink-2</code>; ao fechar, <code>--ink</code> — transição de 240 ms na cor, não um repaint.</td></tr>
+    <tr><th>reduzir movimento</th><td>Texto completo na hora, sem fade, sem caret. Regra de sempre.</td></tr>
+    <tr><th>seleção</th><td>Preservada: o patch de prefixo estável (R35) continua — o novo escritor só decide QUANTO mostrar e envolve as últimas palavras da cauda.</td></tr>
+  </table>
+</div>
+
+<script>
+const P1 = 'O diário em Roaming não tem nenhum evento desta missão — o app instalado deve gravar userData em outro lugar (provavelmente AppData/Local/Synkora, onde moram worktrees e seats). Vou conferir onde o main fixa o userData e ler o diário certo.';
+const P2 = 'Procuro o userData real do app instalado e o diário com os eventos desta missão.';
+const BIG = ('Causa raiz confirmada: o app instalado usa userData em AppData/Local/Synkora, cuja biblioteca de skills só tem uma skill — o kit semeado cita doze que só foram instaladas na biblioteca de desenvolvimento. E o pane nasceu duas vezes em quatro segundos, daí a nota dobrada. ').repeat(7).trim();
+
+const $ = (s) => document.querySelector(s);
+const reducedBox = $('#reduced');
+let runId = 0;
+
+function words(text) {
+  // fim da próxima palavra, incluindo o espaço que vem depois (mesma régua do app)
+  const ends = []; let i = 0;
+  while (i < text.length) {
+    while (i < text.length && /\s/.test(text[i])) i++;
+    while (i < text.length && !/\s/.test(text[i])) i++;
+    while (i < text.length && /\s/.test(text[i])) i++;
+    ends.push(i);
+  }
+  return ends;
+}
+
+// ————— roteiro de transporte: o CLI entrega em rajadas —————
+function script(big) {
+  const p2 = big ? BIG : P2;
+  const ev = [];
+  ev.push({ at: 0, kind: 'text', id: 'a', text: P1, final: true });          // commentary: chega inteiro
+  const chunks = [];
+  let pos = 0; const n = big ? 9 : 4;
+  for (let k = 1; k <= n; k++) { const next = Math.round((p2.length * k) / n); chunks.push(p2.slice(pos, next)); pos = next; }
+  let t = 400;
+  for (const c of chunks) { ev.push({ at: t, kind: 'delta', id: 'b', text: c }); t += big ? 180 : 320; }
+  ev.push({ at: t, kind: 'final', id: 'b' });
+  ev.push({ at: t + 120, kind: 'tool', id: 'c' });
+  ev.push({ at: t + 1900, kind: 'tool-done', id: 'c' });
+  return ev;
+}
+
+function toolCard(done) {
+  const el = document.createElement('div'); el.className = 'gui-tool';
+  el.innerHTML = '<span>›</span><b>$</b><span class="path">cd "C:/Users/Erick/AppData/Local/Synkora/worktrees/d15deae2-…/mission-7066ae09" && sed -n 2100,2130p src/main/index.ts</span>' + (done ? '<span class="ok">concluído · 69 linhas</span>' : '<span class="ok" style="color:var(--accent)">rodando</span>');
+  return el;
+}
+function pulse() { const el = document.createElement('div'); el.className = 'gui-pulse'; el.innerHTML = '<span class="dots"><i></i><i></i><i></i></span><b>preparando a resposta</b><span style="color:var(--ink-3)">— rodou um comando</span>'; return el; }
+
+// ————— HOJE: cada item tem o próprio relógio; ao fechar, o nó é recriado —————
+function runOld(container, events, reduced) {
+  container.innerHTML = '';
+  const items = new Map();
+  const t0 = performance.now();
+  const timers = [];
+  function itemFor(id) {
+    if (items.has(id)) return items.get(id);
+    const el = document.createElement('div'); el.className = 'gui-msg dev stream';
+    const txt = document.createElement('div'); txt.className = 'gui-msg-text'; el.appendChild(txt);
+    container.appendChild(el);
+    const it = { el, txt, text: '', shown: 0, final: false, ticker: null };
+    it.ticker = setInterval(() => {
+      const ends = words(it.text); const next = ends.find((e) => e > it.shown) ?? it.text.length;
+      it.shown = reduced ? it.text.length : next;
+      it.txt.innerHTML = esc(it.text.slice(0, it.shown)) + (it.final && it.shown >= it.text.length ? '' : '<span class="stream-cursor-old">▍</span>');
+      if (it.final && it.shown >= it.text.length) {
+        clearInterval(it.ticker);
+        // o app troca o container de streaming pelo container final: nasce outro .gui-msg (rise de novo = pisca)
+        const fin = document.createElement('div'); fin.className = 'gui-msg dev';
+        fin.innerHTML = '<div class="gui-msg-text">' + esc(it.text) + '</div>';
+        it.el.replaceWith(fin);
+      }
+    }, 52);
+    timers.push(it.ticker);
+    items.set(id, it); return it;
+  }
+  for (const ev of events) {
+    timers.push(setTimeout(() => {
+      if (ev.kind === 'text') { const it = itemFor(ev.id); it.text = ev.text; it.final = true; }
+      if (ev.kind === 'delta') { const it = itemFor(ev.id); it.text += ev.text; }
+      if (ev.kind === 'final') { itemFor(ev.id).final = true; }
+      if (ev.kind === 'tool') { const c = toolCard(false); c.dataset.id = ev.id; container.appendChild(c); container.appendChild(pulse()); }
+      if (ev.kind === 'tool-done') { const c = container.querySelector('[data-id="' + ev.id + '"]'); if (c) c.replaceWith(toolCard(true)); }
+    }, ev.at));
+  }
+  return () => timers.forEach((t) => { clearTimeout(t); clearInterval(t); });
+}
+
+// ————— NOVO: um escritor por conversa, cadência adaptativa, sem troca de DOM —————
+const TICK = 48, FADE = 220, KEEP = 4;
+function stepsFor(text, shown, complete) {
+  const pending = text.length - shown;
+  if (complete) { const ends = words(text).filter((e) => e > shown).length; return Math.max(1, Math.ceil(ends / (600 / TICK))); }
+  if (pending > 600) return Math.max(3, Math.ceil(pending / 200));
+  if (pending > 240) return 3;
+  if (pending > 90) return 2;
+  return 1;
+}
+function runNew(container, events, reduced) {
+  container.innerHTML = '';
+  const order = []; const items = new Map(); const timers = [];
+  let held = []; // tudo que vem depois do escritor espera a vez
+  function itemFor(id) {
+    if (items.has(id)) return items.get(id);
+    const el = document.createElement('div'); el.className = 'gui-msg dev stream';
+    const txt = document.createElement('div'); txt.className = 'gui-msg-text'; el.appendChild(txt);
+    const it = { kind: 'assistant', id, el, txt, text: '', shown: 0, final: false, history: [] };
+    items.set(id, it); order.push(it); place(it); return it;
+  }
+  function place(entry) {
+    // entra no fio só se nenhum escritor está na frente dele
+    const writer = order.find((o) => o.kind === 'assistant' && (!o.final || o.shown < o.text.length));
+    if (!writer || writer === entry) container.appendChild(entry.el); else held.push(entry);
+  }
+  function release() {
+    const writer = order.find((o) => o.kind === 'assistant' && (!o.final || o.shown < o.text.length));
+    const idx = writer ? order.indexOf(writer) : order.length;
+    held = held.filter((h) => { if (order.indexOf(h) <= idx) { container.appendChild(h.el); return false; } return true; });
+  }
+  const ticker = setInterval(() => {
+    const writer = order.find((o) => o.kind === 'assistant' && (!o.final || o.shown < o.text.length));
+    if (!writer) return;
+    if (writer.shown < writer.text.length) {
+      const ends = words(writer.text).filter((e) => e > writer.shown);
+      const n = reduced ? ends.length : stepsFor(writer.text, writer.shown, writer.final);
+      const from = writer.shown; writer.shown = ends[Math.min(n, ends.length) - 1] ?? writer.text.length;
+      writer.history.push({ from, to: writer.shown, at: performance.now() });
+      writer.history = writer.history.slice(-KEEP);
+      paint(writer);
+    }
+    if (writer.final && writer.shown >= writer.text.length) { finish(writer); release(); }
+  }, TICK);
+  timers.push(ticker);
+  function paint(it) {
+    // markdown re-pinta o último bloco: aqui, as últimas KEEP palavras entram com idade negativa
+    const now = performance.now();
+    const stable = it.history.length ? it.history[0].from : it.shown;
+    let html = esc(it.text.slice(0, stable));
+    for (const h of it.history) {
+      const age = reduced ? FADE : Math.min(FADE, now - h.at);
+      html += '<span class="w" style="animation-delay:-' + age.toFixed(0) + 'ms">' + esc(it.text.slice(h.from, h.to)) + '</span>';
+    }
+    html += (it.final && it.shown >= it.text.length) ? '' : '<span class="caret"></span>';
+    it.txt.innerHTML = html;
+  }
+  function finish(it) {
+    it.el.classList.remove('stream'); // o MESMO nó; só a cor assenta (transição) e o caret some
+    it.txt.style.transition = 'color 240ms ease';
+    it.txt.innerHTML = esc(it.text);
+  }
+  for (const ev of events) {
+    timers.push(setTimeout(() => {
+      if (ev.kind === 'text') { const it = itemFor(ev.id); it.text = ev.text; it.final = true; }
+      if (ev.kind === 'delta') { const it = itemFor(ev.id); it.text += ev.text; }
+      if (ev.kind === 'final') { itemFor(ev.id).final = true; }
+      if (ev.kind === 'tool') { const c = toolCard(false); c.dataset.id = ev.id; const entry = { kind: 'tool', el: c }; order.push(entry); place(entry); const p = { kind: 'pulse', el: pulse() }; order.push(p); place(p); }
+      if (ev.kind === 'tool-done') { const c = container.querySelector('[data-id="' + ev.id + '"]'); if (c) c.replaceWith(toolCard(true)); }
+    }, ev.at));
+  }
+  return () => timers.forEach((t) => { clearTimeout(t); clearInterval(t); });
+}
+
+function esc(s) { return s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
+
+let stopOld = null, stopNew = null, meterTimer = null;
+function play(big) {
+  runId += 1;
+  if (stopOld) stopOld(); if (stopNew) stopNew(); if (meterTimer) clearInterval(meterTimer);
+  const reduced = reducedBox.checked;
+  document.body.classList.toggle('reduced', reduced);
+  const ev = script(big);
+  stopOld = runOld($('#old'), ev, reduced);
+  stopNew = runNew($('#new'), ev, reduced);
+  const t0 = performance.now();
+  meterTimer = setInterval(() => { $('#meter').textContent = ((performance.now() - t0) / 1000).toFixed(1) + ' s'; }, 100);
+}
+$('#play').addEventListener('click', () => play(false));
+$('#burst').addEventListener('click', () => play(true));
+play(false);
+</script>
+</body>
+</html>

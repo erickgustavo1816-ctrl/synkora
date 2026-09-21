@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { CodexSession } from '../.tmp/gui-sessions-test/codexSession.js'
-import { GuiEventRing, GuiSessionRegistry, isGuiPersistedEvent } from '../.tmp/gui-sessions-test/guiSessions.js'
+import { CodexSession } from '../.tmp/gui-sessions-test/main/codexSession.js'
+import { GuiEventRing, GuiSessionRegistry, isGuiPersistedEvent } from '../.tmp/gui-sessions-test/main/guiSessions.js'
 
 const questions = [
   { id: 'direction', header: 'Caminho', question: 'Qual caminho?', isOther: true,

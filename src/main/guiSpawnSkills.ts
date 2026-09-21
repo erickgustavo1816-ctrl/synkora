@@ -142,6 +142,13 @@ export function syncSpawnSkills(ctx: MainContext, spawn: GuiPaneSpawn): SpawnSki
   }
 }
 
+// Permission-mode respawns keep their paneId. Remember only notes actually delivered in this boot.
+const lastSkillsSyncNotes = new Map<string, string>()
+
+export function resetSkillsSyncNotesForTests(): void {
+  lastSkillsSyncNotes.clear()
+}
+
 /**
  * O EPÍLOGO DO SYNC: a nota no fio + a linha no diário. Roda DEPOIS do
  * `registry.create` porque `note` exige sessão viva — pane sem sessão recusa
@@ -161,7 +168,9 @@ export function noteSkillsSync(
 ): void {
   try {
     const note = skillsSyncNoteText(skills.outcome)
-    const noted = note !== null && registry.note(spawn.paneId, note).ok
+    const deduped = note !== null && lastSkillsSyncNotes.get(spawn.paneId) === note
+    const noted = note !== null && !deduped && registry.note(spawn.paneId, note).ok
+    if (noted) lastSkillsSyncNotes.set(spawn.paneId, note)
     ctx.blackbox.record({
       cat: 'pane',
       event: 'skills-sync',
@@ -181,7 +190,8 @@ export function noteSkillsSync(
         wrote: skills.outcome.wrote,
         // ids, NUNCA caminhos: o `cwd` carrega a árvore/username do dono.
         failed: skills.outcome.failures.map((failure) => failure.id),
-        noted
+        noted,
+        deduped
       }
     })
   } catch {

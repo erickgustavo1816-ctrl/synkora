@@ -1,0 +1,64 @@
+{
+  "schemaVersion": 1,
+  "name": "REPLACE_WITH_SYSTEM_NAME",
+  "version": "0.1.0",
+  "designThesis": "REPLACE_WITH_OBSERVABLE_PRODUCT_RULES",
+  "sources": {
+    "tokens": ["REPLACE_WITH_TRACKED_TOKEN_SOURCE"],
+    "components": ["REPLACE_WITH_TRACKED_COMPONENT_SOURCE"],
+    "documentation": ["REPLACE_WITH_TRACKED_DOCUMENTATION_SOURCE"],
+    "showcase": ["REPLACE_WITH_RENDERED_SHOWCASE_ENTRY"]
+  },
+  "foundations": [
+    "color",
+    "typography",
+    "spacing",
+    "radius",
+    "elevation",
+    "motion",
+    "breakpoints"
+  ],
+  "componentFamilies": [
+    {
+      "name": "REPLACE_WITH_COMPONENT_FAMILY",
+      "source": "REPLACE_WITH_TRACKED_SOURCE",
+      "variants": ["default"],
+      "states": ["default", "hover", "focus-visible", "disabled"],
+      "accessibility": "REPLACE_WITH_SEMANTICS_AND_KEYBOARD_CONTRACT"
+    }
+  ],
+  "patterns": [
+    {
+      "name": "REPLACE_WITH_PRODUCT_PATTERN",
+      "source": "REPLACE_WITH_TRACKED_SOURCE",
+      "states": ["loading", "empty", "error", "success"]
+    }
+  ],
+  "coverage": {
+    "themes": ["default"],
+    "viewports": ["compact", "wide"],
+    "content": ["short", "long", "empty", "localized"],
+    "requiredStates": [
+      "default",
+      "hover",
+      "focus-visible",
+      "disabled",
+      "loading",
+      "empty",
+      "error",
+      "success"
+    ]
+  },
+  "accessibility": {
+    "standard": "WCAG 2.2 AA",
+    "keyboard": "REPLACE_WITH_KEYBOARD_AND_FOCUS_POLICY",
+    "contrast": "REPLACE_WITH_THEME_AND_STATE_CONTRAST_POLICY"
+  },
+  "governance": {
+    "owner": "REPLACE_WITH_OWNER",
+    "contributionPath": "REPLACE_WITH_TRACKED_CONTRIBUTION_GUIDE",
+    "versioning": "REPLACE_WITH_VERSIONING_POLICY",
+    "deprecationPolicy": "REPLACE_WITH_DEPRECATION_AND_MIGRATION_POLICY",
+    "decisionLogPath": "REPLACE_WITH_TRACKED_DECISION_LOG"
+  }
+}

@@ -6,12 +6,12 @@ import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { GuiSessionRegistry } from '../.tmp/gui-sessions-test/guiSessions.js'
-import { guiMissionSystemPrompt } from '../.tmp/gui-sessions-test/guiMissionContracts.js'
-import { guiOwnerReplyDebt } from '../.tmp/gui-sessions-test/guiOwnerReplyDebt.js'
-import { claudePublicProgressPayload } from '../.tmp/gui-sessions-test/guiClaudePublicProgress.js'
-import { startMcpServer } from '../.tmp/gui-delegate-mcp-test/mcpServer.js'
-import { Hub } from '../.tmp/gui-delegate-mcp-test/hub.js'
+import { GuiSessionRegistry } from '../.tmp/gui-sessions-test/main/guiSessions.js'
+import { guiMissionSystemPrompt } from '../.tmp/gui-sessions-test/main/guiMissionContracts.js'
+import { guiOwnerReplyDebt } from '../.tmp/gui-sessions-test/main/guiOwnerReplyDebt.js'
+import { claudePublicProgressPayload } from '../.tmp/gui-sessions-test/main/guiClaudePublicProgress.js'
+import { startMcpServer } from '../.tmp/gui-delegate-mcp-test/main/mcpServer.js'
+import { Hub } from '../.tmp/gui-delegate-mcp-test/main/hub.js'
 
 const configDir = process.argv[2]
 if (!configDir) throw new Error('Pass the existing Claude seat config directory')

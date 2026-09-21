@@ -10,8 +10,8 @@ import {
   probeWorktreePreviewProcesses,
   stopProbedWorktreePreviewProcesses,
   stopWorktreePreviewProcesses
-} from '../.tmp/worktree-preview-processes-test/worktreePreviewProcesses.js'
-import { createPaneLifecycle } from '../.tmp/worktree-preview-processes-test/paneLifecycle.js'
+} from '../.tmp/worktree-preview-processes-test/main/worktreePreviewProcesses.js'
+import { createPaneLifecycle } from '../.tmp/worktree-preview-processes-test/main/paneLifecycle.js'
 
 const root = String.raw`C:\Work\mission ' & $() space`
 const executablePath = String.raw`C:\Program Files\nodejs\node.exe`

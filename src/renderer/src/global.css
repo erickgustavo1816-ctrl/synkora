@@ -15419,8 +15419,61 @@ body.synvoice-overlay-page #root {
 }
 
 /* streaming: texto ink APAGADO + cursor piscando (o mockup, item 6) */
+/* A ESCRITA DO CHAT (mockup aprovado em 2026-09-21). Enquanto escreve, a tinta
+   é --ink-2; ao fechar, assenta em --ink por TRANSIÇÃO — o container é o mesmo
+   do primeiro delta à mensagem parada, então nada remonta e o `rise` toca uma
+   vez só. A palavra que acaba de entrar assenta com fade curto; o caret é uma
+   barra fina no acento que respira no fim do texto, dentro do último bloco. */
+.gui-msg .gui-msg-text {
+  transition: color 240ms ease;
+}
+
 .gui-msg.stream .gui-msg-text {
   color: var(--ink-2);
+}
+
+.gui-word-in {
+  animation: gui-word-settle 220ms var(--ease-out) both;
+}
+
+@keyframes gui-word-settle {
+  from {
+    opacity: 0.15;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.gui-caret {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 1px;
+  vertical-align: -0.15em;
+  border-radius: 1px;
+  background: var(--accent);
+  animation: gui-caret-breathe 1.2s ease-in-out infinite;
+}
+
+@keyframes gui-caret-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gui-word-in,
+  .gui-caret {
+    animation: none;
+  }
+  .gui-msg .gui-msg-text {
+    transition: none;
+  }
 }
 
 .gui-copy-row {

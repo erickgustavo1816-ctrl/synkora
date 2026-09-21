@@ -1,0 +1,135 @@
+name: Publicar instalador Windows
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: synkora-windows-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main'
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      RELEASES_REPO: erickgustavo1816-ctrl/synkora-releases
+
+    steps:
+      - name: Obter código privado
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Preparar Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Instalar dependências
+        run: npm ci
+        env:
+          NPM_CONFIG_INCLUDE: optional
+
+      - name: Ler versão do app
+        id: version
+        run: |
+          $version = (Get-Content -LiteralPath package.json -Raw | ConvertFrom-Json).version
+          if ($version -notmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$') {
+            throw 'A versão em package.json não é válida.'
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Conferir release existente
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+          APP_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+          if ([string]::IsNullOrWhiteSpace($env:GH_TOKEN)) {
+            throw 'Configure o secret RELEASES_TOKEN no repositório privado.'
+          }
+          $repoJson = gh api "repos/$env:RELEASES_REPO"
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Não foi possível acessar synkora-releases. Confira o repositório e o RELEASES_TOKEN.'
+          }
+          if (($repoJson | ConvertFrom-Json).private) {
+            throw 'synkora-releases deve ser público para o app consultar as atualizações.'
+          }
+          $probe = gh release view "v$env:APP_VERSION" -R $env:RELEASES_REPO --json tagName 2>&1
+          if ($LASTEXITCODE -eq 0) {
+            Write-Output 'release já publicada'
+            'exists=true' >> $env:GITHUB_OUTPUT
+            exit 0
+          }
+          if (($probe -join "`n") -notmatch '(?i)(release not found|HTTP 404)') {
+            throw 'A consulta da release falhou. Confira o acesso ao GitHub e execute o workflow novamente.'
+          }
+          'exists=false' >> $env:GITHUB_OUTPUT
+
+      - name: Verificar runtime nativo do TypeScript
+        if: steps.release.outputs.exists == 'false'
+        run: |
+          if (!(Test-Path -LiteralPath node_modules/@typescript/typescript-win32-x64/lib/lib.d.ts -PathType Leaf)) {
+            throw 'Runtime TypeScript ausente. Confira as dependências opcionais do npm ci e o package-lock.json.'
+          }
+
+      - name: Verificar tipos
+        if: steps.release.outputs.exists == 'false'
+        run: npm run typecheck
+
+      - name: Compilar app
+        if: steps.release.outputs.exists == 'false'
+        run: npm run build
+
+      # O GitHub precisa de um commit no destino para criar a primeira tag.
+      # Só este README público é criado; nenhum arquivo do código-fonte é enviado.
+      - name: Preparar repositório público vazio
+        if: steps.release.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+          $probe = gh api "repos/$env:RELEASES_REPO/commits?per_page=1" --silent 2>&1
+          if ($LASTEXITCODE -eq 0) { exit 0 }
+          if (($probe -join "`n") -notmatch '(?i)(HTTP 409|Git Repository is empty)') {
+            throw 'Não foi possível conferir o histórico de synkora-releases. Confira o token e tente novamente.'
+          }
+          $readme = "# Releases do Synkora`n`nEste repositório distribui os instaladores e as atualizações do Synkora.`n"
+          $body = @{
+            message = 'Inicializa distribuição pública do Synkora'
+            content = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($readme))
+          } | ConvertTo-Json
+          $body | gh api --method PUT "repos/$env:RELEASES_REPO/contents/README.md" --input - --silent
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Não foi possível inicializar synkora-releases. Confira Contents: Read and write no token.'
+          }
+
+      - name: Empacotar e publicar release
+        id: publish
+        if: steps.release.outputs.exists == 'false'
+        run: npx electron-builder --win --publish always
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+
+      - name: Guardar instalador para diagnóstico
+        if: ${{ !cancelled() && steps.release.outputs.exists == 'false' && steps.publish.outcome != 'skipped' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: synkora-windows-${{ steps.version.outputs.version }}
+          path: |
+            release/*.exe
+            release/*.blockmap
+            release/latest.yml
+          retention-days: 7
+          if-no-files-found: warn

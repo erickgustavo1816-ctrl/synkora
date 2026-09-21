@@ -141,6 +141,37 @@ test('preferências de aviso nascem ligadas e persistem cada escolha desligada',
   assert.equal(reloaded.view().chatSoundsEnabled, false)
 })
 
+test('a escrita do chat nasce no padrão, persiste a escolha e prende às faixas', (t) => {
+  // 2026-09-21: velocidade/atraso/fade são do dono (Ajustes › Aparência ›
+  // Escrita do chat); campo torto ou fora da faixa nunca chega ao renderer.
+  const root = tempStore(t)
+  const store = new SettingsStoreCore({ userDataPath: root })
+  assert.deepEqual(
+    {
+      wps: store.view().chatWritingWordsPerSecond,
+      lag: store.view().chatWritingMaxLagMs,
+      fade: store.view().chatWritingFade
+    },
+    { wps: 20, lag: 1000, fade: true }
+  )
+
+  store.update({ chatWritingWordsPerSecond: 35, chatWritingMaxLagMs: 1500, chatWritingFade: false })
+  const reloaded = new SettingsStoreCore({ userDataPath: root })
+  assert.equal(reloaded.view().chatWritingWordsPerSecond, 35)
+  assert.equal(reloaded.view().chatWritingMaxLagMs, 1500)
+  assert.equal(reloaded.view().chatWritingFade, false)
+
+  const clamped = tempStore(t)
+  writeFileSync(
+    join(clamped, 'settings.json'),
+    JSON.stringify({ chatWritingWordsPerSecond: 999, chatWritingMaxLagMs: -5, chatWritingFade: 'sim' })
+  )
+  const view = new SettingsStoreCore({ userDataPath: clamped }).view()
+  assert.equal(view.chatWritingWordsPerSecond, 60)
+  assert.equal(view.chatWritingMaxLagMs, 300)
+  assert.equal(view.chatWritingFade, true)
+})
+
 test('documento corrompido ou de tipo errado cai nos defaults sem lançar', (t) => {
   const root = tempStore(t)
   writeFileSync(join(root, 'settings.json'), '{ isto não é json')
