@@ -34,6 +34,7 @@
  * duplicaria repaint; o motor é a fonte única.
  */
 import { ipcMain, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron'
+import { scaleRectByZoom } from '../uiAccessibility'
 import {
   isBrowserPanelRect,
   type BrowserGestureResult,
@@ -271,7 +272,9 @@ export function registerBrowserIpc(ctx: MainContext, extras: BrowserIpcExtras): 
       if (!reporter) return
       const id = asId(missionId)
       if (!id || !isBrowserPanelRect(rect)) return
-      browser.applyBounds(id, rect, visible === true, reporter)
+      // ACESSIBILIDADE: o renderer mede em px CSS, já escalados pelo zoom da
+      // janela; a WebContentsView quer DIP. A conversão mora aqui, e só aqui.
+      browser.applyBounds(id, scaleRectByZoom(rect, e.sender.getZoomFactor()), visible === true, reporter)
     }
   )
 }

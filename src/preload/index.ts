@@ -641,10 +641,16 @@ export interface SynkoraPreferences {
    *  O campo existe em main/settings.ts desde a F5.1 e o main já o aplica em
    *  `ptys.setConptyDll`; faltava só no espelho de tipo daqui. */
   conptyDll?: boolean
-  /** Métricas fixas de todos os terminais do Synkora. */
-  terminalFontSize: number
-  terminalLineHeight: number
-  terminalFontFamily: string
+  /** ACESSIBILIDADE DO SYNKORA (2026-09-21) — espelho de main/settingsCore.ts.
+   *  Escala da interface em porcento (zoom da janela, aplicado pelo main),
+   *  fonte de todo o texto (inclusive terminais), movimento reduzido forçado, e
+   *  a leitura das mensagens do chat por cima da escala. Quem consome no
+   *  renderer é `uiAccessibility.ts`. */
+  uiScale: number
+  uiFontFamily: string
+  uiReduceMotion: boolean
+  chatFontSize: number
+  chatLineHeight: number
   /** vazio/ausente usa o microfone padrão do sistema */
   synVoiceInputDeviceId?: string
   /** Avisos do chat e seu vocabulário sonoro (globais à máquina). */

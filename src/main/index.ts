@@ -78,6 +78,7 @@ import {
   missionTypeOf
 } from './guiMissionContracts'
 import { initDesktopNotifications } from './desktopNotifications'
+import { createUiAccessibilityApplier } from './uiAccessibility'
 import {
   WINDOWS_TOAST_ACTIVATOR_CLSID,
   windowsNotificationShortcutSpec
@@ -798,6 +799,17 @@ function showMainWindow(): void {
   mainWindow.focus()
 }
 
+// ACESSIBILIDADE DO SYNKORA: escala (zoom da janela) e movimento reduzido
+// (mídia emulada) são aplicados pelo main. O store de settings nasce no
+// whenReady; até lá o leitor devolve null e não há o que aplicar.
+const uiAccessibility = createUiAccessibilityApplier()
+let readUiAccessibility: () => { uiScale: number; uiReduceMotion: boolean } | null = () => null
+function applyUiAccessibilityToMainWindow(): void {
+  const view = readUiAccessibility()
+  if (!view || !mainWindow || mainWindow.isDestroyed()) return
+  void uiAccessibility.apply(mainWindow.webContents, view)
+}
+
 function deliverProgressOpenTarget(target?: ProgressOpenTarget): void {
   if (target) pendingProgressOpenTarget = target
   if (
@@ -971,6 +983,9 @@ function createWindow(): BrowserWindow {
   win.webContents.on('did-finish-load', () => {
     mainLoadRetries = 0
     uiSender = win.webContents
+    // ACESSIBILIDADE: escala e movimento voltam a valer a cada carga (reload
+    // pós-crash inclusive) — o zoom do Chromium não é persistido por nós.
+    applyUiAccessibilityToMainWindow()
     win.webContents.send('voice:overlay-visibility', synVoiceDetached)
     refreshProgressSnapshot()
   })
@@ -2426,6 +2441,7 @@ app.whenReady().then(async () => {
   })
   const maestro = new MaestroStore()
   const settings = new SettingsStore()
+  readUiAccessibility = () => settings.view()
   endBootStores()
   // AS SKILLS DO KIT CHEGAM COM O INSTALADOR (2026-09-21): o app empacotado
   // tem userData próprio e nascia com a biblioteca vazia — o kit semeado citava
@@ -4771,7 +4787,11 @@ app.whenReady().then(async () => {
     }
   })
   registerFilesIpc(ctx, { assertAppRendererSender })
-  registerSettingsIpc(ctx, { assertMainRendererSender, assertAppRendererSender })
+  registerSettingsIpc(ctx, {
+    assertMainRendererSender,
+    assertAppRendererSender,
+    applyUiAccessibility: () => applyUiAccessibilityToMainWindow()
+  })
   // BROWSER EMBUTIDO: a superfície do DONO (barra de URL, abas, ← → ⟳,
   // devtools, bounds do painel). O agente entra pelo MCP, nunca por aqui.
   registerBrowserIpc(ctx, {
