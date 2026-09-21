@@ -2074,6 +2074,20 @@ const BRIEFED_SPAWN = {
   firstPrompt: 'MISSION: entrar no app'
 }
 
+test('replay reports the permission mode of the current session', () => {
+  const { gui } = briefingRegistry()
+  try {
+    gui.create({ ...BRIEFED_SPAWN, permissionMode: 'plan' })
+    assert.equal(gui.state(BRIEFED_SPAWN.paneId).permissionMode, 'plan')
+    gui.create({ ...BRIEFED_SPAWN, permissionMode: 'default' })
+    assert.equal(gui.state(BRIEFED_SPAWN.paneId).permissionMode, 'default')
+    gui.kill(BRIEFED_SPAWN.paneId)
+    assert.equal(gui.state(BRIEFED_SPAWN.paneId).permissionMode, undefined)
+  } finally {
+    gui.killAll()
+  }
+})
+
 test('o briefing fica pendente e o create não abre turno nenhum', async () => {
   const { gui, sent } = briefingRegistry()
   assert.equal(gui.create(BRIEFED_SPAWN).ok, true)

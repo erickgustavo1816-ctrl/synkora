@@ -4,6 +4,7 @@ import {
   useStore,
   type GuiItem,
   type GuiPendingPerm,
+  type MissionType,
   type Seat
 } from '../store'
 import {
@@ -158,6 +159,7 @@ interface Props {
   firstPrompt?: string
   /** modo de permissão DESTA conversa (onda D) — ausente = 'default' */
   permissionMode?: GuiPermissionMode
+  missionType?: MissionType
   /** R11: modo FAST desta conversa — flag de spawn como o permissionMode
    *  (trocar respawna com resume). Ausente = off. */
   fast?: boolean
@@ -652,6 +654,7 @@ export default function GuiPane({
   resumeSessionId,
   firstPrompt,
   permissionMode,
+  missionType,
   fast,
   mcp,
   onPermissionMode,
@@ -709,7 +712,10 @@ export default function GuiPane({
   // MODO DE PERMISSÃO (onda D) + MODELO/EFFORT (2.0): estado local para os
   // botões responderem na hora, semeados pela spec. O pai guarda a escolha na
   // spec dele — por isso os efeitos só re-semeiam quando a PROP muda.
-  const [mode, setMode] = useState<GuiPermissionMode>(permissionMode ?? 'default')
+  const [selectedMode, setMode] = useState<GuiPermissionMode>(permissionMode ?? 'default')
+  const mode = missionType === 'release' && selectedMode === 'plan' ? 'default' : selectedMode
+  const [livePlan, setLivePlan] = useState(false)
+  const displayedMode = missionType === 'release' && livePlan && gui.status !== 'dead' ? 'plan' : mode
   // R11: o fast segue o padrão do mode — estado local semeado pela prop, o
   // dono da spec guarda a escolha via onFastMode.
   const [fastOn, setFastOn] = useState<boolean>(fast ?? false)
@@ -1054,6 +1060,7 @@ export default function GuiPane({
     void (async () => {
       const replay = await guiApi.state(paneId)
       if (!alive) return
+      setLivePlan(replay.alive && replay.permissionMode === 'plan')
       replayGuiPane(
         paneId,
         replay.events.map((event) => event.evt),
@@ -1281,6 +1288,7 @@ export default function GuiPane({
           })
           return false
         }
+        setLivePlan(false)
         const revivedSent = await sendGuiMessage(paneId, outgoing, undefined, attachments, true, referenceSnapshot)
         if (revivedSent) setQuotes([])
         return revivedSent
@@ -1570,6 +1578,7 @@ export default function GuiPane({
       const res = await guiApi.create({ ...spawnRef.current, ...patch })
       setBusyMenu(null)
       if (res.ok) {
+        setLivePlan(false)
         if (okText !== null) {
           handleGuiLive(paneId, { type: 'command-output', text: `${okText} — sessão retomada` })
         }
@@ -1689,7 +1698,7 @@ export default function GuiPane({
         setOpenMenu(null)
         return
       }
-      if (next === mode) {
+      if (next === mode && next === displayedMode) {
         setOpenMenu(null)
         return
       }
@@ -1701,7 +1710,7 @@ export default function GuiPane({
         `modo de permissão: ${PERM_MODE_LABEL[next]}`
       )
     },
-    [applySpawnChange, mode, onPermissionMode, spawnChangeLocked]
+    [applySpawnChange, displayedMode, mode, onPermissionMode, spawnChangeLocked]
   )
 
   const changeModel = useCallback(
@@ -2661,29 +2670,29 @@ export default function GuiPane({
                   agente pode agir, e com que motor, é cada chat, aqui. */}
               <div className="gui-menu-host gui-composer-mode">
                 <button
-                  className={`gui-mode-btn mode-${mode}`}
+                  className={`gui-mode-btn mode-${displayedMode}`}
                   disabled={spawnChangeLocked}
-                  data-tip={`Permissão desta conversa: ${PERM_MODE_LABEL[mode]}\nTrocar retoma a mesma conversa com a regra nova.`}
+                  data-tip={`Permissão desta conversa: ${PERM_MODE_LABEL[displayedMode]}\nTrocar retoma a mesma conversa com a regra nova.`}
                   aria-haspopup="menu"
                   aria-expanded={openMenu === 'mode'}
-                  aria-label={`Permissão desta conversa: ${PERM_MODE_LABEL[mode]}`}
+                  aria-label={`Permissão desta conversa: ${PERM_MODE_LABEL[displayedMode]}`}
                   onClick={() => setOpenMenu((v) => (v === 'mode' ? null : 'mode'))}
                 >
-                  <span aria-hidden="true">{PERM_MODE_GLYPH[mode]}</span>
+                  <span aria-hidden="true">{PERM_MODE_GLYPH[displayedMode]}</span>
                   <span className="gui-mode-text">
-                    {busyMenu === 'mode' ? 'trocando…' : PERM_MODE_LABEL[mode]}
+                    {busyMenu === 'mode' ? 'trocando…' : PERM_MODE_LABEL[displayedMode]}
                   </span>
                   <span className="gui-mode-short" aria-hidden="true">
-                    {mode === 'bypass' ? 'completo' : PERM_MODE_LABEL[mode]}
+                    {displayedMode === 'bypass' ? 'completo' : PERM_MODE_LABEL[displayedMode]}
                   </span>
                 </button>
                 {openMenu === 'mode' && (
                   <div className="gui-menu gui-mode-menu" role="menu">
-                    {PERM_MODES.map((option) => (
+                    {PERM_MODES.filter((option) => missionType !== 'release' || option.id !== 'plan').map((option) => (
                       <button
                         key={option.id}
                         className={`gui-menu-item mode-${option.id}${
-                          option.id === mode ? ' active' : ''
+                          option.id === displayedMode ? ' active' : ''
                         }`}
                         role="menuitem"
                         onClick={() => changeMode(option.id)}

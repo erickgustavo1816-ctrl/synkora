@@ -619,7 +619,10 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
       const remembered = guiSessions.remembered(paneId)
       const rememberedExecutor = remembered?.cli === seat.cli ? remembered : undefined
       const resumeSessionId = resumeSessionIdFor(rememberedExecutor, seat.cli)
-      const effectiveMode = permissionMode ?? remembered?.permissionMode
+      const requestedMode = permissionMode ?? remembered?.permissionMode
+      const effectiveMode = route.missionType === 'release' && requestedMode === 'plan'
+        ? 'default'
+        : requestedMode
 
       // UM PAPEL POR CHAT — e o papel decide o catálogo no servidor. Todos os
       // três tipos armam pelo MESMO encanamento (armGuiDelegateMcp): o chat de
