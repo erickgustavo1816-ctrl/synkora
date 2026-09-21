@@ -150,7 +150,7 @@ html.progress-overlay-page, body.progress-overlay-page, body.progress-overlay-pa
 @media (max-height: 340px) {
   .progress-overlay-head { min-height: 45px; padding-block: 5px; }
   .progress-controls { padding-block: 6px; }
-  .progress-filters { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: 176px; overflow-x: auto; scrollbar-width: thin; }
+  .progress-filters { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: 176px; overflow-x: auto; }
   .progress-filter { flex-direction: row; min-height: 35px; gap: 7px; padding: 6px; }
   .progress-search-row { margin-top: 5px; }
   .progress-search-row input, .progress-project-select, .progress-project-select .sel-trigger { height: 25px; }
