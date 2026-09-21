@@ -49,6 +49,9 @@ jobs:
           }
           "version=$version" >> $env:GITHUB_OUTPUT
 
+      - name: Testar consulta de release
+        run: node --test scripts/test-release-workflow.mjs
+
       - name: Conferir release existente
         id: release
         env:
@@ -76,6 +79,8 @@ jobs:
             throw 'A consulta da release falhou. Confira o acesso ao GitHub e execute o workflow novamente.'
           }
           'exists=false' >> $env:GITHUB_OUTPUT
+          # The Actions PowerShell wrapper otherwise propagates gh's expected 404 exit code.
+          exit 0
 
       - name: Verificar runtime nativo do TypeScript
         if: steps.release.outputs.exists == 'false'
