@@ -36,42 +36,42 @@ import {
   isGuiPermissionMode,
   pruneGuiTranscripts,
   spawnFingerprint
-} from '../.tmp/gui-sessions-test/guiSessions.js'
+} from '../.tmp/gui-sessions-test/main/guiSessions.js'
 import {
   MaestroSession,
   claudeCuratedContextWindow,
   claudeMessageContextTokens,
   claudeReportedContextWindow,
   claudeSessionCostUsd
-} from '../.tmp/gui-sessions-test/maestroSession.js'
-import { CodexSession } from '../.tmp/gui-sessions-test/codexSession.js'
+} from '../.tmp/gui-sessions-test/main/maestroSession.js'
+import { CodexSession } from '../.tmp/gui-sessions-test/main/codexSession.js'
 import {
   GUI_HEAVY_CONTEXT_TOKENS,
   guiAddApiCall,
   guiConversationWeightTokens,
   guiHeavyContextMilestone,
   isGuiConversationUsage
-} from '../.tmp/gui-sessions-test/guiConversationOdometer.js'
+} from '../.tmp/gui-sessions-test/main/guiConversationOdometer.js'
 import {
   GUI_PLANNER_TOKEN_ENV,
   guiPlannerCodexArgs
-} from '../.tmp/gui-sessions-test/guiPlannerMcp.js'
-import { armGuiDelegateMcp } from '../.tmp/gui-sessions-test/guiDelegateMcp.js'
+} from '../.tmp/gui-sessions-test/main/guiPlannerMcp.js'
+import { armGuiDelegateMcp } from '../.tmp/gui-sessions-test/main/guiDelegateMcp.js'
 
 // O ARM DO PLANEJADOR (2026-08-30): a trilha própria morreu — o planejador
 // arma pelo mesmo encanamento dos outros chats, com o papel `gui-planner`.
 const armGuiPlannerMcp = (input, deps) => armGuiDelegateMcp(input, deps, 'gui-planner')
-import { GuiClaudeTaskRegistry } from '../.tmp/gui-sessions-test/guiClaudeTasks.js'
+import { GuiClaudeTaskRegistry } from '../.tmp/gui-sessions-test/main/guiClaudeTasks.js'
 import {
   GUI_CODEX_AGENT_TOOL_PREFIX,
   GuiCodexAgentRegistry,
   guiCodexAgentName,
   guiCodexAgentToolUseId
-} from '../.tmp/gui-sessions-test/guiCodexAgents.js'
+} from '../.tmp/gui-sessions-test/main/guiCodexAgents.js'
 import {
   guiChildNeedsTermination,
   guiTreeKillCommand
-} from '../.tmp/gui-sessions-test/guiProcessTree.js'
+} from '../.tmp/gui-sessions-test/main/guiProcessTree.js'
 import {
   GUI_ATTACHMENT_MAX_BYTES,
   GUI_ATTACHMENT_MAX_BASE64_CHARS,
@@ -92,12 +92,12 @@ import {
   stripDataUrlPrefix,
   uniqueAttachmentPath,
   withGuiAttachmentReferences
-} from '../.tmp/gui-sessions-test/guiAttachments.js'
+} from '../.tmp/gui-sessions-test/main/guiAttachments.js'
 import {
   chatPermissionRuleLabel,
   fallbackBashPermissionRule,
   resolveChatPermissionSuggestions
-} from '../.tmp/gui-sessions-test/chatPermissions.js'
+} from '../.tmp/gui-sessions-test/main/chatPermissions.js'
 import {
   prepareGuiAttachmentDirectory,
   resolveGuiDroppedTarget,
@@ -105,17 +105,17 @@ import {
   resolveGuiFolderReference,
   validateGuiAttachmentReferences,
   writeGuiAttachmentExclusive
-} from '../.tmp/gui-sessions-test/guiAttachmentStorage.js'
-import { GuiAttachmentCapabilityStore } from '../.tmp/gui-sessions-test/guiAttachmentCapabilities.js'
+} from '../.tmp/gui-sessions-test/main/guiAttachmentStorage.js'
+import { GuiAttachmentCapabilityStore } from '../.tmp/gui-sessions-test/main/guiAttachmentCapabilities.js'
 import { closePendingGuiTools } from '../src/renderer/src/guiTerminalTools.ts'
 // O POTE DO DONO (módulo NOVO da R22) entra pela porta TOLERANTE: import
 // estático de arquivo ausente derrubaria a suíte inteira, e ela deixaria de
 // discriminar. Sem o módulo, caem só os testes da rota — e caem dizendo o que
 // falta.
-const ownerMailModule = await import('../.tmp/gui-sessions-test/guiOwnerMail.js').catch(() => ({}))
+const ownerMailModule = await import('../.tmp/gui-sessions-test/main/guiOwnerMail.js').catch(() => ({}))
 // R39 — a DÍVIDA (R32) passa a ser armada TAMBÉM no fecho/handoff, e a régua da
 // rota mora em módulo NOVO: os dois entram pela mesma porta tolerante.
-const ownerDebtModule = await import('../.tmp/gui-sessions-test/guiOwnerReplyDebt.js').catch(
+const ownerDebtModule = await import('../.tmp/gui-sessions-test/main/guiOwnerReplyDebt.js').catch(
   () => ({})
 )
 
@@ -5650,7 +5650,7 @@ test('a proposta feita no MEIO da fala sobrevive ao result e volta do disco', (t
 // a gente tá entendendo que ACABOU. Tem que ter essa distinção." O `status` do
 // `rate_limit_event` é a distinção; nada aqui lê palavra de texto nenhum.
 
-const limitRules = () => import('../.tmp/gui-sessions-test/maestroSession.js')
+const limitRules = () => import('../.tmp/gui-sessions-test/main/maestroSession.js')
 
 test('aviso de aproximação é NOTA e o esgotado é ERRO com a receita', async () => {
   const { GUI_LIMIT_RECIPE, guiRateLimitBlocks, translateGuiRateLimit } = await limitRules()
@@ -5807,7 +5807,7 @@ test('Claude: queda do provedor (5xx) fala PT-BR com a receita — e erro comum 
   // A assinatura é o WRAPPER do próprio CLI ("API Error: 5xx"), o mesmo
   // precedente sondado do matcher transitório dos ajudantes — nunca as
   // palavras de conteúdo do modelo.
-  const motor = await import('../.tmp/gui-sessions-test/maestroSession.js')
+  const motor = await import('../.tmp/gui-sessions-test/main/maestroSession.js')
   assert.equal(
     typeof motor.guiProviderOutageText,
     'function',

@@ -7,8 +7,8 @@ import { createRequire } from 'node:module'
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { buildSync } from 'esbuild'
-import { runBrowserCheck, validateBrowserCheck } from '../.tmp/browser-driver-test/browserCheck.js'
-import { instrumentBrowserToolkit } from '../.tmp/browser-driver-test/browserToolMetrics.js'
+import { runBrowserCheck, validateBrowserCheck } from '../.tmp/browser-driver-test/main/browserCheck.js'
+import { instrumentBrowserToolkit } from '../.tmp/browser-driver-test/main/browserToolMetrics.js'
 
 function fixture(options = {}) {
   const events = []

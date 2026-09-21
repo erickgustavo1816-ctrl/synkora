@@ -46,8 +46,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client'
-import { Hub } from '../.tmp/gui-delegate-mcp-test/hub.js'
-import { GUI_PLANNER_TOKEN_ENV } from '../.tmp/gui-delegate-mcp-test/guiPlannerMcp.js'
+import { Hub } from '../.tmp/gui-delegate-mcp-test/main/hub.js'
+import { GUI_PLANNER_TOKEN_ENV } from '../.tmp/gui-delegate-mcp-test/main/guiPlannerMcp.js'
 import {
   armGuiDelegateMcp,
   guiPaneToolKind,
@@ -56,8 +56,8 @@ import {
   GUI_DELEGATE_CLAUDE_TOOL_TIMEOUT_MS,
   GUI_DELEGATE_CODEX_TOOL_TIMEOUT_SEC,
   GUI_PLANNER_CLAUDE_ALLOWED_TOOLS
-} from '../.tmp/gui-delegate-mcp-test/guiDelegateMcp.js'
-import { startMcpServer } from '../.tmp/gui-delegate-mcp-test/mcpServer.js'
+} from '../.tmp/gui-delegate-mcp-test/main/guiDelegateMcp.js'
+import { startMcpServer } from '../.tmp/gui-delegate-mcp-test/main/mcpServer.js'
 
 /**
  * O kit de CÓDIGO (R14, seção L2 do design DESIGN_COPIA_E_LSP_R14): as quatro

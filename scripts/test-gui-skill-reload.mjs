@@ -5,10 +5,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { buildSync } from 'esbuild'
-import { GuiSessionRegistry } from '../.tmp/gui-sessions-test/guiSessions.js'
-import { MaestroSession } from '../.tmp/gui-sessions-test/maestroSession.js'
-import { GuiClaudeTaskRegistry } from '../.tmp/gui-sessions-test/guiClaudeTasks.js'
-import { GuiClaudeSkillReload, GUI_SKILL_RELOAD_TTL_MS } from '../.tmp/gui-sessions-test/guiClaudeSkillReload.js'
+import { GuiSessionRegistry } from '../.tmp/gui-sessions-test/main/guiSessions.js'
+import { MaestroSession } from '../.tmp/gui-sessions-test/main/maestroSession.js'
+import { GuiClaudeTaskRegistry } from '../.tmp/gui-sessions-test/main/guiClaudeTasks.js'
+import { GuiClaudeSkillReload, GUI_SKILL_RELOAD_TTL_MS } from '../.tmp/gui-sessions-test/main/guiClaudeSkillReload.js'
 
 const compiled = buildSync({
   stdin: { contents: "export { applyGuiEvent, EMPTY_GUI_PANE } from './src/renderer/src/store'",

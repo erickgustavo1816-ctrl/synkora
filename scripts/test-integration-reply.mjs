@@ -3,8 +3,8 @@ import test from 'node:test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { GuiIntegrationReply, INTEGRATION_REPLY_TIMEOUT_MS, pendingIntegrationTool } from '../.tmp/gui-sessions-test/guiIntegrationReply.js'
-import { GuiSessionRegistry } from '../.tmp/gui-sessions-test/guiSessions.js'
+import { GuiIntegrationReply, INTEGRATION_REPLY_TIMEOUT_MS, pendingIntegrationTool } from '../.tmp/gui-sessions-test/main/guiIntegrationReply.js'
+import { GuiSessionRegistry } from '../.tmp/gui-sessions-test/main/guiSessions.js'
 
 const tick = () => new Promise((resolve) => setImmediate(resolve))
 const tool = { type: 'tool', name: 'mcp__synkora__integration_run', input: {}, toolUseId: 'integration-1' }

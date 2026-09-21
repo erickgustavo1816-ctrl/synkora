@@ -5,12 +5,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createRequire } from 'node:module'
 import { buildSync } from 'esbuild'
-import { GuiEventRing, GuiSessionRegistry } from '../.tmp/gui-sessions-test/guiSessions.js'
-import { MaestroSession } from '../.tmp/gui-sessions-test/maestroSession.js'
-import { GuiOwnerReplyDebt } from '../.tmp/gui-sessions-test/guiOwnerReplyDebt.js'
+import { GuiEventRing, GuiSessionRegistry } from '../.tmp/gui-sessions-test/main/guiSessions.js'
+import { MaestroSession } from '../.tmp/gui-sessions-test/main/maestroSession.js'
+import { GuiOwnerReplyDebt } from '../.tmp/gui-sessions-test/main/guiOwnerReplyDebt.js'
 import { GuiClaudePublicProgress, withClaudePublicProgressHook, CLAUDE_PROGRESS_TOOLS,
-  CLAUDE_PROGRESS_SILENCE_MS } from '../.tmp/gui-sessions-test/guiClaudePublicProgress.js'
-import { guiOwnerDebtHookSettings, mergeClaudeSettings } from '../.tmp/gui-sessions-test/guiOwnerDebtHook.js'
+  CLAUDE_PROGRESS_SILENCE_MS } from '../.tmp/gui-sessions-test/main/guiClaudePublicProgress.js'
+import { guiOwnerDebtHookSettings, mergeClaudeSettings } from '../.tmp/gui-sessions-test/main/guiOwnerDebtHook.js'
 
 function progress() {
   let now = 1000
