@@ -11,7 +11,8 @@
  */
 import { ipcMain, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron'
 import {
-  type SynkoraSettingsPatch
+  type SynkoraSettingsPatch,
+  type SynkoraSettingsView
 } from '../settings'
 import type { MainContext } from '../mainContext'
 
@@ -22,6 +23,9 @@ export interface SettingsIpcExtras {
   /** F3-c4: host OU view de panes — settings GERAIS são das duas superfícies
    *  (a view lê a fonte do terminal e o zoom Ctrl+/- grava dela). */
   assertAppRendererSender(event: IpcMainInvokeEvent | IpcMainEvent): void
+  /** ACESSIBILIDADE: escala e movimento são da JANELA, e só o main os aplica
+   *  (`uiAccessibility.ts`). O index amarra na janela principal. */
+  applyUiAccessibility?(view: SynkoraSettingsView): void
 }
 
 export function registerSettingsIpc(ctx: MainContext, extras: SettingsIpcExtras): void {
@@ -31,6 +35,7 @@ export function registerSettingsIpc(ctx: MainContext, extras: SettingsIpcExtras)
   } = ctx
   const {
     assertAppRendererSender,
+    applyUiAccessibility
   } = extras
   ipcMain.handle('settings:get', (e) => {
     assertAppRendererSender(e)
@@ -44,6 +49,7 @@ export function registerSettingsIpc(ctx: MainContext, extras: SettingsIpcExtras)
       patch && typeof patch === 'object' && !Array.isArray(patch) ? patch : {}
     const next = settings.update(safePatch)
     ptys.setConptyDll(next.conptyDll !== false)
+    applyUiAccessibility?.(next)
     // F3-c4: o OUTRO lado (host ↔ view de panes) recarrega — sem isto o zoom
     // de fonte feito numa view não chegava à outra.
     ctx.pushAll('settings:changed')

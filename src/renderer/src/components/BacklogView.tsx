@@ -16,7 +16,7 @@ import NewMissionModal from './NewMissionModal'
 import Select from './Select'
 import { TestServerModal } from './TestServerModal'
 import { MISSION_CARD_TIP, isReleaseMissionRecord, missionCardAccess } from '../missionCardAccess'
-import { allowsOwnVersionNumber, versionSuggestions } from '../versionChoice'
+import { allowsOwnVersionNumber, manifestVersionNote, versionSuggestions } from '../versionChoice'
 
 const MISSION_ICON: Record<MissionStatus, string> = {
   ativa: '🚀',
@@ -316,6 +316,10 @@ export default function BacklogView({ projectId }: Props): React.JSX.Element {
 
   const [versions, setVersions] = useState<Version[]>([])
   const [items, setItems] = useState<BacklogItem[]>([])
+  // A VERSÃO QUE O PRODUTO JÁ TEM (2026-09-21): o `version` do package.json
+  // da pasta do projeto. As sugestões contam a partir dela, e a linha "versão
+  // atual na main" a mostra quando o Synkora ainda não lançou nada.
+  const [manifestVersion, setManifestVersion] = useState<string | null>(null)
   // sempre uma versão selecionada — a caixa "sem versão" morreu (confundia)
   const [selVersion, setSelVersion] = useState<string | null>(null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -345,12 +349,15 @@ export default function BacklogView({ projectId }: Props): React.JSX.Element {
 
   const refresh = useCallback(async () => {
     if (!window.synkora.backlog) return
-    const [v, i] = await Promise.all([
+    const [v, i, manifest] = await Promise.all([
       window.synkora.backlog.listVersions(projectId),
-      window.synkora.backlog.listItems(projectId)
+      window.synkora.backlog.listItems(projectId),
+      // preload antigo (app sem reiniciar) não tem a leitura: segue sem ela
+      window.synkora.backlog.manifestVersion?.(projectId).catch(() => null) ?? null
     ])
     setVersions(v)
     setItems(i)
+    setManifestVersion(manifest)
     // seleção default = versão em desenvolvimento mais antiga (a corrente);
     // sem nenhuma aberta, a lançada mais recente (histórico)
     setSelVersion((cur) => {
@@ -428,7 +435,7 @@ export default function BacklogView({ projectId }: Props): React.JSX.Element {
   // pronto — daí o campo do número próprio logo abaixo. A régua mora no módulo
   // compartilhado: o modal de missão nova aplica a MESMA num projeto virgem.
   const typedVersionId = `bl-nv-${projectId}`
-  const nextOptions = versionSuggestions(versions)
+  const nextOptions = versionSuggestions(versions, manifestVersion)
 
   // Excluir = via SELEÇÃO (decisão do usuário): um ou vários de uma vez,
   // sempre com confirmação.
@@ -527,6 +534,7 @@ export default function BacklogView({ projectId }: Props): React.JSX.Element {
     .sort((a, b) => (a.releasedAt ?? '').localeCompare(b.releasedAt ?? ''))
     .at(-1)
   const inDev = versions.filter((v) => v.status === 'aberta')
+  const manifestNote = manifestVersionNote(versions, manifestVersion)
   // Missão CONCLUÍDA já aparece em "o que já subiu" (delivery) — repeti-la em
   // "missões desta versão" era a mesma informação duas vezes (feedback do
   // usuário). Aqui ficam só as vivas/arquivadas.
@@ -586,8 +594,17 @@ export default function BacklogView({ projectId }: Props): React.JSX.Element {
             {current.releasedAt &&
               ` · lançada em ${new Date(current.releasedAt).toLocaleDateString('pt-BR')}`}
           </span>
+        ) : manifestNote ? (
+          <span className="vs-current-name" title="O version do package.json da pasta do projeto">
+            {manifestNote}
+          </span>
         ) : (
           <span className="vs-current-none">nenhuma versão lançada ainda</span>
+        )}
+        {current && manifestNote && (
+          <span className="vs-indev" title="O version do package.json da pasta do projeto">
+            {manifestNote}
+          </span>
         )}
         {inDev.length > 0 && (
           <span className="vs-indev">em desenvolvimento: {inDev.map((v) => v.name).join(' · ')}</span>

@@ -69,6 +69,7 @@ import { basename, dirname, join } from 'node:path'
 import { guiMissionRoleOf, planApprovedReceipt } from '../guiMissionContracts'
 import { guiMissionOf, noteSkillsSync, syncSpawnSkills } from '../guiSpawnSkills'
 import { notifyDesktop } from '../desktopNotifications'
+import { desktopChatNoticeBody, desktopNotifyTitle } from '../desktopNotificationPolicy'
 import { GuiPaneVisibilityRegistry, GuiWindowReadyController } from '../guiWindowReady'
 import type { GuiHelperOwnerDismissResult } from '../guiHelperSessions'
 import type { GuiAlertPayload, GuiNoticeKind } from '../guiNotices'
@@ -142,26 +143,24 @@ export type GuiFileExternalOpenResult =
 
 const BEHAVIORS: GuiPermBehavior[] = ['allow', 'allow-always', 'deny']
 
-const ROLE_LABEL: Record<string, string> = {
-  dev: 'agente',
-  reviewer: 'revisor',
-  helper: 'ajudante'
-}
-
 /**
- * Quem está pedindo, em PT-BR, para a notificação de desktop. O paneId segue a
- * convenção do guiMissionContracts (`gui-<papel>-<id8>`), então o id8 basta
- * para achar a missão; sem casar, o papel sozinho já diz o essencial.
+ * O ASSUNTO do toast: a missão (ou o planejamento) e o projeto. O paneId segue
+ * a convenção do guiMissionContracts (`gui-<papel>-<id8>`), então o id8 basta
+ * para achar a missão; sem casar, o projeto sozinho já situa o dono.
  */
-function paneLabel(ctx: MainContext, paneId: string, projectId: string): string {
+function paneNoticeSubject(
+  ctx: MainContext,
+  paneId: string,
+  projectId: string
+): { title: string; role: string | undefined; missionId: string | undefined } {
   const role = guiMissionRoleOf(paneId)
-  if (!role) {
-    const project = ctx.projects.get(projectId)
-    return project ? `planejamento de ${project.name}` : 'planejamento do universo'
+  const projectName = ctx.projects.get(projectId)?.name
+  const mission = role ? guiMissionOf(ctx, projectId, paneId) : undefined
+  return {
+    title: desktopNotifyTitle({ missionTitle: mission?.title, projectName }),
+    role,
+    missionId: mission?.id
   }
-  const mission = guiMissionOf(ctx, projectId, paneId)
-  const who = ROLE_LABEL[role] ?? role
-  return mission ? `${who} · ${mission.title}` : who
 }
 
 function guiMissionIdOf(ctx: MainContext, projectId: string, paneId: string): string | undefined {
@@ -173,12 +172,6 @@ function chatNoticeEnabled(ctx: MainContext, kind: GuiNoticeKind): boolean {
   if (kind === 'needs-you') return settings.chatNotifyNeedsYou
   if (kind === 'finished') return settings.chatNotifyFinished
   return settings.chatNotifyFailed
-}
-
-function chatNoticeBody(kind: GuiNoticeKind, label: string): string {
-  if (kind === 'finished') return `${label} terminou um turno`
-  if (kind === 'failed') return `${label} encontrou uma falha`
-  return `${label} precisa de você`
 }
 
 /**
@@ -408,12 +401,19 @@ export function registerGuiIpc(ctx: MainContext, extras: GuiIpcExtras): GuiSessi
       ctx.pushBoard('gui:alert', payload)
       if (kind === 'finished') readyTitle.noteFinished(paneId)
       if (!chatNoticeEnabled(ctx, kind)) return
-      const label = paneLabel(ctx, paneId, projectId)
+      const subject = paneNoticeSubject(ctx, paneId, projectId)
       notifyDesktop({
         kind: `chat-${kind}`,
         key: paneId,
-        title: `Synkora — ${label}`,
-        body: chatNoticeBody(kind, label),
+        title: subject.title,
+        body: desktopChatNoticeBody(kind, subject.role),
+        // O clique abre o CHAT que falou — a missão dele, ou o planejamento.
+        target: {
+          projectId,
+          ...(subject.missionId ? { missionId: subject.missionId } : {}),
+          paneId,
+          destination: 'chat'
+        },
         // O vocabulário sonoro próprio é sintetizado pelo host (P20).
         silent: true,
         // P19 é uma saída do sistema, inclusive durante o uso do app.

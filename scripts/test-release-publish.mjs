@@ -18,6 +18,7 @@ import {
   releasePublishStatusLine,
   semverFromVersionName
 } from '../src/main/releasePublish.ts'
+import { manifestVersionFromContents } from '../src/main/projectManifestVersion.ts'
 
 // ————— o nome da versão vira número — por régua ESTREITA —————
 
@@ -145,4 +146,18 @@ test('os fragmentos do desfecho: o ato do harness primeiro, a receita depois', (
     bump: { kind: 'committed', version: '2.0.0' }
   })
   assert.equal(bumpOnly.length, 1, 'o bump é contado mesmo sem caixa — o commit existe e viaja no push')
+})
+
+// ————— a versão que o projeto JÁ TEM (2026-09-21) —————
+// A tela de versões lê o `version` do package.json da pasta do projeto em vez
+// de pedir o número ao dono. Mesma sonda do release: JSON quebrado, sem
+// `version` ou vazio devolvem null e a tela pergunta como antes.
+
+test('manifestVersionFromContents: o version do package.json, ou null quando não há o que ler', () => {
+  assert.equal(manifestVersionFromContents('{"name":"x","version":"1.20.0"}'), '1.20.0')
+  assert.equal(manifestVersionFromContents('{"name":"x"}'), null)
+  assert.equal(manifestVersionFromContents('{"version":""}'), null)
+  assert.equal(manifestVersionFromContents('{"version":7}'), null)
+  assert.equal(manifestVersionFromContents('not json'), null)
+  assert.equal(manifestVersionFromContents('[]'), null)
 })

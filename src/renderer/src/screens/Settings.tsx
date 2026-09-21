@@ -1,5 +1,5 @@
 import { useStore, type SettingsSection } from '../store'
-import AppearanceSettings from '../components/AppearanceSettings'
+import AccessibilitySettings from '../components/AccessibilitySettings'
 import ChatNoticeSettings from '../components/ChatNoticeSettings'
 import ChatWritingSettings from '../components/ChatWritingSettings'
 import SeatDeck from '../components/SeatDeck'
@@ -16,7 +16,7 @@ interface NavItem {
 }
 
 const NAV: NavItem[] = [
-  { id: 'appearance', glyph: 'Aa', label: 'Aparência', description: 'painéis e escrita do chat' },
+  { id: 'appearance', glyph: 'Aa', label: 'Aparência', description: 'acessibilidade e escrita do chat' },
   { id: 'accounts', glyph: '●', label: 'Minhas contas', description: 'seats e logins' },
   { id: 'skills', glyph: '❖', label: 'Skills', description: 'biblioteca e kits' },
   { id: 'voice', glyph: '◉', label: 'SynVoice', description: 'microfone e voz' }
@@ -25,8 +25,8 @@ const NAV: NavItem[] = [
 const COPY: Record<SettingsSection, { eyebrow: string; title: string; text: string }> = {
   appearance: {
     eyebrow: 'interface',
-    title: 'Aparência dos painéis',
-    text: 'Controle a leitura dos terminais sem mudar a quantidade de espaço disponível.'
+    title: 'Aparência',
+    text: 'Escala, fonte, movimento e a leitura do chat valem para o Synkora inteiro — nada aqui muda o espaço disponível na tela.'
   },
   accounts: {
     eyebrow: 'identidades de execução',
@@ -109,9 +109,9 @@ export default function Settings(): React.JSX.Element {
                   <>
                     <GuiPanelErrorBoundary
                       paneId="settings:appearance"
-                      label="as configurações de aparência"
+                      label="a acessibilidade do Synkora"
                     >
-                      <AppearanceSettings />
+                      <AccessibilitySettings />
                     </GuiPanelErrorBoundary>
                     <GuiPanelErrorBoundary
                       paneId="settings:chat-writing"

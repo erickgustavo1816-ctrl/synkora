@@ -78,3 +78,52 @@ export function shouldNotify(kind: DesktopNotifyKind, key: string, now: number):
 export function resetNotifyThrottleForTests(): void {
   lastShownAt.clear()
 }
+
+// ————— O TEXTO DO TOAST (2026-09-21) —————
+// Ordem do dono: título e corpo DIRETOS. O título é o ASSUNTO ("<projeto> ·
+// <missão>", ou "<projeto> · Planejamento" no chat de planejamento — o projeto
+// vem PRIMEIRO, escolha dele em 2026-09-21) e o corpo
+// é UMA frase que diz o que aconteceu e, quando cabe, o que fazer. Nada de
+// prefixo "Synkora —": o Windows já mostra o nome do app no cabeçalho do toast.
+
+export interface DesktopNotifySubject {
+  /** título da missão; ausente = chat de planejamento do projeto */
+  missionTitle?: string
+  projectName?: string
+}
+
+export type DesktopChatNoticeKind = 'needs-you' | 'finished' | 'failed'
+
+export function desktopNotifyTitle(subject: DesktopNotifySubject): string {
+  const scope = subject.missionTitle?.trim() || 'Planejamento'
+  const project = subject.projectName?.trim()
+  return project ? `${project} · ${scope}` : scope
+}
+
+/** Quem falou, quando não é o dev da missão: o dev é o padrão e fica implícito. */
+function chatSubject(role: string | undefined): string | null {
+  if (role === 'reviewer') return 'O revisor'
+  if (role === 'helper') return 'Um ajudante'
+  return null
+}
+
+export function desktopChatNoticeBody(kind: DesktopChatNoticeKind, role?: string): string {
+  const who = chatSubject(role)
+  if (kind === 'finished') return who ? `${who} terminou o turno` : 'Terminou o turno'
+  if (kind === 'failed') return who ? `${who} falhou. Veja o erro no chat` : 'Falhou. Veja o erro no chat'
+  return who ? `${who} precisa de você` : 'Precisa de você'
+}
+
+export function desktopConflictBody(input: {
+  conflictFiles?: number
+  detail: string
+}): string {
+  const files = input.conflictFiles ?? 0
+  if (files > 0) return `Integração parou: ${files} ${files === 1 ? 'arquivo' : 'arquivos'} em conflito`
+  const detail = input.detail.trim().slice(0, 120)
+  return detail ? `Integração parou: ${detail}` : 'Integração parou'
+}
+
+export function desktopMergedBody(target: string): string {
+  return `Integrada na ${target}`
+}

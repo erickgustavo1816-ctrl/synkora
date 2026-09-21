@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<title>Mockup · Ajustes ▸ Acessibilidade do Synkora</title>
+<style>
+  :root {
+    --paper: #efe9dc; --paper-2: #e8e1d0; --card: #f6f1e6; --ink: #262019; --ink-2: #5f574a;
+    --ink-3: #948b78; --line: #d9d1bd; --line-strong: #b8ae95; --accent: #d96c3f; --ok: #3e9b5f;
+    --panel: #26241f; --panel-ink: #efe8d6; --panel-ink-2: #b3aa93;
+    --mono: 'Cascadia Code', Consolas, 'Courier New', monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 24px; background: var(--paper); color: var(--ink); font: 13px var(--mono); }
+  .settings-card { overflow: hidden; border: 1px solid var(--line-strong); border-radius: 11px; background: rgba(246,241,230,.82); max-width: 1180px; }
+  .head { display: flex; align-items: flex-start; gap: 20px; padding: 18px 20px; border-bottom: 1px solid var(--line); }
+  .head > div { flex: 1; }
+  .kicker { color: var(--accent); font-size: 9px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; }
+  .head h2 { margin: 4px 0 5px; font-size: 15px; }
+  .head p { margin: 0; max-width: 76ch; color: var(--ink-2); font-size: 11px; line-height: 1.55; }
+  .btn { border: 1px solid var(--ink); background: transparent; color: var(--ink); font: 700 9.5px var(--mono); letter-spacing: .1em; text-transform: uppercase; padding: 6px 10px; border-radius: 7px; cursor: pointer; }
+  .layout { display: grid; grid-template-columns: minmax(300px, 464px) 1fr; gap: 24px; padding: 20px; }
+  .field + .field { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--line); }
+  .label-row { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
+  .label-row label { font-size: 10px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+  .label-row span { color: var(--ink-3); font-size: 10px; }
+  small { display: block; margin-top: 7px; color: var(--ink-3); font-size: 9.5px; line-height: 1.5; }
+  .stepper { display: flex; align-items: center; gap: 8px; }
+  .stepper button, .reset { width: 40px; height: 40px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--paper-2); font: 700 14px var(--mono); color: var(--ink); }
+  .stepper output { flex: 0 0 144px; height: 40px; display: grid; place-items: center; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--paper-2); font-weight: 700; }
+  .reset { margin-left: 4px; }
+  .reset:disabled { opacity: .45; }
+  .text { width: 100%; height: 40px; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--paper-2); font: 13px var(--mono); color: var(--ink); }
+  .choice { display: flex; gap: 8px; }
+  .choice button { flex: 1; height: 40px; border: 1px solid var(--line-strong); border-radius: 8px; background: transparent; font: 700 9.5px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-2); }
+  .choice button[aria-pressed="true"] { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+  .preview { border: 1px solid var(--line-strong); border-radius: 12px; background: var(--card); overflow: hidden; align-self: start; }
+  .preview-bar { display: flex; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid var(--line); color: var(--ink-2); font-size: 11px; font-weight: 700; }
+  .preview-bar em { font-style: normal; color: var(--ink-3); font-weight: 400; font-size: 9px; }
+  .preview-body { padding: 18px; zoom: 1.15; }
+  .mission { border: 1px solid var(--line-strong); border-radius: 9px; background: var(--paper); padding: 10px 12px; margin-bottom: 12px; }
+  .mission .t { font-weight: 700; }
+  .mission .s { color: var(--ink-3); font-size: 10px; margin-top: 3px; }
+  .bubble { border-left: 3px solid var(--accent); padding: 6px 10px; color: var(--ink); line-height: 1.5; }
+  .bubble .who { color: var(--accent); font-weight: 700; }
+  .row { display: flex; gap: 8px; margin-top: 12px; }
+  .badge { display: inline-block; margin-top: 12px; color: var(--ok); font-size: 9px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+</style>
+</head>
+<body>
+<section class="settings-card">
+  <header class="head">
+    <div>
+      <span class="kicker">interface</span>
+      <h2>Acessibilidade do Synkora</h2>
+      <p>Escala, fonte e movimento valem para o app inteiro: chat, board, ajustes e terminais. Nada aqui muda o espaço disponível na tela — só a leitura.</p>
+    </div>
+    <button class="btn">↺ restaurar padrão</button>
+  </header>
+
+  <div class="layout">
+    <div>
+      <div class="field">
+        <div class="label-row"><label>escala da interface</label><span>115%</span></div>
+        <div class="stepper">
+          <button aria-label="Diminuir">−</button>
+          <output>115%</output>
+          <button aria-label="Aumentar">+</button>
+          <button class="reset" aria-label="Restaurar 100%">↺</button>
+        </div>
+        <small>De 80% a 150%, de 5 em 5. Também funciona com Ctrl + −, Ctrl + + e Ctrl + 0 em qualquer tela.</small>
+      </div>
+
+      <div class="field">
+        <div class="label-row"><label>fonte</label></div>
+        <input class="text" value="Cascadia Code" />
+        <small>Vale para todo o texto do Synkora. Use uma fonte monoespaçada instalada no Windows.</small>
+      </div>
+
+      <div class="field">
+        <div class="label-row"><label>movimento</label><span>seguindo o Windows</span></div>
+        <div class="choice">
+          <button aria-pressed="true">seguir o Windows</button>
+          <button aria-pressed="false">reduzir sempre</button>
+        </div>
+        <small>"Reduzir sempre" para as animações e o fundo vivo, mesmo com o Windows permitindo movimento.</small>
+      </div>
+    </div>
+
+    <div class="preview" aria-label="Prévia da interface">
+      <div class="preview-bar"><span>prévia · tamanho real</span><em>é assim que o Synkora fica</em></div>
+      <div class="preview-body">
+        <div class="mission">
+          <div class="t">🚀 Bug</div>
+          <div class="s">◈ V0.1.2 · dev em conversa</div>
+        </div>
+        <div class="bubble"><span class="who">agente ›</span> Notificações reescritas e clique ligado ao navegador do radar. Rodando o typecheck.</div>
+        <div class="row"><button class="btn">⇪ integrar</button><button class="btn" style="border-color: var(--line-strong); color: var(--ink-2)">arquivar</button></div>
+        <span class="badge">✓ 0123456789 · AaBbCc · escala 115%</span>
+      </div>
+    </div>
+  </div>
+</section>
+</body>
+</html>

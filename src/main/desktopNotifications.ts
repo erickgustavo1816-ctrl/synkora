@@ -1,4 +1,5 @@
 import { Notification, type BrowserWindow } from 'electron'
+import type { ProgressOpenTarget } from './progressNavigation'
 import {
   canShowDesktopNotification,
   resetNotifyThrottleForTests,
@@ -19,7 +20,11 @@ export interface DesktopNotifyInput {
   body: string
   /** Chave de throttle/dedupe (paneId ou missionId). */
   key: string
-  /** Navegação ao clicar (além do foco na janela, que é automático). */
+  /** Para ONDE o clique leva (além do foco na janela, que é automático):
+   *  a missão/chat do aviso, ou só o projeto quando é integração/release.
+   *  Viaja pelo mesmo canal `progress:open-target` do radar de andamento. */
+  target?: ProgressOpenTarget
+  /** Navegação extra ao clicar, para quem não cabe num alvo. */
   onClick?: () => void
   /** Avisos do chat usam o som próprio do renderer, se habilitado. */
   silent?: boolean
@@ -34,10 +39,21 @@ export function __resetNotifyThrottleForTests(): void {
 export { shouldNotify }
 
 let getWindow: () => BrowserWindow | null = () => null
+let navigate: (target: ProgressOpenTarget) => void = () => undefined
 
-/** O index registra o acessor da janela principal uma vez no boot. */
-export function initDesktopNotifications(accessor: () => BrowserWindow | null): void {
+/** Toasts VIVOS: o Electron só entrega `click` enquanto a instância existe, e
+ *  sem referência o GC a recolhia antes do clique do dono — o toast aparecia
+ *  e "não fazia nada". Solta no fechamento (clique, dispensa ou expiração). */
+const live = new Set<Notification>()
+
+/** O index registra o acessor da janela principal e o navegador (o mesmo
+ *  `deliverProgressOpenTarget` do radar) uma vez no boot. */
+export function initDesktopNotifications(
+  accessor: () => BrowserWindow | null,
+  navigator?: (target: ProgressOpenTarget) => void
+): void {
   getWindow = accessor
+  if (navigator) navigate = navigator
 }
 
 export function notifyDesktop(input: DesktopNotifyInput): void {
@@ -56,19 +72,27 @@ export function notifyDesktop(input: DesktopNotifyInput): void {
       body: input.body,
       silent: input.silent ?? false,
     })
+    const release = (): void => {
+      live.delete(notification)
+    }
     notification.on('click', () => {
-      const target = getWindow()
-      if (target && !target.isDestroyed()) {
-        if (target.isMinimized()) target.restore()
-        target.show()
-        target.focus()
+      release()
+      const win = getWindow()
+      if (win && !win.isDestroyed()) {
+        if (win.isMinimized()) win.restore()
+        win.show()
+        win.focus()
       }
       try {
+        if (input.target) navigate(input.target)
         input.onClick?.()
       } catch {
         // navegação é cortesia; o foco já aconteceu
       }
     })
+    notification.on('close', release)
+    notification.on('failed', release)
+    live.add(notification)
     notification.show()
   } catch {
     // notificação nunca derruba o main

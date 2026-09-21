@@ -25,9 +25,23 @@ import { dirname, join } from 'path'
 export interface SynkoraPreferences {
   externalServicePreparation: 'automatic' | 'on-demand'
   conptyDll?: boolean
-  terminalFontSize: number
-  terminalLineHeight: number
-  terminalFontFamily: string
+  /**
+   * ACESSIBILIDADE DO SYNKORA (ordem do dono, 2026-09-21): a seção de
+   * tipografia dos terminais virou a regulagem do APP INTEIRO. `uiScale` é a
+   * escala da interface em porcento (zoom real da janela), `uiFontFamily` a
+   * fonte de todo o texto (inclusive terminais), `uiReduceMotion` força
+   * `prefers-reduced-motion` mesmo com o Windows permitindo movimento, e o par
+   * `chatFontSize`/`chatLineHeight` regula a leitura das mensagens do chat
+   * por cima da escala. Quem aplica é `uiAccessibility.ts` (main) e
+   * `renderer/uiAccessibility.ts` (variáveis CSS). Os campos
+   * `terminalFontSize`/`terminalLineHeight` morreram com a seção; a fonte do
+   * terminal (`terminalFontFamily`) migra para `uiFontFamily` na leitura.
+   */
+  uiScale: number
+  uiFontFamily: string
+  uiReduceMotion: boolean
+  chatFontSize: number
+  chatLineHeight: number
   synVoiceInputDeviceId?: string
   chatNotifyNeedsYou: boolean
   chatNotifyFinished: boolean
@@ -66,9 +80,11 @@ interface SettingsStoreCoreOptions {
 
 const DEFAULTS: SynkoraPreferences = {
   externalServicePreparation: 'automatic',
-  terminalFontSize: 13,
-  terminalLineHeight: 1.25,
-  terminalFontFamily: 'Cascadia Code',
+  uiScale: 100,
+  uiFontFamily: 'Cascadia Code',
+  uiReduceMotion: false,
+  chatFontSize: 12.5,
+  chatLineHeight: 1.55,
   chatNotifyNeedsYou: true,
   chatNotifyFinished: true,
   chatNotifyFailed: true,
@@ -79,6 +95,12 @@ const DEFAULTS: SynkoraPreferences = {
   chatWritingFade: true
 }
 
+/** Faixas da acessibilidade — espelho de `UI_SCALE_RANGE`, `CHAT_FONT_SIZE_RANGE`
+ *  e `CHAT_LINE_HEIGHT_RANGE` em `renderer/uiAccessibility.ts`. */
+export const UI_SCALE_RANGE = { min: 80, max: 150 } as const
+export const CHAT_FONT_SIZE_RANGE = { min: 10, max: 20 } as const
+export const CHAT_LINE_HEIGHT_RANGE = { min: 1.2, max: 2 } as const
+
 /** Faixas da escrita do chat — espelho de `GUI_WRITING_*_RANGE` no renderer. */
 export const CHAT_WRITING_WORDS_PER_SECOND_RANGE = { min: 0, max: 60 } as const
 export const CHAT_WRITING_MAX_LAG_RANGE = { min: 300, max: 3000 } as const
@@ -87,6 +109,19 @@ function clampInteger(value: unknown, range: { min: number; max: number }, fallb
   const parsed = Number(value)
   if (!Number.isFinite(parsed)) return fallback
   return Math.max(range.min, Math.min(range.max, Math.round(parsed)))
+}
+
+/** Número com passo fixo dentro da faixa (0.5 para a fonte do chat, 0.01 para a altura da linha). */
+function clampNumber(
+  value: unknown,
+  range: { min: number; max: number },
+  fallback: number,
+  precision: number
+): number {
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed)) return fallback
+  const snapped = Math.round(parsed / precision) * precision
+  return Number(Math.max(range.min, Math.min(range.max, snapped)).toFixed(4))
 }
 
 function recordOf(value: unknown): Record<string, unknown> {
@@ -108,14 +143,24 @@ function cleanOptionalString(value: unknown): string | undefined {
 function sanitizePreferences(value: unknown): SynkoraPreferences {
   const source = recordOf(value)
   const synVoiceInputDeviceId = cleanOptionalString(source.synVoiceInputDeviceId)
-  const fontFamily = cleanOptionalString(source.terminalFontFamily)
+  // A fonte de terminal de antes da seção de acessibilidade vira a fonte do
+  // app: o dono que a tinha escolhido não perde a escolha.
+  const fontFamily =
+    cleanOptionalString(source.uiFontFamily) ?? cleanOptionalString(source.terminalFontFamily)
   return {
     externalServicePreparation:
       source.externalServicePreparation === 'on-demand' ? 'on-demand' : 'automatic',
     ...(typeof source.conptyDll === 'boolean' ? { conptyDll: source.conptyDll } : {}),
-    terminalFontSize: Math.max(8, Math.min(24, Number(source.terminalFontSize) || 13)),
-    terminalLineHeight: Math.max(1, Math.min(1.8, Number(source.terminalLineHeight) || 1.25)),
-    terminalFontFamily: (fontFamily ?? DEFAULTS.terminalFontFamily).slice(0, 200),
+    uiScale: clampInteger(source.uiScale, UI_SCALE_RANGE, DEFAULTS.uiScale),
+    uiFontFamily: (fontFamily ?? DEFAULTS.uiFontFamily).slice(0, 200),
+    uiReduceMotion: source.uiReduceMotion === true,
+    chatFontSize: clampNumber(source.chatFontSize, CHAT_FONT_SIZE_RANGE, DEFAULTS.chatFontSize, 0.5),
+    chatLineHeight: clampNumber(
+      source.chatLineHeight,
+      CHAT_LINE_HEIGHT_RANGE,
+      DEFAULTS.chatLineHeight,
+      0.01
+    ),
     ...(synVoiceInputDeviceId ? { synVoiceInputDeviceId } : {}),
     chatNotifyNeedsYou: source.chatNotifyNeedsYou !== false,
     chatNotifyFinished: source.chatNotifyFinished !== false,
@@ -159,7 +204,10 @@ export class SettingsStoreCore {
         storedSettings = {}
       }
     }
-    this.data = sanitizePreferences({ ...DEFAULTS, ...storedSettings })
+    // O documento entra SEM os defaults por cima: cada campo do sanitize já
+    // tem o próprio fallback, e é a ausência de `uiFontFamily` no disco que
+    // deixa a fonte de terminal de antes migrar para a fonte do app.
+    this.data = sanitizePreferences(storedSettings)
   }
 
   get(): SynkoraSettings {
