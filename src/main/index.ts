@@ -87,6 +87,8 @@ import { registerSkillsIpc } from './ipc/skills'
 import { registerVoiceIpc } from './ipc/voice'
 import { registerProgressIpc } from './ipc/progress'
 import { registerMiscIpc } from './ipc/misc'
+import { startAppUpdater } from './appUpdate'
+import { registerAppUpdateIpc } from './ipc/appUpdate'
 import {} from './projectSecurityBaseline'
 import { redactSensitiveText } from './securityRedaction'
 import { BacklogStore, type Version } from './backlog'
@@ -147,6 +149,7 @@ import { createMobileMonitorReader } from './mobileMonitorWindow'
 import { buildGuiSkillTools } from './guiSkillTools'
 import type { GuiSkillToolkit } from './guiSkillKit'
 import { skillsLibraryRoot } from './skillsLibraryScan'
+import { seedBundledSkillsAtBoot } from './skillsBundle'
 import { GUI_HELPER_MCP_PANE_PREFIX, guiHelperMcpPaneId } from './guiHelperLspMcp'
 import { guiHelperPorts } from './guiHelperPorts'
 import { guiOwnerReplyDebt, sweepFlags } from './guiOwnerReplyDebt'
@@ -2424,6 +2427,12 @@ app.whenReady().then(async () => {
   const maestro = new MaestroStore()
   const settings = new SettingsStore()
   endBootStores()
+  // AS SKILLS DO KIT CHEGAM COM O INSTALADOR (2026-09-21): o app empacotado
+  // tem userData próprio e nascia com a biblioteca vazia — o kit semeado citava
+  // 16 skills que só existiam na máquina de dev, e toda conversa abria com a
+  // nota "não consegui preparar…". Semeia SÓ o que falta, antes de qualquer
+  // pane nascer; a biblioteca do dono nunca é sobrescrita. Nunca lança.
+  seedBundledSkillsAtBoot((event) => blackbox.record(event))
   // Stores are in-memory; filesystem availability alone uses a short cache.
   // Streaming GUI events never trigger a disk read for every token.
   let guiSessions: GuiSessionRegistry | undefined
@@ -4663,6 +4672,12 @@ app.whenReady().then(async () => {
   // na hora de notificar (é ela que decide se o app está em foco; em foco,
   // nada é notificado). Mesmo padrão do `window: () => mainWindow` da view.
   initDesktopNotifications(() => mainWindow)
+  // O ATUALIZADOR DO SYNKORA (2026-09-21): só o app EMPACOTADO carrega o
+  // electron-updater e agenda as verificações (15 s após o boot, depois a cada
+  // 6 h); em dev o controlador responde `unsupported` com o motivo. O feed é o
+  // repositório público de releases (APP_UPDATE_FEED ↔ electron-builder.yml).
+  const appUpdate = startAppUpdater({ blackbox, app })
+  registerAppUpdateIpc(ctx, { controller: appUpdate, assertMainRendererSender })
   registerMiscIpc(ctx, { assertMainRendererSender, ensureBypassAccepted })
   registerVoiceIpc(ctx, {
     assertMainVoiceSender,

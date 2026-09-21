@@ -602,6 +602,25 @@ export interface CliStatus {
   checkedAt: number
 }
 
+/** Declared mirror of main/appUpdate.ts and renderer's AppUpdateStatus (mission-playbook). */
+export type AppUpdatePhase =
+  | 'unsupported' | 'idle' | 'checking' | 'current'
+  | 'available' | 'downloading' | 'ready' | 'error'
+
+export interface AppUpdateStatus {
+  phase: AppUpdatePhase
+  version: string
+  next?: string
+  notes?: string
+  percent?: number
+  transferred?: number
+  total?: number
+  bytesPerSecond?: number
+  checkedAt?: number
+  error?: string
+  reason?: string
+}
+
 /** Telemetria viva de um pane, lida dos JSONL de sessão do próprio CLI. */
 export interface PaneStats {
   model?: string
@@ -636,6 +655,12 @@ export interface SynkoraPreferences {
   /** INTERRUPTOR do `skill_pull` de rede do agente (Skills 3.0 — ADR-0010).
    *  Ausente/true = ligado; o par é `skillsAgentPull` em main/settingsCore.ts. */
   skillsAgentPull?: boolean
+  /** A ESCRITA DO CHAT (2026-09-21) — espelho de main/settingsCore.ts; a régua
+   *  que consome mora em renderer/guiStreamReveal.ts (`guiWritingPaceOf`).
+   *  Ausentes = padrão (20 palavras/s, 1000 ms, fade ligado). */
+  chatWritingWordsPerSecond?: number
+  chatWritingMaxLagMs?: number
+  chatWritingFade?: boolean
 }
 
 /** Snapshot seguro do main. Nenhum segredo bruto cruza esta fronteira. */
@@ -1509,6 +1534,17 @@ const api = {
       const listener = (_e: IpcRendererEvent, all: CliStatus[]): void => cb(all)
       ipcRenderer.on('cli:status', listener)
       return () => ipcRenderer.removeListener('cli:status', listener)
+    }
+  },
+  appUpdate: {
+    status: (): Promise<AppUpdateStatus> => ipcRenderer.invoke('app-update:status'),
+    check: (): Promise<AppUpdateStatus> => ipcRenderer.invoke('app-update:check'),
+    download: (): Promise<AppUpdateStatus> => ipcRenderer.invoke('app-update:download'),
+    install: (): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('app-update:install'),
+    onStatus: (cb: (status: AppUpdateStatus) => void): (() => void) => {
+      const listener = (_event: IpcRendererEvent, status: AppUpdateStatus): void => cb(status)
+      ipcRenderer.on('app-update:status', listener)
+      return () => ipcRenderer.removeListener('app-update:status', listener)
     }
   },
   perf: {

@@ -1,0 +1,287 @@
+{
+  "version": 1,
+  "generatedAt": "2026-09-21T15:15:01.288Z",
+  "skills": {
+    "impeccable": {
+      "sha": "33b9a3752b8852c7adb7f4935a3f6c160bf3fefc",
+      "installedAt": "2026-08-03T13:40:43.102Z",
+      "supplyChain": {
+        "version": 2,
+        "decision": "review",
+        "fingerprint": "16dde13f6304b900e7e22ec6f7f917768631aabcc5b61eb351d46f94fb4901d2",
+        "filesScanned": 147,
+        "findings": [
+          {
+            "id": "sensitive-external-effect",
+            "severity": "review",
+            "path": "reference/audit.md",
+            "message": "descreve efeito externo ou irreversível que exige aprovação humana"
+          },
+          {
+            "id": "sensitive-external-effect",
+            "severity": "review",
+            "path": "reference/audit.native.md",
+            "message": "descreve efeito externo ou irreversível que exige aprovação humana"
+          },
+          {
+            "id": "sensitive-external-effect",
+            "severity": "review",
+            "path": "reference/critique.md",
+            "message": "descreve efeito externo ou irreversível que exige aprovação humana"
+          },
+          {
+            "id": "agent-supply-chain",
+            "severity": "review",
+            "path": "reference/hooks.md",
+            "message": "altera ou amplia a cadeia de ferramentas/agentes"
+          },
+          {
+            "id": "sensitive-external-effect",
+            "severity": "review",
+            "path": "reference/init.md",
+            "message": "descreve efeito externo ou irreversível que exige aprovação humana"
+          },
+          {
+            "id": "sensitive-external-effect",
+            "severity": "review",
+            "path": "scripts/context-signals.mjs",
+            "message": "descreve efeito externo ou irreversível que exige aprovação humana"
+          },
+          {
+            "id": "permission-bypass",
+            "severity": "review",
+            "path": "scripts/detector/engines/browser/detect-url.mjs",
+            "message": "menciona bypass de sandbox ou aprovação"
+          },
+          {
+            "id": "agent-supply-chain",
+            "severity": "review",
+            "path": "scripts/hook-admin.mjs",
+            "message": "altera ou amplia a cadeia de ferramentas/agentes"
+          },
+          {
+            "id": "agent-supply-chain",
+            "severity": "review",
+            "path": "scripts/hook-before-edit.mjs",
+            "message": "altera ou amplia a cadeia de ferramentas/agentes"
+          },
+          {
+            "id": "agent-supply-chain",
+            "severity": "review",
+            "path": "scripts/hook-lib.mjs",
+            "message": "altera ou amplia a cadeia de ferramentas/agentes"
+          },
+          {
+            "id": "agent-supply-chain",
+            "severity": "review",
+            "path": "scripts/hook.mjs",
+            "message": "altera ou amplia a cadeia de ferramentas/agentes"
+          },
+          {
+            "id": "sensitive-external-effect",
+            "severity": "review",
+            "path": "scripts/lib/artifact-schema.mjs",
+            "message": "descreve efeito externo ou irreversível que exige aprovação humana"
+          },
+          {
+            "id": "sensitive-external-effect",
+            "severity": "review",
+            "path": "scripts/live-browser.js",
+            "message": "descreve efeito externo ou irreversível que exige aprovação humana"
+          },
+          {
+            "id": "permission-bypass",
+            "severity": "review",
+            "path": "scripts/live-copy-edit-agent.mjs",
+            "message": "menciona bypass de sandbox ou aprovação"
+          },
+          {
+            "id": "sensitive-external-effect",
+            "severity": "review",
+            "path": "scripts/live-server.mjs",
+            "message": "descreve efeito externo ou irreversível que exige aprovação humana"
+          },
+          {
+            "id": "sensitive-external-effect",
+            "severity": "review",
+            "path": "scripts/live/instructions.mjs",
+            "message": "descreve efeito externo ou irreversível que exige aprovação humana"
+          },
+          {
+            "id": "sensitive-external-effect",
+            "severity": "review",
+            "path": "scripts/live/session-store.mjs",
+            "message": "descreve efeito externo ou irreversível que exige aprovação humana"
+          },
+          {
+            "id": "sensitive-external-effect",
+            "severity": "review",
+            "path": "scripts/live/source-lock.mjs",
+            "message": "descreve efeito externo ou irreversível que exige aprovação humana"
+          },
+          {
+            "id": "sensitive-external-effect",
+            "severity": "review",
+            "path": "scripts/live/svelte-component.mjs",
+            "message": "descreve efeito externo ou irreversível que exige aprovação humana"
+          },
+          {
+            "id": "sensitive-external-effect",
+            "severity": "review",
+            "path": "scripts/serve-question.mjs",
+            "message": "descreve efeito externo ou irreversível que exige aprovação humana"
+          }
+        ],
+        "licenseFiles": []
+      }
+    },
+    "synkora-design-system-standard": {
+      "origin": "house"
+    },
+    "synkora-codigo-limpo": {
+      "origin": "house"
+    },
+    "synkora-investigacao": {
+      "origin": "house"
+    },
+    "codebase-design": {
+      "sha": "2ffb184ffbb752faa664c0b204f3c9241b1428e9",
+      "installedAt": "2026-07-29T21:51:33.830Z",
+      "supplyChain": {
+        "version": 1,
+        "decision": "allow",
+        "fingerprint": "4b46c5ee5f29310386ec35f5b34184aef8e23d1f6d9889a2ece8b8e429b7b880",
+        "filesScanned": 4,
+        "findings": [],
+        "licenseFiles": []
+      }
+    },
+    "node": {
+      "sha": "c605269f85f6e449c1f76b7c9e8c73381fccfc68",
+      "installedAt": "2026-08-29T18:46:27.158Z"
+    },
+    "systematic-debugging": {
+      "sha": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "installedAt": "2026-07-29T21:51:32.694Z",
+      "supplyChain": {
+        "version": 1,
+        "decision": "review",
+        "fingerprint": "f9b24e9475420aae05a29455ddb5978723533d228440cf7cbb9c96c339076554",
+        "filesScanned": 11,
+        "findings": [
+          {
+            "id": "sensitive-external-effect",
+            "severity": "review",
+            "path": "test-pressure-1.md",
+            "message": "descreve efeito externo ou irreversível que exige aprovação humana"
+          }
+        ],
+        "licenseFiles": []
+      }
+    },
+    "test-driven-development": {
+      "sha": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "installedAt": "2026-07-29T21:51:31.779Z",
+      "supplyChain": {
+        "version": 2,
+        "decision": "allow",
+        "fingerprint": "0ff8639af929add22342c8fbd7accfd26529c64c9998e2b65e78dfe73e19b48c",
+        "filesScanned": 2,
+        "findings": [],
+        "licenseFiles": []
+      }
+    },
+    "verification-before-completion": {
+      "sha": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+      "installedAt": "2026-07-29T21:51:31.983Z",
+      "supplyChain": {
+        "version": 1,
+        "decision": "allow",
+        "fingerprint": "d8a53168f152b6163bd3447f7d4c20b6b4cddf6bd907f9aa5856b514c032db0e",
+        "filesScanned": 1,
+        "findings": [],
+        "licenseFiles": []
+      }
+    },
+    "owasp-security": {
+      "sha": "bfaf257b2859986a6a84d2b7491e1fab2218cd53",
+      "installedAt": "2026-07-29T21:51:51.309Z",
+      "supplyChain": {
+        "version": 1,
+        "decision": "review",
+        "fingerprint": "deb979d090b296a37524854d0ade7a4087a0c80516bd14c9584a78061d47f2c3",
+        "filesScanned": 3,
+        "findings": [
+          {
+            "id": "sensitive-external-effect",
+            "severity": "review",
+            "path": "reference/languages.md",
+            "message": "descreve efeito externo ou irreversível que exige aprovação humana"
+          },
+          {
+            "id": "agent-supply-chain",
+            "severity": "review",
+            "path": "reference/owasp-report.md",
+            "message": "altera ou amplia a cadeia de ferramentas/agentes"
+          },
+          {
+            "id": "sensitive-external-effect",
+            "severity": "review",
+            "path": "SKILL.md",
+            "message": "descreve efeito externo ou irreversível que exige aprovação humana"
+          }
+        ],
+        "licenseFiles": []
+      }
+    },
+    "better-writing": {
+      "sha": "0c1f1e5b2481e86c168301bebb6aa3869691ac78",
+      "installedAt": "2026-07-29T19:32:46.208Z",
+      "etag": "W/\"0f3c38eb8e1b1d3ec8c8685812e46b17ab1571e65af8f06401561b01bfef326e\"",
+      "supplyChain": {
+        "version": 1,
+        "decision": "allow",
+        "fingerprint": "d1d926ed4890b142a7c48221e6178dc0b3434c395cd3c9ee4bb63533f212aa21",
+        "filesScanned": 2,
+        "findings": [],
+        "licenseFiles": []
+      }
+    },
+    "writing-plans": {
+      "sha": "44c9b2d6e889982ac18c27d05a19fefe335194e1",
+      "installedAt": "2026-07-29T23:34:47.609Z",
+      "supplyChain": {
+        "version": 1,
+        "decision": "allow",
+        "fingerprint": "1b096fb3e0ad55196751eeaffae831fd16f6949484e8225acc472abbe488d179",
+        "filesScanned": 2,
+        "findings": [],
+        "licenseFiles": []
+      }
+    },
+    "grilling": {
+      "sha": "85f83d3fde1d3a90d5c9a657f6998c79a6c37308",
+      "installedAt": "2026-08-29T18:46:28.009Z"
+    },
+    "grill-me": {
+      "sha": "fcf0071560d32913c9d4f820e0d7ca467c881619",
+      "installedAt": "2026-08-29T18:46:28.906Z"
+    },
+    "grill-with-docs": {
+      "sha": "447ca70872026d5b79d6073a546dac082117fed7",
+      "installedAt": "2026-08-29T18:46:30.021Z"
+    },
+    "domain-modeling": {
+      "sha": "84fdeffd12f2ee307994d1eb6feb48173b6e0502",
+      "installedAt": "2026-07-29T23:34:45.820Z",
+      "supplyChain": {
+        "version": 1,
+        "decision": "allow",
+        "fingerprint": "5622194d032235c847b743c167cb42de137120ac2effd1937e2a71c5ed487d45",
+        "filesScanned": 4,
+        "findings": [],
+        "licenseFiles": []
+      }
+    }
+  }
+}

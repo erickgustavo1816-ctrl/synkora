@@ -13,6 +13,13 @@ productName: Synkora
 copyright: Copyright © 2026 Erick
 afterPack: scripts/after-pack.cjs
 
+# Explicit runtime mirror: APP_UPDATE_FEED in src/main/appUpdate.ts.
+publish:
+  provider: github
+  owner: erickgustavo1816-ctrl
+  repo: synkora-releases
+  releaseType: release
+
 directories:
   buildResources: build
   output: release
@@ -42,6 +49,8 @@ extraResources:
     to: icon.ico
   - from: build/vendor/scrcpy
     to: mobile/scrcpy
+  - from: build/skills
+    to: skills
 
 # Os prebuilds do node-pty dispensam compilação; deixar o rebuild ligado só
 # convidaria o node-gyp para uma festa que o projeto evita de propósito.

@@ -22,3 +22,174 @@
 @media (prefers-reduced-motion: reduce) {
   .rail-mission-dot[data-activity='running'] { animation: none; }
 }
+
+/* ================= O SELO DE VERSÃO (2026-09-21) =================
+   No pé do rail, visível de qualquer universo. A FORMA diz o estado antes da
+   cor: em dia = número quieto em tinta apagada; verificando/baixando = glifo
+   no acento e uma barra fina que enche por baixo; pronto = pílula cheia no
+   acento, pulsando devagar (a decisão de reiniciar é do dono); falha = "!" no
+   âmbar. O texto é o número da versão — nunca um ícone sozinho. */
+
+.rail-version {
+  margin-top: auto;
+  padding-top: 8px;
+  display: flex;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.rail-version-badge {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 46px;
+  height: 22px;
+  padding: 0 7px;
+  border: 1px solid var(--panel-line);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--panel-ink-3);
+  font: 700 10px/1 var(--mono);
+  letter-spacing: 0.04em;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  overflow: hidden;
+  transition: color 160ms ease, border-color 160ms ease, background 160ms ease;
+}
+
+.rail-version-badge:hover {
+  color: var(--panel-ink);
+  border-color: var(--panel-ink-3);
+}
+
+.rail-version-badge:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.rail-version-badge.busy {
+  cursor: progress;
+}
+
+.rail-version-glyph {
+  font-size: 11px;
+  line-height: 1;
+}
+
+.rail-version-badge.tone-busy {
+  color: var(--panel-ink-2);
+  border-color: var(--panel-ink-3);
+}
+
+.rail-version-badge.tone-busy .rail-version-glyph {
+  color: var(--accent);
+}
+
+.rail-version-badge.tone-warn {
+  color: var(--panel-ink-2);
+  border-color: var(--warn);
+}
+
+.rail-version-badge.tone-warn .rail-version-glyph {
+  color: var(--warn);
+}
+
+.rail-version-badge.tone-ready {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  animation: rail-version-ready 2.4s ease-in-out infinite;
+}
+
+.rail-version-badge.tone-ready:hover {
+  background: var(--accent-deep);
+  border-color: var(--accent-deep);
+  color: #fff;
+}
+
+@keyframes rail-version-ready {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(217, 108, 63, 0.45); }
+  50% { box-shadow: 0 0 0 5px rgba(217, 108, 63, 0); }
+}
+
+/* a barra do download: 2px no pé do selo, enche da esquerda */
+.rail-version-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: var(--panel-line);
+}
+
+.rail-version-bar > i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 240ms ease;
+}
+
+.rail-version-badge.tone-ready .rail-version-bar {
+  display: none;
+}
+
+/* a folha de confirmação: papel, ancorada ao pé do rail */
+.rail-version-sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: rgba(38, 32, 25, 0.18);
+}
+
+.rail-version-sheet {
+  position: fixed;
+  left: 78px;
+  bottom: 16px;
+  width: 340px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px 14px;
+  border: 1.5px solid var(--ink);
+  border-radius: 10px;
+  background: var(--card);
+  color: var(--ink);
+  font: 12px/1.5 var(--mono);
+  box-shadow: var(--shadow);
+  animation: rise 160ms ease both;
+}
+
+.rail-version-sheet-kicker {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+}
+
+.rail-version-sheet strong {
+  font-size: 12.5px;
+}
+
+.rail-version-sheet p {
+  margin: 0;
+  color: var(--ink-2);
+}
+
+.rail-version-sheet-error {
+  color: var(--err) !important;
+}
+
+.rail-version-sheet-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rail-version-badge.tone-ready { animation: none; }
+  .rail-version-sheet { animation: none; }
+  .rail-version-bar > i { transition: none; }
+}

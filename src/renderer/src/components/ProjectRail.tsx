@@ -6,6 +6,7 @@ import { hueOf, initialsOf } from '../util'
 import SynkoraMark from './SynkoraMark'
 import NewUniverseModal from './NewUniverseModal'
 import GuiPanelErrorBoundary from './GuiPanelErrorBoundary'
+import AppUpdateBadge from './AppUpdateBadge'
 import './ProjectRail.css'
 
 // Referência estável para seletores (regra do projeto: nunca `?? []` inline).
@@ -98,6 +99,11 @@ export default function ProjectRail(): React.JSX.Element {
           +
         </button>
       </div>
+      {/* O SELO DE VERSÃO (2026-09-21): o pé do rail é o único lugar visível de
+          QUALQUER universo — a versão que roda, e se há uma nova chegando. */}
+      <GuiPanelErrorBoundary paneId="rail:app-update" label="a versão do Synkora">
+        <AppUpdateBadge />
+      </GuiPanelErrorBoundary>
       {adding && (
         <GuiPanelErrorBoundary
           paneId="overlay:rail:new-universe"

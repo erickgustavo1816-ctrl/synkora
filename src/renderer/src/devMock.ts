@@ -1004,6 +1004,13 @@ export function installDevMock(): void {
               efforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra']
             }
     },
+    appUpdate: {
+      status: async () => ({ phase: 'unsupported' as const, version: '0.1.0', reason: 'mock do dev' }),
+      check: async () => ({ phase: 'unsupported' as const, version: '0.1.0', reason: 'mock do dev' }),
+      download: async () => ({ phase: 'unsupported' as const, version: '0.1.0', reason: 'mock do dev' }),
+      install: async () => ({ ok: false, error: 'mock do dev' }),
+      onStatus: () => () => undefined
+    },
     cli: {
       status: async () => [
         { cli: 'claude' as const, version: '2.1.219', state: 'current' as const, checkedAt: 0 },
