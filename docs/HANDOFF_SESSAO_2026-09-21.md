@@ -116,6 +116,30 @@ Playbook da missão em `.claude/skills/mission-playbook/`.
   a próxima release.
 - O app do dono precisa de RESTART para main/preload novos (HMR só no renderer).
 
-## Estado do gate
+## Estado do gate (npm run test:gui-system, 2026-09-21)
 
-(preenchido ao fim da sessão — ver o commit.)
+A cadeia foi corrida INTEIRA, em trechos, porque três coisas a interrompiam:
+
+1. **Suítes compiladas sem `--rootDir`** (pré-existente desde o pouso do mobile
+   em aadd48d): mcpServer/maestroSession/historySearch importam
+   `src/shared/mobileDeviceProfiles`, o tsc passou a emitir em `main/` e
+   `shared/`, e 12 suítes (worktree-preview-processes, gui-sessions,
+   gui-planner-mcp, gui-delegate-mcp, gui-delegation-wiring, command-palette,
+   gui-lsp-tools, browser-driver, integration-queue, mission-creation,
+   mcp-dual-era, gui-skill-tools) morriam em ERR_MODULE_NOT_FOUND. REPARADO
+   nesta sessão (rootDir explícito + caminho `main/` em 20 scripts).
+2. **mobile-windows**: 2 falhas nativas de captura/DPI ("borda continua
+   escura"; janela 279×590 vs 278×589). Pré-existentes: reproduzem igual com o
+   `global.css` do commit base. Fora do escopo; ficam para o dono do mobile.
+3. **browser-pane**: a falha de captura nativa já registrada em 16/09 ("the
+   captured page contains the new pixels, not a cached image"). Pré-existente.
+
+Tudo o mais verde. Contagem por trecho (node:test): typecheck → mobile 512;
+gui-sessions 325; worktree-preview-processes 8; codex-token-usage →
+transcript-window 769; context-panel → browser-pane 467; browser-driver →
+macos 323; mobile-windows 40 (+2 pré-existentes); mobile-render 1. Total
+≈ 2.445 verdes, 3 falhas pré-existentes de captura nativa. Suítes desta
+missão: gui-stream-writer 9 + nativa, app-update 23, app-update-badge 8 +
+nativa, skills-bundle 16, chat-ui 156, settings 7. Uma cerca minha caiu e foi
+atualizada (transcript-window: a janela passa por `guiHeldItems` antes do
+agrupamento).
