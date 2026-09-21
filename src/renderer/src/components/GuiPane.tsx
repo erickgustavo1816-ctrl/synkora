@@ -122,6 +122,7 @@ import {
 } from '../guiComposerAttachments'
 import { shouldBlurGuiComposerOnOutsidePointerDown } from '../guiComposerFocus'
 import { guiAwaitingGoDecision } from '../guiAskForGo'
+import { guiHeldItems, guiWritingPaceOf, type GuiWritingPace } from '../guiStreamReveal'
 import { guiComposerClearPlan } from '../guiComposerDelivery'
 import { forceOneGuiQueuedMessage } from '../guiQueuedDelivery'
 import { parseGuiJsonCard } from '../guiJsonCard'
@@ -387,14 +388,18 @@ function GuiMessage({
   paneId,
   item,
   showCopy,
+  pace,
   onRevealComplete,
-  onRevealProgress
+  onRevealProgress,
+  onWriterBusy
 }: {
   paneId: string
   item: GuiItem
   showCopy: boolean
+  pace: GuiWritingPace
   onRevealComplete: (itemId: string, length: number) => void
   onRevealProgress: () => void
+  onWriterBusy: (itemId: string, busy: boolean) => void
 }): React.JSX.Element | null {
   if (item.kind === 'tool') {
     if (INTERACTIVE_TOOLS.has(item.name.toLowerCase())) return null
@@ -435,33 +440,33 @@ function GuiMessage({
   if (item.kind === 'note') return <div className="gui-note">{item.text}</div>
   if (item.kind === 'error') return <GuiErrorLine text={item.text} />
   if (item.kind !== 'assistant') return null
+  // A FALA É UM COMPONENTE SÓ, do primeiro delta à mensagem parada (mockup de
+  // 2026-09-21): trocar o container ao terminar fazia o `rise` tocar de novo.
+  // A única exceção é o card JSON, que só existe com o texto completo.
   const revealing = item.live || item.animateFrom < item.text.length
-  if (revealing) {
+  const jsonCard = revealing ? null : parseGuiJsonCard(item.text)
+  if (jsonCard) {
     return (
-      <GuiStreamText
-        paneId={paneId}
-        text={item.text}
-        initialShown={item.animateFrom}
-        complete={!item.live}
-        onComplete={() => onRevealComplete(item.id, item.text.length)}
-        onProgress={onRevealProgress}
-      />
+      <div className="gui-msg dev">
+        <div className="gui-msg-text">
+          <GuiJsonCard formatted={jsonCard.formatted} />
+        </div>
+        {showCopy && item.text.trim() && <GuiMessageCopy markdown={item.text} />}
+      </div>
     )
   }
-  const jsonCard = parseGuiJsonCard(item.text)
   return (
-    <div className="gui-msg dev">
-      <div className="gui-msg-text">
-        {jsonCard ? (
-          <GuiJsonCard formatted={jsonCard.formatted} />
-        ) : (
-          <GuiMarkdown paneId={paneId} text={item.text} />
-        )}
-      </div>
-      {showCopy && item.text.trim() && (
-        <GuiMessageCopy markdown={item.text} />
-      )}
-    </div>
+    <GuiStreamText
+      paneId={paneId}
+      text={item.text}
+      initialShown={item.animateFrom}
+      complete={!item.live}
+      pace={pace}
+      showCopy={showCopy}
+      onComplete={() => onRevealComplete(item.id, item.text.length)}
+      onProgress={onRevealProgress}
+      onBusy={(busy) => onWriterBusy(item.id, busy)}
+    />
   )
 }
 
@@ -1789,7 +1794,23 @@ export default function GuiPane({
     return () => document.removeEventListener('mousedown', onDocDown)
   }, [openMenu])
 
-  const renderItems = useMemo(() => guiThreadRenderItems(visibleItems), [visibleItems])
+  // UM ESCRITOR POR CONVERSA (mockup aprovado em 2026-09-21): enquanto a fala da
+  // vez tem texto pendente na tela, tudo que vem DEPOIS dela no fio espera —
+  // falas, cartões de ferramenta e as decisões abaixo. O escritor avisa quando
+  // ainda tem trabalho (`onBusy`); a régua de quem é o escritor e do que fica
+  // retido é pura (`guiHeldItems`). Um stream que morreu no meio já revelou
+  // tudo que recebeu, então nunca segura um cartão.
+  const settings = useStore((s) => s.settings)
+  const writingPace = useMemo(() => guiWritingPaceOf(settings), [settings])
+  const [writerBusyId, setWriterBusyId] = useState<string | null>(null)
+  const onWriterBusy = useCallback((itemId: string, busy: boolean) => {
+    setWriterBusyId((current) => (busy ? itemId : current === itemId ? null : current))
+  }, [])
+  const writerBusy = writerBusyId !== null
+  const renderItems = useMemo(
+    () => guiThreadRenderItems(guiHeldItems(visibleItems, writerBusy)),
+    [visibleItems, writerBusy]
+  )
   const copyableAssistantId = useMemo(
     () =>
       guiCopyableAssistantId({
@@ -2133,10 +2154,12 @@ export default function GuiPane({
                   paneId={paneId}
                   item={item}
                   showCopy={item.kind === 'assistant' && item.id === copyableAssistantId}
+                  pace={writingPace}
                   onRevealComplete={(itemId, length) =>
                     finishGuiReveal(paneId, itemId, length)
                   }
                   onRevealProgress={keepPinnedToEnd}
+                  onWriterBusy={onWriterBusy}
                 />
               )
             )}
@@ -2189,7 +2212,7 @@ export default function GuiPane({
               </div>
             )}
 
-            {!inert && gui.planReview && (
+            {!inert && gui.planReview && !writerBusy && (
               <GuiPlanCard
                 paneId={paneId}
                 plan={gui.planReview.plan}
@@ -2198,7 +2221,7 @@ export default function GuiPane({
               />
             )}
 
-            {!inert && planProposalCard && (
+            {!inert && planProposalCard && !writerBusy && (
               <GuiPlanProposalCard
                 draft={planProposalCard.draft}
                 disabled={Boolean(gui.interactionSubmitting)}
@@ -2208,7 +2231,7 @@ export default function GuiPane({
               />
             )}
 
-            {!inert && gui.question && (
+            {!inert && gui.question && !writerBusy && (
               <GuiQuestionCard
                 key={gui.question.requestId}
                 questions={gui.question.questions}

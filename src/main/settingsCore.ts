@@ -40,6 +40,16 @@ export interface SynkoraPreferences {
    * ajuste — a prateleira, a biblioteca e o playbook autoral continuam valendo.
    */
   skillsAgentPull: boolean
+  /**
+   * A ESCRITA DO CHAT (pedido do dono em 2026-09-21, junto com o mockup do
+   * escritor único): a cadência é dele. Palavras por segundo na base (0 =
+   * instantâneo), o atraso máximo tolerado entre o texto recebido e o texto na
+   * tela, e se cada passo assenta com fade. A régua que consome isto mora em
+   * `renderer/guiStreamReveal.ts` (`guiWritingPaceOf`); as faixas são as mesmas.
+   */
+  chatWritingWordsPerSecond: number
+  chatWritingMaxLagMs: number
+  chatWritingFade: boolean
 }
 
 /** Estado completo, restrito ao processo principal. */
@@ -63,7 +73,20 @@ const DEFAULTS: SynkoraPreferences = {
   chatNotifyFinished: true,
   chatNotifyFailed: true,
   chatSoundsEnabled: true,
-  skillsAgentPull: true
+  skillsAgentPull: true,
+  chatWritingWordsPerSecond: 20,
+  chatWritingMaxLagMs: 1000,
+  chatWritingFade: true
+}
+
+/** Faixas da escrita do chat — espelho de `GUI_WRITING_*_RANGE` no renderer. */
+export const CHAT_WRITING_WORDS_PER_SECOND_RANGE = { min: 0, max: 60 } as const
+export const CHAT_WRITING_MAX_LAG_RANGE = { min: 300, max: 3000 } as const
+
+function clampInteger(value: unknown, range: { min: number; max: number }, fallback: number): number {
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed)) return fallback
+  return Math.max(range.min, Math.min(range.max, Math.round(parsed)))
 }
 
 function recordOf(value: unknown): Record<string, unknown> {
@@ -100,7 +123,18 @@ function sanitizePreferences(value: unknown): SynkoraPreferences {
     chatSoundsEnabled: source.chatSoundsEnabled !== false,
     // Ausente/torto = LIGADO: a ausência do campo é o documento de antes da
     // ADR-0010, e o padrão dela é o agente podendo puxar.
-    skillsAgentPull: source.skillsAgentPull !== false
+    skillsAgentPull: source.skillsAgentPull !== false,
+    chatWritingWordsPerSecond: clampInteger(
+      source.chatWritingWordsPerSecond,
+      CHAT_WRITING_WORDS_PER_SECOND_RANGE,
+      DEFAULTS.chatWritingWordsPerSecond
+    ),
+    chatWritingMaxLagMs: clampInteger(
+      source.chatWritingMaxLagMs,
+      CHAT_WRITING_MAX_LAG_RANGE,
+      DEFAULTS.chatWritingMaxLagMs
+    ),
+    chatWritingFade: source.chatWritingFade !== false
   }
 }
 

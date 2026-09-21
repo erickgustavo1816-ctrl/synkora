@@ -183,15 +183,22 @@ function linkifyGuiFileReferences(html: string): string {
 export default function GuiMarkdown({
   paneId,
   text,
-  className
+  className,
+  onPainted
 }: {
   paneId: string
   text: string
   className?: string
+  /** Chamado no MESMO efeito de layout, depois do patch de prefixo estável e
+   *  das imagens do cache: é a janela em que o escritor do chat pinta a cauda
+   *  (fade + caret) sem disputar o DOM com o markdown (guiRevealPaint.ts). */
+  onPainted?: (container: HTMLElement) => void
 }): React.JSX.Element {
   const workspaceContext = useContext(WorkspacePanelContext)
   const workspaceRef = useRef(workspaceContext)
   workspaceRef.current = workspaceContext
+  const onPaintedRef = useRef(onPainted)
+  onPaintedRef.current = onPainted
   const html = useMemo(() => {
     const raw = marked.parse(text, { async: false, gfm: true, breaks: true })
     const fileLinks = prepareGuiMarkdownFileLinks(raw)
@@ -258,6 +265,7 @@ export default function GuiMarkdown({
     // No MESMO efeito de layout, antes do quadro: o que o cache já sabe volta
     // pintado junto com o patch.
     paintInlineImages()
+    onPaintedRef.current?.(container)
   }, [html, paneId, paintInlineImages, closeImagePreview])
 
   useEffect(() => {
