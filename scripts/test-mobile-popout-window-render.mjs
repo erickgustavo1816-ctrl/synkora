@@ -33,7 +33,8 @@ test('two production phone routes render through restricted preloads in hidden i
   await writeFile(join(directory, 'index.html'), `<!doctype html><html lang="pt-BR"><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"><title>Synthetic detached phone</title><link rel="stylesheet" href="fixture.css"><div id="root"></div><script src="before.js"></script><script src="fixture.js"></script></html>`)
   await writeFile(join(directory, 'comparison.html'), '<!doctype html><html lang="pt-BR"><meta charset="utf-8"><style>body{margin:0;padding:26px;background:#dfe5ec;color:#263047;font:14px Consolas,monospace}h1{font-size:17px;margin:0 0 7px}p{margin:0 0 23px;font-size:11px}section{display:flex;align-items:flex-start;gap:38px;justify-content:center}figure{margin:0}figcaption{font-size:11px;margin-bottom:12px}img{display:block;max-height:690px;width:auto}</style><h1>Janelas independentes do aparelho</h1><p>Capturas de duas janelas reais do Electron · Android e iOS sintéticos · nenhuma execução de simulador Mac</p><section><figure><figcaption>Android · Pixel 7</figcaption></figure><figure><figcaption>iOS · iPhone 17</figcaption></figure></section></html>')
   const env = { ...process.env }; delete env.ELECTRON_RUN_AS_NODE
-  const child = spawn(require('electron'), [resolve('scripts/harness/mobilePhoneVisual.mjs'), directory], { env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
+  // Exact native-size assertions require unit scale, independent of host DPI.
+  const child = spawn(require('electron'), [resolve('scripts/harness/mobilePhoneVisual.mjs'), directory, '--force-device-scale-factor=1'], { env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
   t.after(() => { if (child.exitCode === null) child.kill() })
   let output = ''
   const collect = chunk => { output = (output + chunk).slice(-20000) }

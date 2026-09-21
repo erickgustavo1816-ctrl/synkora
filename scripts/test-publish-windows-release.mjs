@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { gunzipSync } from 'node:zlib'
 import test from 'node:test'
-import { publishWindowsRelease } from './publish-windows-release.mjs'
+import { githubGateway, publishWindowsRelease } from './publish-windows-release.mjs'
 
 const installer = 'Synkora-0.1.0-setup.exe'
 const sha256 = data => createHash('sha256').update(data).digest('hex')
@@ -35,11 +35,11 @@ function fixture(t, existingInstaller) {
       if (state.corruptDownload) data[0] ^= 1
       writeFileSync(destination, data)
     },
-    async createDraft() {
+    async createDraft(tag) {
       assert.equal(state.release, null, 'a release can only be created once')
       state.calls.push('create-draft')
       state.release = { draft: true, prerelease: false, html_url: 'https://example.invalid/release' }
-      return gateway.read()
+      return gateway.read(tag)
     },
     async upload(tag, file) {
       const name = basename(file)
@@ -54,8 +54,64 @@ function fixture(t, existingInstaller) {
       state.release.draft = false
     }
   }
-  return { state, local, run: () => publishWindowsRelease({ version: '0.1.0', outputDirectory, gateway }) }
+  return { state, local, gateway, run: () => publishWindowsRelease({ version: '0.1.0', outputDirectory, gateway }) }
 }
+
+// GitHub's tag endpoint only returns published releases. Authenticated listings
+// include drafts, including drafts left behind by an interrupted workflow.
+function readThroughGithub(f, { listError } = {}) {
+  const repository = 'erickgustavo1816-ctrl/synkora-releases'
+  const requests = []
+  const snapshot = () => f.state.release && {
+    ...f.state.release,
+    tag_name: 'v0.1.0',
+    assets: [...f.state.files].map(([name, data]) => ({ name, state: 'uploaded', size: data.length, digest: `sha256:${sha256(data)}` }))
+  }
+  f.gateway.read = githubGateway(repository, (command, args) => {
+    assert.equal(command, 'gh')
+    assert.equal(args[0], 'api')
+    requests.push(args)
+    const release = snapshot()
+    if (args[1] === `repos/${repository}/releases/tags/v0.1.0`) {
+      if (release && !release.draft) return JSON.stringify(release)
+      throw Object.assign(new Error('synthetic missing published release'), { stderr: 'HTTP 404' })
+    }
+    assert.equal(args[1], `repos/${repository}/releases?per_page=100`)
+    assert.ok(args.includes('--paginate'))
+    assert.ok(args.includes('--slurp'))
+    if (listError) throw Object.assign(new Error('synthetic release listing failure'), { stderr: `HTTP ${listError}` })
+    return JSON.stringify([[{ tag_name: 'v9.9.9', draft: false, assets: [] }], release ? [release] : []])
+  }).read
+  return requests
+}
+
+test('GitHub publication verifies a new draft when the tag endpoint returns 404', async t => {
+  const f = fixture(t)
+  const requests = readThroughGithub(f)
+  const result = await f.run()
+  assert.equal(f.state.release.draft, false)
+  assert.deepEqual(f.state.calls, ['create-draft', `upload:${installer}`, `upload:${installer}.blockmap`, 'upload:latest.yml', 'publish'])
+  assert.equal(result.preservedInstaller, false)
+  assert.ok(requests.some(args => args.includes('--paginate')))
+})
+
+test('GitHub publication resumes a draft on a later page and preserves its installer', async t => {
+  const published = Buffer.from('synthetic-draft-installer\n'.repeat(500))
+  const f = fixture(t, published)
+  f.state.release.draft = true
+  readThroughGithub(f)
+  const result = await f.run()
+  assert.equal(result.preservedInstaller, true)
+  assert.deepEqual(f.state.calls, [`upload:${installer}.blockmap`, 'upload:latest.yml', 'publish'])
+  assert.deepEqual(f.state.files.get(installer), published)
+})
+
+test('GitHub publication stops before writes when draft lookup is denied', async t => {
+  const f = fixture(t)
+  readThroughGithub(f, { listError: '403' })
+  await assert.rejects(f.run, /HTTP 403/)
+  assert.deepEqual(f.state.calls, [])
+})
 
 test('new release is created once as a draft and published after all verified assets', async t => {
   const f = fixture(t)

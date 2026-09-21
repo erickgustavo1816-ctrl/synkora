@@ -69,7 +69,8 @@ if (process.versions.electron) {
       format: 'esm', external: ['electron'], outfile: join(directory, 'host.mjs') })
     const environment = { ...process.env }
     delete environment.ELECTRON_RUN_AS_NODE
-    const child = spawn(createRequire(import.meta.url)('electron'), [fileURLToPath(import.meta.url), directory],
+    // Compare exact RGB values independently of the host monitor color profile.
+    const child = spawn(createRequire(import.meta.url)('electron'), [fileURLToPath(import.meta.url), directory, '--force-color-profile=srgb'],
       { env: environment, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
     t.after(() => { if (child.exitCode === null) child.kill() })
     let output = ''

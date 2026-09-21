@@ -94,11 +94,11 @@ export async function publishWindowsRelease({ version, outputDirectory, gateway 
   return { tag, url: release.html_url, uploaded, preservedInstaller: assets.has(installer) }
 }
 
-function githubGateway(repository) {
+export function githubGateway(repository, execute = execFileSync) {
   assert.equal(repository, 'erickgustavo1816-ctrl/synkora-releases', 'Unexpected publication destination')
   function gh(args) {
     try {
-      return execFileSync('gh', args, { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
+      return execute('gh', args, { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
     } catch (error) {
       const status = /HTTP (\d{3})/.exec(String(error.stderr ?? ''))?.[1]
       const failure = new Error(`GitHub ${args[0]} ${args[1]} failed${status ? ` (HTTP ${status})` : ''}; inspect Actions access and retry the workflow`)
@@ -109,7 +109,11 @@ function githubGateway(repository) {
   return {
     async read(tag) {
       try { return JSON.parse(gh(['api', `repos/${repository}/releases/tags/${tag}`])) }
-      catch (error) { if (error.httpStatus === '404') return null; throw error }
+      catch (error) { if (error.httpStatus !== '404') throw error }
+      // The tag endpoint only exposes published releases. Authenticated listings
+      // also include drafts, so creation and interrupted uploads can be verified.
+      const pages = JSON.parse(gh(['api', `repos/${repository}/releases?per_page=100`, '--paginate', '--slurp']))
+      return pages.flat().find(release => release.tag_name === tag) ?? null
     },
     async download(tag, name, destination) {
       gh(['release', 'download', tag, '--repo', repository, '--pattern', name, '--output', destination, '--clobber'])
