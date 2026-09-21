@@ -14,6 +14,7 @@ import { type BacklogItemType, type Version } from '../backlog'
 import { ensureReleaseMission } from '../releaseChat'
 import type { ReleaseRecord } from '../releasesStore'
 import type { MainContext } from '../mainContext'
+import { readProjectManifestVersion } from '../projectManifestVersion'
 
 /**
  * Resposta do `backlog:createVersion`. Ela deixou de ser `Version | null`
@@ -108,6 +109,14 @@ export function registerBacklogIpc(ctx: MainContext, extras: BacklogIpcExtras): 
   ipcMain.handle('backlog:listVersions', (_e, projectId: string) =>
     backlog.listVersions(projectId)
   )
+
+  // A versão que o produto JÁ TEM, lida do package.json da pasta do projeto
+  // (a main). As telas de versão contam a partir dela em vez de pedir o número
+  // ao dono. `null` = sem manifesto/sem `version`: a tela pergunta como antes.
+  ipcMain.handle('backlog:manifestVersion', (_e, projectId: string): string | null => {
+    const project = projects.get(projectId)
+    return project ? readProjectManifestVersion(project.path) : null
+  })
 
   ipcMain.handle(
     'backlog:createVersion',

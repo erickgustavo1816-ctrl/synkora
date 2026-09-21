@@ -1371,6 +1371,11 @@ const api = {
   backlog: {
     listVersions: (projectId: string): Promise<Version[]> =>
       ipcRenderer.invoke('backlog:listVersions', projectId),
+    /** O `version` do package.json da pasta do projeto (a main) — o número que
+     *  o produto já lançou; `null` sem manifesto. As telas de versão sugerem
+     *  a partir dele em vez de pedir o número ao dono. */
+    manifestVersion: (projectId: string): Promise<string | null> =>
+      ipcRenderer.invoke('backlog:manifestVersion', projectId),
     /** Devolve a VERSÃO criada ou o MOTIVO da recusa (nome vazio, duplicado,
      *  abaixo/igual à lançada): o número passou a ser digitável na lateral de
      *  Versões, e um clique que não cria nada precisa dizer por quê. */

@@ -56,6 +56,9 @@ export default function NewMissionModal({
   // submit, antes da missão. Estado ÚNICO: as sugestões preenchem o mesmo campo
   // que o dono edita, então "escolhido" e "digitado" nunca divergem.
   const [firstVersionName, setFirstVersionName] = useState('')
+  // A versão que o produto JÁ TEM (package.json da pasta do projeto): as
+  // sugestões da primeira versão contam a partir dela em vez de V1.0.
+  const [manifestVersion, setManifestVersion] = useState<string | null>(null)
   // `createVersion` PERSISTE: sem trava, o duplo clique no botão escrevia duas
   // versões (a segunda recusada por nome duplicado, a missão perdida no meio).
   const [submitting, setSubmitting] = useState(false)
@@ -90,7 +93,7 @@ export default function NewMissionModal({
     !versionChoicesError &&
     eligibleVersions.length === 0
 
-  const firstVersionOptions = versionSuggestions(versions)
+  const firstVersionOptions = versionSuggestions(versions, manifestVersion)
   const ownNumberAllowed = allowsOwnVersionNumber(versions)
   const versionSelectorDisabled =
     planning || versionDataLoading || Boolean(versionChoicesError) || eligibleVersions.length === 0
@@ -125,6 +128,12 @@ export default function NewMissionModal({
     }
     let current = true
     setVersionsLoading(true)
+    // preload antigo (app sem reiniciar) não tem a leitura: segue sem ela
+    void backlog.manifestVersion?.(projectId)
+      .then((version) => {
+        if (current) setManifestVersion(version)
+      })
+      .catch(() => undefined)
     void backlog
       .listVersions(projectId)
       .then((list) => {
@@ -380,7 +389,9 @@ export default function NewMissionModal({
             )}
             <span className="mission-version-note" aria-live="polite">
               {ownNumberAllowed
-                ? 'este projeto ainda não tem versão: escolha onde ele começa, ou escreva o número que ele já tem'
+                ? manifestVersion
+                  ? `o package.json do projeto está em ${manifestVersion}: as sugestões partem dela`
+                  : 'este projeto ainda não tem versão: escolha onde ele começa, ou escreva o número que ele já tem'
                 : 'nenhuma versão aberta: a missão nasce na que você escolher aqui'}
             </span>
           </div>

@@ -254,3 +254,70 @@ test('o chip escolhido da primeira versão veste ink — a seleção se vê', as
   assert.match(block, /background:\s*var\(--ink\)/u, 'o fundo do escolhido é ink')
   assert.match(block, /color:\s*var\(--paper\)/u, 'o texto do escolhido é papel')
 })
+
+// ————— A VERSÃO DO MANIFESTO (ordem do dono, 2026-09-21) —————
+// "o Synkora deveria ter uma forma de já puxar qual a versão que o projeto
+// está, eu ter que colocar manualmente é muito ruim". O `version` do
+// package.json da pasta do projeto é o número JÁ LANÇADO (decisão do dono na
+// missão Bug): entra na conta como versão lançada, e as sugestões partem dele.
+
+test('manifesto no projeto virgem: as sugestões partem dele, com o V da casa, e dizem de onde vieram', async () => {
+  const { versionSuggestions } = await rule()
+  const options = versionSuggestions([], '1.20.0')
+  assert.deepEqual(options.map((o) => o.label), ['V1.20.1', 'V1.21', 'V2.0'])
+  assert.ok(options.every((o) => o.kind.includes('1.20.0 do package.json')))
+  assert.deepEqual(versionSuggestions([], '0.1.1').map((o) => o.label), ['V0.1.2', 'V0.2', 'V1.0'])
+})
+
+test('manifesto na frente do Synkora vence; atrás ou empatado, o nome cadastrado manda (e o prefixo dele)', async () => {
+  const { versionSuggestions } = await rule()
+  assert.deepEqual(
+    versionSuggestions([version('V1.2', 'lancada')], '1.5.0').map((o) => o.label),
+    ['V1.5.1', 'V1.6', 'V2.0']
+  )
+  assert.deepEqual(
+    versionSuggestions([version('1.2', 'lancada')], '1.5.0').map((o) => o.label),
+    ['1.5.1', '1.6', '2.0'],
+    'sem V nos nomes do projeto, a sugestão também não ganha um'
+  )
+  const behind = versionSuggestions([version('V1.20', 'lancada')], '1.3.0')
+  assert.deepEqual(behind.map((o) => o.label), ['V1.20.1', 'V1.21', 'V2.0'])
+  assert.ok(behind.every((o) => !o.kind.includes('package.json')), 'atrás, o manifesto nem é citado')
+  assert.deepEqual(
+    versionSuggestions([version('V0.1.2', 'lancada')], '0.1.2').map((o) => o.label),
+    ['V0.1.3', 'V0.2', 'V1.0']
+  )
+})
+
+test('manifesto ilegível ou ausente não muda nada', async () => {
+  const { versionSuggestions } = await rule()
+  assert.deepEqual(versionSuggestions([], null).map((o) => o.label), ['V1.0', 'V0.1.0', 'V0.0.1'])
+  assert.deepEqual(versionSuggestions([], undefined).map((o) => o.label), ['V1.0', 'V0.1.0', 'V0.0.1'])
+  assert.deepEqual(versionSuggestions([], '1.0.0-beta.3').map((o) => o.label), ['V1.0', 'V0.1.0', 'V0.0.1'])
+  assert.deepEqual(versionSuggestions([version('MVP')], 'x').map((o) => o.label), ['V1.0', 'V0.1.0', 'V0.0.1'])
+})
+
+test('a linha "versão atual na main": o manifesto é a atual sem lançamento; na frente, avisa; atrás, cala', async () => {
+  const { manifestVersionNote } = await rule()
+  assert.equal(manifestVersionNote([], '1.20.0'), '1.20.0 · lida do package.json')
+  assert.equal(manifestVersionNote([version('V1.21')], '1.20.0'), '1.20.0 · lida do package.json', 'aberta não é lançada')
+  assert.equal(manifestVersionNote([version('V1.2', 'lancada')], '1.5.0'), 'package.json já está em 1.5.0')
+  assert.equal(manifestVersionNote([version('V1.5', 'lancada')], '1.5.0'), null)
+  assert.equal(manifestVersionNote([version('V1.6', 'lancada')], '1.5.0'), null)
+  assert.equal(manifestVersionNote([], null), null)
+  assert.equal(manifestVersionNote([], 'MVP'), null)
+})
+
+test('as duas telas passam o manifesto para a régua e o leem pelo preload', async () => {
+  const modal = withoutComments(await source('src/renderer/src/components/NewMissionModal.tsx'))
+  assert.match(modal, /versionSuggestions\(versions, manifestVersion\)/u)
+  assert.match(modal, /backlog\.manifestVersion\?\.\(projectId\)/u)
+  const view = withoutComments(await source('src/renderer/src/components/BacklogView.tsx'))
+  assert.match(view, /versionSuggestions\(versions, manifestVersion\)/u)
+  assert.match(view, /manifestVersionNote\(versions, manifestVersion\)/u)
+  assert.match(view, /backlog\.manifestVersion\?\.\(projectId\)/u)
+  const preload = await source('src/preload/index.ts')
+  assert.match(preload, /ipcRenderer\.invoke\('backlog:manifestVersion', projectId\)/u)
+  const ipc = await source('src/main/ipc/backlog.ts')
+  assert.match(ipc, /ipcMain\.handle\('backlog:manifestVersion'/u)
+})

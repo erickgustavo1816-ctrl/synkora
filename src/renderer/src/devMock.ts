@@ -458,6 +458,7 @@ export function installDevMock(): void {
     },
     backlog: {
       listVersions: async () => [],
+      manifestVersion: async () => null,
       versionReleases: async () => [],
       projectReleases: async () => [],
       createVersion: async () => ({ ok: false, error: 'preview: sem backlog no browser' }),
