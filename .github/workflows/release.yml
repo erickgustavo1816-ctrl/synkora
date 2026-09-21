@@ -50,7 +50,7 @@ jobs:
           "version=$version" >> $env:GITHUB_OUTPUT
 
       - name: Testar consulta de release
-        run: node --test scripts/test-release-workflow.mjs
+        run: node --test scripts/test-release-workflow.mjs scripts/test-publish-windows-release.mjs
 
       - name: Conferir release existente
         id: release
@@ -69,10 +69,16 @@ jobs:
           if (($repoJson | ConvertFrom-Json).private) {
             throw 'synkora-releases deve ser público para o app consultar as atualizações.'
           }
-          $probe = gh release view "v$env:APP_VERSION" -R $env:RELEASES_REPO --json tagName 2>&1
+          $probe = gh release view "v$env:APP_VERSION" -R $env:RELEASES_REPO --json tagName,assets 2>&1
           if ($LASTEXITCODE -eq 0) {
-            Write-Output 'release já publicada'
-            'exists=true' >> $env:GITHUB_OUTPUT
+            $existing = ($probe -join "`n") | ConvertFrom-Json
+            $installer = @($existing.assets | Where-Object { $_.name -eq "Synkora-$env:APP_VERSION-setup.exe" })
+            if ($installer.Count -gt 0) {
+              Write-Output 'instalador já publicado; conferir os metadados sem substituir o arquivo'
+              'exists=true' >> $env:GITHUB_OUTPUT
+            } else {
+              'exists=false' >> $env:GITHUB_OUTPUT
+            }
             exit 0
           }
           if (($probe -join "`n") -notmatch '(?i)(release not found|HTTP 404)') {
@@ -120,15 +126,19 @@ jobs:
             throw 'Não foi possível inicializar synkora-releases. Confira Contents: Read and write no token.'
           }
 
-      - name: Empacotar e publicar release
-        id: publish
+      - name: Empacotar instalador
+        id: package
         if: steps.release.outputs.exists == 'false'
-        run: npx electron-builder --win --publish always
+        run: npx electron-builder --win --publish never
+
+      - name: Publicar e conferir os três arquivos
+        id: publish
+        run: node scripts/publish-windows-release.mjs
         env:
           GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
 
       - name: Guardar instalador para diagnóstico
-        if: ${{ !cancelled() && steps.release.outputs.exists == 'false' && steps.publish.outcome != 'skipped' }}
+        if: ${{ !cancelled() && steps.publish.outcome != 'skipped' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: synkora-windows-${{ steps.version.outputs.version }}
@@ -136,5 +146,8 @@ jobs:
             release/*.exe
             release/*.blockmap
             release/latest.yml
+            release/publication/Synkora-*-setup.exe
+            release/publication/Synkora-*-setup.exe.blockmap
+            release/publication/latest.yml
           retention-days: 7
           if-no-files-found: warn

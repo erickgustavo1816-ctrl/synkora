@@ -39,11 +39,14 @@ O repositório privado precisa ter o GitHub Actions habilitado.
 
 O gatilho é aumentar `version` no `package.json` e levar essa mudança à `main`.
 O fluxo de release do Synkora já faz esse aumento de versão. O workflow roda a
-cada push, mas só compila e publica quando ainda não existe a tag `v<versão>`
-em `synkora-releases`.
+cada push, mas só compila quando o instalador dessa versão ainda não existe
+em `synkora-releases`. O empacotamento usa `--publish never`; o envio cria um
+único rascunho, anexa os três arquivos, confere seus hashes e só então publica.
 
-Se a release já existe, a execução termina com **release já publicada**.
-Para tentar novamente uma versão que ainda não foi publicada, use
+Se o instalador já existe, ele é preservado. O workflow confere os metadados
+e completa somente anexos ausentes, calculados a partir do próprio instalador
+publicado. Repetir uma publicação completa não modifica os arquivos.
+Para retomar uma publicação interrompida, use
 **Actions → Publicar instalador Windows → Run workflow**, na branch `main`.
 Use versões estáveis, como `1.2.3`, para o canal automático `latest.yml`.
 
@@ -61,10 +64,12 @@ Use versões estáveis, como `1.2.3`, para o canal automático `latest.yml`.
 - **latest.yml:** é o índice que informa ao app a versão e o instalador a
   baixar. Ele precisa estar na release pública e corresponder ao `.exe`.
   O `.blockmap` ajuda a baixar apenas as partes necessárias da atualização.
-- **Publicação incompleta:** se a tag já existe, executar novamente não troca
-  seus arquivos. Confira o erro no Actions e publique a correção com uma versão
-  maior pelo fluxo normal de release.
+- **Publicação incompleta:** executar novamente pode completar `.blockmap` e
+  `latest.yml` ausentes sem trocar o instalador ou a tag. Metadados existentes
+  que não correspondem ao instalador bloqueiam o envio; uma correção que exige
+  trocar arquivos publicados precisa de uma versão nova escolhida pelo dono.
 
 A configuração do destino fica em `electron-builder.yml`: provedor `github`,
 proprietário `erickgustavo1816-ctrl`, repositório `synkora-releases` e
-`releaseType: release`. O workflow usa esse destino ao empacotar.
+`releaseType: release`. O feed empacotado usa esse destino; o envio sequencial
+fica em `scripts/publish-windows-release.mjs` e confere o mesmo repositório.

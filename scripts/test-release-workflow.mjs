@@ -38,7 +38,10 @@ function gh {
   }
   if ($env:RELEASE_TEST_CASE -eq 'existing') {
     $global:LASTEXITCODE = 0
-    Write-Output '{"tagName":"v0.1.0"}'
+    Write-Output '{"tagName":"v0.1.0","assets":[{"name":"Synkora-0.1.0-setup.exe"}]}'
+  } elseif ($env:RELEASE_TEST_CASE -eq 'empty-release') {
+    $global:LASTEXITCODE = 0
+    Write-Output '{"tagName":"v0.1.0","assets":[]}'
   } elseif ($env:RELEASE_TEST_CASE -eq 'missing') {
     $global:LASTEXITCODE = 1
     Write-Output 'release not found'
@@ -99,6 +102,17 @@ test('an existing release is skipped successfully', { skip: !powershell && 'Powe
   const result = runCheck('existing')
   assert.equal(result.status, 0, result.stderr)
   assert.equal(result.output, 'exists=true')
+})
+
+test('an empty release still builds its missing installer', { skip: !powershell && 'PowerShell is unavailable' }, () => {
+  const result = runCheck('empty-release')
+  assert.equal(result.status, 0, result.stderr)
+  assert.equal(result.output, 'exists=false')
+})
+
+test('packaging does not race to create a release for each artifact', () => {
+  assert.match(workflow, /run: npx electron-builder --win --publish never/)
+  assert.doesNotMatch(workflow, /run: npx electron-builder --win --publish always/)
 })
 
 for (const scenario of ['release-error', 'repository-error', 'private-repository', 'missing-token']) {
