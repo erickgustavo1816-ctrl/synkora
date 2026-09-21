@@ -324,7 +324,7 @@ test('real MCP bearer scopes mobile tools, validates actions and routes inline s
   assert.equal(f.calls.length, before)
   assert.equal((await client.callTool({ name: 'mobile_action', arguments: { missionId: 'other-mission', sessionId: 'session-a', action: { type: 'tap', x: 0.5, y: 0.5 } } })).isError, true)
   assert.equal(f.calls.length, before)
-  for (const [label, patch] of [['planner', { role: 'gui-planner' }], ['release', { role: 'gui-release' }], ['reviewer', { paneId: 'gui-reviewer-a1111111' }]]) {
+  for (const [label, patch] of [['planner', { role: 'gui-planner' }], ['reviewer', { paneId: 'gui-reviewer-a1111111' }]]) {
     const token = `synthetic-${label}-token`
     hub.registerPane(token, { ...f.identity, paneId: `gui-dev-${label}`, ...patch })
     const other = await open(token, `mobile-${label}`)

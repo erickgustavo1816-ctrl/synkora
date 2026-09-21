@@ -1109,7 +1109,9 @@ test('release_save/release_push: catálogo real, validação de entrada e identi
   const identity = { paneId: 'gui-dev-aabbccdd', projectId: 'p-release', missionId: 'm-release', role: 'gui-release', cwd: root }
   hub.registerPane('synthetic-release-token', identity)
   const client = await connect(t, url, 'synthetic-release-token', 'release-corrections')
-  assert.deepEqual((await client.listTools()).tools.map((tool) => tool.name).sort(), [...RELEASE_TOOLS, ...LSP_TOOLS, ...CONTEXT_READ].sort())
+  assert.deepEqual((await client.listTools()).tools.map((tool) => tool.name).sort(), [...RELEASE_TOOLS,
+    'release_missions', 'release_mission_update', 'release_mission_remove', ...PLAN_TOOLS, ...HELPER_TOOLS,
+    ...LSP_TOOLS, ...CONTEXT_WRITE, ...SKILL_TOOLS, ...BROWSER_TOOLS, ...MOBILE_TOOLS].sort())
   const input = { requestId: 'fix-one', expectedHead: 'a'.repeat(40), files: ['src/gate.ts'],
     summary: 'Repair gate', reason: 'Synthetic bug', validation: 'Focused synthetic test passed' }
   const invalid = await client.callTool({ name: 'release_save', arguments: { ...input, files: [] } })

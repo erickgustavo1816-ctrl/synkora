@@ -1142,8 +1142,10 @@ test('o ceifar por projeto pega o planejamento e NUNCA um chat de missão', () =
 test('R38 — o contrato do release é régua, nunca constituição', () => {
   const contract = guiReleaseSystemPrompt()
   assert.ok(contract.length > 200, 'contrato vazio demais')
-  assert.ok(contract.length < 5600, `o contrato do release virou constituição (${contract.length})`)
+  assert.ok(contract.length < 16000, `o contrato do release virou constituição (${contract.length})`)
   assert.match(contract, /PT-BR/u, 'sem a regra do idioma')
+  assert.match(contract, /pulled skills persist after release_done/u, 'o fecho não limpa a pasta compartilhada')
+  assert.match(contract, /skill_discard only for your own unused pulls/u, 'o descarte deve preservar outras conversas')
 })
 
 test('o planejador PROPÕE o plano, não executa produto nem cria missão', () => {
@@ -1238,7 +1240,7 @@ test('o planejador PROPÕE o plano, não executa produto nem cria missão', () =
 
 /** A descrição que o CLI lê de uma tool do catálogo MCP (o texto, nunca o zod). */
 function toolDescription(source, tool) {
-  const at = source.indexOf(`'${tool}',`)
+  const at = source.search(new RegExp(`server\\.registerTool\\(\\s*'${tool}',`, 'u'))
   if (at < 0) return ''
   return source.slice(at).match(/description:\s*\n?\s*'((?:[^'\\]|\\.)*)'/u)?.[1] ?? ''
 }
@@ -1252,7 +1254,7 @@ test('declarar dependência é PARTE do planejamento — persona e as duas tools
   assert.match(contract, /finished/iu, 'a persona não diz o que é depender: estar PRONTA antes')
   assert.match(contract, /parallel/iu, 'a persona não diz para que a dependência serve')
 
-  const mcp = readFileSync(new URL('../src/main/mcpServer.ts', import.meta.url), 'utf8')
+  const mcp = readFileSync(new URL('../src/main/planToolCatalog.ts', import.meta.url), 'utf8')
   for (const tool of ['propose_plan', 'update_plan']) {
     const description = toolDescription(mcp, tool)
     assert.ok(description.length > 100, `${tool} sem descrição`)
@@ -1282,7 +1284,7 @@ test('o `context` de cada item é o MAPA DA FATIA — persona e as tools de plan
   assert.match(contract, /VERBATIM into the briefing/u, 'a persona não diz para onde o texto viaja')
   assert.match(contract, /re-deriving it from zero/iu, 'a persona não diz o custo de omitir')
 
-  const mcp = readFileSync(new URL('../src/main/mcpServer.ts', import.meta.url), 'utf8')
+  const mcp = readFileSync(new URL('../src/main/planToolCatalog.ts', import.meta.url), 'utf8')
   const describes = contextFieldDescribes(mcp)
   assert.ok(describes.length >= 3, `o campo context aparece descrito ${describes.length}x — esperava as 3 aparições (propose_plan.items, update_plan.items, update_plan.addItems)`)
   // FONTE ÚNICA: as três apontam para a MESMA constante — descrição divergente
@@ -1795,14 +1797,9 @@ test('o planejador dimensiona o trabalho ANTES de planejá-lo (ADR-0011)', () =>
   }
 })
 
-test('quem não PRODUZ não recebe harness nem direção de UI: reviewer e release intocados', () => {
-  // Decisão registrada no design de 2026-09-08 (a mesma de 08/29, com a lei
-  // fora): o bloco só vai a quem produz. O reviewer lê diff e não edita produto;
-  // o release sobe a versão pelas duas ferramentas dele. Dar-lhes um playbook
-  // seria contradizer o próprio contrato de cada um.
+test('reviewer não recebe harness nem direção de UI', () => {
   for (const [nome, prompt] of [
-    ['reviewer', guiMissionSystemPrompt('reviewer')],
-    ['release', guiReleaseSystemPrompt()]
+    ['reviewer', guiMissionSystemPrompt('reviewer')]
   ]) {
     assert.equal(skillsSection(prompt), undefined, `${nome}: recebeu o bloco do harness`)
     assert.doesNotMatch(prompt, /impeccable/iu, `${nome}: recebeu a direção de UI`)
@@ -1981,15 +1978,10 @@ test('a página é conteúdo NÃO-CONFIÁVEL: nem segredo entra nela, nem ordem 
   }
 })
 
-test('quem não TESTA UI não recebe o browser: reviewer, planejador e release intocados', () => {
-  // O reviewer lê diff e não roda o produto; o planejador não executa produto; o
-  // release sobe a versão pelas duas ferramentas dele. O catálogo do MCP não
-  // lhes serve as tools `browser_*` (cerca da fatia H2) — prometê-las aqui seria
-  // mandá-los procurar ferramenta que não existe.
+test('reviewer e planejador não recebem browser', () => {
   for (const [nome, prompt] of [
     ['reviewer', guiMissionSystemPrompt('reviewer')],
-    ['planner', guiPlanningSystemPrompt()],
-    ['release', guiReleaseSystemPrompt()]
+    ['planner', guiPlanningSystemPrompt()]
   ]) {
     assert.equal(browserSection(prompt), undefined, `${nome}: recebeu o bloco do browser`)
     assert.doesNotMatch(prompt, /browser_/u, `${nome}: recebeu tool de browser no contrato`)

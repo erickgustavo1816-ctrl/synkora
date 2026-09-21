@@ -19,10 +19,8 @@
 import { app, ipcMain } from 'electron'
 import { join } from 'path'
 import { randomUUID } from 'crypto'
-import { existsSync, unlinkSync } from 'fs'
+import { existsSync } from 'fs'
 import {
-  ensureSynkoraGitExcludes,
-  removeWorktreeAndBranch,
   type MissionCommit,
   type MissionCommitPatch,
   type MissionWorkspaceSummary
@@ -37,7 +35,6 @@ import {
   guiMissionPaneId,
   guiSeatNeedsExecutorReset,
   guiPlanningFirstPrompt,
-  isGuiMissionPaneId,
   isGuiMissionRole,
   missionTypeOf,
   resumeSessionIdFor,
@@ -47,9 +44,7 @@ import {
   type GuiMissionWorkspace
 } from '../guiMissionContracts'
 import { planDependenciesOfMission } from '../plans'
-// SKILLS 3.0 (ADR-0010): o harness EFÊMERO do chat de planejamento sai na
-// conclusão — é o único desfecho dele, porque planejamento não tem worktree.
-import { discardAgentSkills } from '../skillsAgentSync'
+import { buildMissionLifecycle, type MissionLifecycle, type MissionMetadataPatch } from '../missionLifecycle'
 import {
   isGuiPermissionMode,
   rememberedGuiExecutorValue,
@@ -75,6 +70,7 @@ import type { MaestroEngine } from '../maestroEngine'
  * outros ipc/*). Os dois engines viajam inteiros; o lado maestro do
  * paneSpec (budget de resume + método de planejamento) vem do maestroEngine. */
 export interface MissionsIpcExtras {
+  lifecycle?: MissionLifecycle
   projectContextBriefing?(projectId: string, missionId: string): string
   engine: MissionEngine
   maestroEngine: Pick<
@@ -165,11 +161,9 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
     plans,
     backlog,
     maestro,
-    integrationQueue,
     ptys,
     blackbox,
     hub,
-    syncBoard,
     orchPaneId,
     unregisterPane,
   } = ctx
@@ -178,25 +172,18 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
     orchKey,
     emitBacklogChanged,
     staggerPaneSpawn,
-    guiSessions,
-    killMissionGuiPanes
+    guiSessions
   } = extras
   const { maestroResumeOverBudget, skipMaestroResume } = extras.maestroEngine
-  // Seat/archive updates retain their synchronous receipt; deletion below awaits cleanup.
-  const closeGuiPanesInBackground = (missionId: string): void => {
-    void Promise.resolve(killMissionGuiPanes(missionId)).catch(() => {
-      blackbox.record({ cat: 'app', event: 'mission-process-cleanup-failed', actor: 'harness', ids: { missionId } })
-    })
-  }
+  const lifecycle = extras.lifecycle ?? buildMissionLifecycle(ctx, extras)
+  const closeGuiPanesInBackground = lifecycle.closeInBackground
   const {
     missionsWithIntegration,
     createMissionImpl,
     emitMissionsChanged,
     ensureMissionWorktree,
     missionWorkspacePath,
-    scheduleIntegrationDrain,
     startMissionIntegration,
-    stopMissionExecution,
   } = engine
 
   /** Costura do MCP do planejador: token por pane, porta viva do ctx, e o
@@ -964,126 +951,7 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
     }
   )
 
-  ipcMain.handle(
-    'missions:update',
-    (e, id: string, patch: { title?: string; goal?: string; scope?: string; status?: 'ativa' | 'arquivada' | 'concluida' }) => {
-      const mission = missions.get(id)
-      if (!mission) return null
-      // status transita entre ativa e arquivada pela UI (integração tem caminho
-      // próprio; concluída é terminal). EXCEÇÃO (ordem do dono, 2026-08-17):
-      // missão de PLANEJAMENTO conclui num clique — sem branch, sem fila e sem
-      // merge, "concluir" é só encerrar bonito: a missão sai da coluna, o
-      // plano/ fica no repo e a aba do plano segue no mapa. Missão de dev
-      // continua concluindo SÓ pela integração.
-      if (patch.status && mission.status !== 'ativa' && mission.status !== 'arquivada')
-        delete patch.status
-      if (patch.status === 'concluida' && missionTypeOf(mission) !== 'planejamento')
-        delete patch.status
-      if (patch.status && patch.status !== mission.status) {
-        if (patch.status === 'arquivada') {
-          const queued = integrationQueue.getByMission(mission.id)
-          if (queued?.state === 'merging') {
-            hub.publish({
-              projectId: mission.projectId,
-              kind: 'error',
-              text: `não arquivei "${mission.title}": ela está no instante de merge da cabeça da fila`,
-              actor: 'harness'
-            })
-            return mission
-          }
-        }
-        if (patch.status === 'arquivada') {
-          const queued = integrationQueue.getByMission(mission.id)
-          if (queued) {
-            integrationQueue.cancel(mission.id)
-            scheduleIntegrationDrain(mission.projectId)
-          }
-          stopMissionExecution(
-            mission.projectId,
-            mission.id,
-            'execução pausada porque a missão foi arquivada; ao reativar, revise o transcript e rode o card novamente'
-          )
-        }
-      }
-      const updated = missions.update(id, patch)
-      if (updated) {
-        // Missão ARQUIVADA não fica com orquestrador vivo (bug real: o pane
-        // seguia aberto com o CLI rodando): mata o pty e desarma o hub —
-        // reativar respawna via resume (tuiSessionId persiste no maestroStore).
-        if (patch.status === 'arquivada' || patch.status === 'concluida') {
-          const paneId = orchPaneId(updated.projectId, id)
-          if (ptys.has(paneId)) ptys.kill(paneId)
-          unregisterPane(paneId)
-          // 2.0: dev/reviewer/ajudantes da missão encerram junto (a conversa
-          // fica gravada; concluída abre congelada, arquivada reabre no resume).
-          closeGuiPanesInBackground(id)
-        }
-        // SKILLS 3.0 (ADR-0010): a skill que o agente puxou é EFÊMERA — ela morre
-        // com o worktree. O PLANEJAMENTO não tem worktree (o chat dele mora na
-        // RAIZ do projeto), então a conclusão é o único momento em que ela pode
-        // sair: sem isto, o playbook de um planejamento de agosto ficaria no
-        // cardápio de toda missão de dev criada depois. Só a CONCLUSÃO limpa —
-        // arquivar é reversível, e reativar sem o harness seria perder trabalho.
-        //
-        // NUNCA derruba a conclusão: o gesto do dono já aconteceu, e uma pasta
-        // que resistiu (editada à mão, link) é uma linha no diário, não um erro na
-        // tela. O rastro (`.synkora/harness.json`) FICA — é o que conta ao dono o
-        // que aquele planejamento usou.
-        if (patch.status === 'concluida') {
-          const projectPath = projects.get(updated.projectId)?.path
-          if (projectPath) {
-            try {
-              const swept = discardAgentSkills(projectPath)
-              for (const skillId of swept.removed) {
-                blackbox.record({
-                  cat: 'mcp',
-                  event: 'skill-discarded',
-                  actor: 'harness',
-                  ids: { projectId: updated.projectId, missionId: id },
-                  detail: { id: skillId, reason: 'planejamento-concluido' }
-                })
-              }
-              if (swept.kept.length > 0) {
-                blackbox.record({
-                  cat: 'mcp',
-                  event: 'skill-discard-kept',
-                  actor: 'harness',
-                  ids: { projectId: updated.projectId, missionId: id },
-                  detail: { ids: swept.kept.slice(0, 12), reason: 'planejamento-concluido' }
-                })
-              }
-            } catch (error) {
-              blackbox.record({
-                cat: 'mcp',
-                event: 'skill-discard-failed',
-                actor: 'harness',
-                ids: { projectId: updated.projectId, missionId: id },
-                err: error instanceof Error ? error.message : String(error)
-              })
-            }
-          }
-        }
-        // Arquivar/reativar é MARCO — o PM comenta (decisão do usuário: ele
-        // fala em concluída/integrada/arquivada, não na rotina).
-        if (patch.status && patch.status !== mission.status) {
-          hub.publish({
-            projectId: updated.projectId,
-            kind: 'info',
-            text:
-              patch.status === 'concluida'
-                ? `planejamento "${updated.title}" foi CONCLUÍDO — o plano segue no mapa`
-                : patch.status === 'arquivada'
-                  ? `missão "${updated.title}" foi ARQUIVADA${updated.branch ? ` (branch ${updated.branch} preservada)` : ''}`
-                  : `missão "${updated.title}" foi REATIVADA`,
-            actor: 'user'
-          })
-        }
-        emitMissionsChanged(updated.projectId)
-        syncBoard(updated.projectId)
-      }
-      return updated ?? null
-    }
-  )
+  ipcMain.handle('missions:update', (_e, id: string, patch: MissionMetadataPatch) => lifecycle.update(id, patch))
 
   // R17 (2026-08-19): o ⇪ virou ASSÍNCRONO — cada git dele viaja pelo
   // gitWorker em vez de travar o main em rajada (809ms medidos no instante do
@@ -1095,80 +963,7 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
     return await startMissionIntegration(missionId, 'user')
   })
 
-  // Excluir missão: só ARQUIVADA (fluxo: arquivar → excluir). Leva junto as
-  // tarefas dela e limpa worktree/branch — a exclusão é deliberada.
-  ipcMain.handle('missions:remove', async (e, missionId: string) => {
-    const mission = missions.get(missionId)
-    if (!mission || mission.status !== 'arquivada') return false
-    const project = projects.get(mission.projectId)
-    if (!project) return false
-    const removal = { projectId: mission.projectId, rootPath: project.path, worktree: mission.worktree, branch: mission.branch }
-    try {
-      ensureSynkoraGitExcludes(project.path)
-    } catch (error) {
-      // Guard MUDO era bug real (02/08): .synkora versionado na base fazia o
-      // "excluir de vez" morrer sem NENHUMA mensagem — o usuário clicava e
-      // nada acontecia. Falha de guard sempre fala.
-      hub.publish({
-        projectId: mission.projectId,
-        kind: 'error',
-        text: `não excluí a missão "${mission.title}": ${error instanceof Error ? error.message : String(error)}`,
-        actor: 'harness'
-      })
-      return false
-    }
-    const queued = integrationQueue.getByMission(missionId)
-    if (queued?.state === 'merging') return false
-    if (queued) integrationQueue.cancel(missionId)
-    stopMissionExecution(
-      mission.projectId,
-      missionId,
-      'execução encerrada porque a missão arquivada foi excluída'
-    )
-    ptys.kill(orchPaneId(mission.projectId, missionId))
-    // 2.0: nenhum chat pode ficar com cwd dentro do worktree que vai sumir.
-    await killMissionGuiPanes(missionId)
-    // Cleanup yields while a device/server exits. A reactivated or relocated mission no longer authorizes this deletion.
-    const current = missions.get(missionId)
-    if (!current || current.status !== 'arquivada' || current.projectId !== removal.projectId ||
-      current.worktree !== removal.worktree || current.branch !== removal.branch ||
-      projects.get(removal.projectId)?.path !== removal.rootPath || integrationQueue.getByMission(missionId)?.state === 'merging') return false
-    if (mission.branch && mission.worktree) {
-      removeWorktreeAndBranch(project.path, mission.worktree, mission.branch)
-    }
-    backlog.releaseMissionItems(missionId) // itens não-feitos voltam a pendente
-    missions.remove(missionId)
-    // Exclusão definitiva, ao contrário de arquivar, remove também resume e
-    // fotografia dos chats desta missão.
-    guiSessions.forgetWhere((paneId) => isGuiMissionPaneId(paneId, missionId))
-    emitBacklogChanged(mission.projectId)
-    // rastro da missão some junto: plano, transcript/veredito do gate e o
-    // estado do orquestrador no maestroStore
-    const short = missionId.slice(0, 8)
-    for (const f of [
-      join(project.path, '.synkora', 'missions', `${short}.PLAN.md`),
-      join(project.path, '.synkora', 'runs', `mission-${short}.md`),
-      join(project.path, '.synkora', 'runs', `mission-${short}.verdict`)
-    ]) {
-      try {
-        unlinkSync(f)
-      } catch {
-        // nunca existiu
-      }
-    }
-    maestro.forget(orchKey(mission.projectId, missionId))
-    hub.purgeMissionEvents(mission.projectId, missionId)
-    hub.publish({
-      projectId: mission.projectId,
-      kind: 'info',
-      text: `missão "${mission.title}" EXCLUÍDA (tarefas${mission.branch ? ` e branch ${mission.branch}` : ''} removidas)`,
-      actor: 'user'
-    })
-    ctx.pushAll('tasks:changed', mission.projectId)
-    emitMissionsChanged(mission.projectId)
-    syncBoard(mission.projectId)
-    return true
-  })
+  ipcMain.handle('missions:remove', (_e, missionId: string) => lifecycle.remove(missionId))
 
   // O PANE TUI DO ORQUESTRADOR MORREU NA LIMPA F6 (2026-08-17). O handler já
   // recusava para toda missão nascida na era 2.0 (`mission.direct` → null, e

@@ -16,6 +16,7 @@
  * Escopo: toda tool enxerga somente os planos do `projectId` da identidade.
  */
 import { normalizePlanDraft, type PlanDraft } from '../planDraft'
+import { releaseConversationError } from '../releaseAuthority'
 import {
   planView,
   type PlanItemView,
@@ -98,12 +99,22 @@ export function buildPlansApi(
   ctx: MainContext,
   extras: PlansApiExtras
 ): Pick<McpApi, 'listPlans' | 'getPlan' | 'proposePlan' | 'updatePlan' | 'deletePlan'> {
+  const refusal = (id: PaneIdentity): string | undefined => {
+    if (id.role !== 'gui-release') return undefined
+    const live = ctx.hub.identityByPane(id.paneId)
+    const mission = id.missionId ? ctx.missions.get(id.missionId) : undefined
+    const project = ctx.projects.get(id.projectId)
+    const version = mission?.versionId ? ctx.backlog.getVersion(mission.versionId) : undefined
+    return releaseConversationError({ identity: id, live, mission, project, version })
+  }
   /** Um plano DESTE universo — a cerca de escopo de todas as tools. */
   const scoped = (id: PaneIdentity, planId: string): PlanView | undefined =>
     viewsOf(ctx, id.projectId).find((plan) => plan.id === planId)
 
   return {
     listPlans: (id) => {
+      const error = refusal(id)
+      if (error) return error
       const plans = viewsOf(ctx, id.projectId)
       if (plans.length === 0) {
         return 'este universo ainda não tem nenhum plano. Converse com o dono e, quando ele concordar com o recorte, chame propose_plan.'
@@ -112,11 +123,15 @@ export function buildPlansApi(
     },
 
     getPlan: (id, planId) => {
+      const error = refusal(id)
+      if (error) return error
       const plan = scoped(id, planId)
       return plan ? planDetail(plan) : 'plano não encontrado neste universo'
     },
 
     proposePlan: (id, draft) => {
+      const error = refusal(id)
+      if (error) return error
       const normalized = normalizePlanDraft(draft)
       if (!normalized.ok) return `proposta recusada: ${normalized.error}`
       const presented = extras.proposePlanToPane(id.paneId, normalized.draft)
@@ -124,7 +139,7 @@ export function buildPlansApi(
       ctx.blackbox.record({
         cat: 'user',
         event: 'plan-proposal-presented',
-        actor: 'gui-planner',
+        actor: id.role,
         ids: { projectId: id.projectId, paneId: id.paneId },
         detail: {
           title: normalized.draft.title,
@@ -139,6 +154,8 @@ export function buildPlansApi(
     },
 
     updatePlan: (id, planId, patch, expectedUpdatedAt) => {
+      const error = refusal(id)
+      if (error) return error
       const plan = scoped(id, planId)
       if (!plan) return 'plano não encontrado neste universo'
       const result = ctx.plans.update(planId, patch, expectedUpdatedAt)
@@ -154,6 +171,8 @@ export function buildPlansApi(
     },
 
     deletePlan: (id, planId, expectedUpdatedAt) => {
+      const error = refusal(id)
+      if (error) return error
       const plan = scoped(id, planId)
       if (!plan) return 'plano não encontrado neste universo'
       const result = ctx.plans.archive(planId, expectedUpdatedAt)

@@ -1399,6 +1399,7 @@ export interface GuiDelegationApiDeps {
   engine: GuiHelperEngine
   /** O chat vivo do pane (modelo/effort/conta atuais) — `undefined` = sem sessão. */
   delegator(paneId: string): GuiHelperDelegator | undefined
+  releaseAllowed?(identity: GuiDelegationIdentity): boolean
   /** Abre/fecha a janela do lote no anel do delegador (a costura de correlação). */
   beginBatch(paneId: string): string | undefined
   endBatch(paneId: string): void
@@ -1431,6 +1432,7 @@ export interface GuiDelegationIdentity {
   role: string
   projectId: string
   cwd: string
+  missionId?: string
 }
 
 const NOT_A_DELEGATOR = 'esta conversa não delega ajudantes'
@@ -1444,7 +1446,8 @@ function helperOfPane(
   const record = deps.engine.get(helperId)
   // Escopo por pane, e é cerca: um chat nunca lê, dirige ou cancela o ajudante
   // de outro. O id é opaco, mas opacidade não é autorização.
-  if (!record || record.delegatorPaneId !== identity.paneId) {
+  if (!record || record.delegatorPaneId !== identity.paneId ||
+    (identity.role === 'gui-release' && (record.projectId !== identity.projectId || record.cwd !== identity.cwd))) {
     return {
       ok: false,
       error: `ajudante ${helperId} não é deste chat — confira o id no helpers_status`
@@ -1475,11 +1478,13 @@ export function buildGuiDelegationApi(deps: GuiDelegationApiDeps): {
    * drena correio nenhum de propósito: recusar não consome nada.
    */
   const guard = (id: GuiDelegationIdentity): string | null => {
-    // DOIS papéis delegam desde 2026-08-30: o chat de missão e o PLANEJADOR
-    // (ordem do dono: pesquisa é trabalho dele, com a mesma lateral e o mesmo
-    // pino). A cerca de autoridade continua a mesma: ajudante, release e
-    // qualquer outra identidade ficam fora.
-    if (id.role !== 'gui-delegator' && id.role !== 'gui-planner') return NOT_A_DELEGATOR
+    if (!['gui-delegator', 'gui-planner', 'gui-release'].includes(id.role)) return NOT_A_DELEGATOR
+    if (id.role === 'gui-release') {
+      const live = deps.delegator(id.paneId)
+      if (!deps.releaseAllowed?.(id) || !live || live.paneId !== id.paneId ||
+        live.projectId !== id.projectId || live.cwd !== id.cwd)
+        return 'Esta Release não tem uma sessão viva e válida para ajudantes. Reabra a conversa da versão e use helpers_status.'
+    }
     const owed = replyDebt.pending(id.paneId)
     if (!owed) return null
     journal({
@@ -1666,6 +1671,10 @@ export function buildGuiDelegationApi(deps: GuiDelegationApiDeps): {
           })
         )
       }
+      if (id.role === 'gui-release') {
+        const refusal = guard(id)
+        if (refusal) return refusal
+      }
       return withInbox(id.paneId, guiHelperSeatsText(seats, usage, now()))
     },
 
@@ -1687,6 +1696,10 @@ export function buildGuiDelegationApi(deps: GuiDelegationApiDeps): {
       // Keep the pending receipt as the durable wake signal in that race.
       const wait = ownerMail.has(id.paneId) ? 0 : waitSeconds
       const body = guiHelperResultText(await deps.engine.result(helperId, wait))
+      if (id.role === 'gui-release') {
+        const refusal = guard(id)
+        if (refusal) return refusal
+      }
       return withInbox(id.paneId, body, helperId)
     },
 

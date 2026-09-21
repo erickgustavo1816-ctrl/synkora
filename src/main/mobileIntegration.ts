@@ -47,9 +47,10 @@ export function createMobileIntegration(ctx: MainContext, deps: Pick<MobileAgent
   const resolveMission = (missionId: string) => {
     const mission = ctx.missions.get(missionId)
     const project = mission ? ctx.projects.get(mission.projectId) : undefined
-    if (!mission || !project || !mission.direct || missionTypeOf(mission) !== 'dev' ||
+    if (!mission || mission.id !== missionId || !project || project.id !== mission.projectId || !mission.direct ||
+      !['dev', 'release'].includes(missionTypeOf(mission)) ||
       !['ativa', 'integrando'].includes(mission.status)) return null
-    return { projectId: project.id, rootPath: mission.worktree || project.path }
+    return { projectId: project.id, rootPath: missionTypeOf(mission) === 'release' ? project.path : mission.worktree || project.path }
   }
   const runtime = new MobileRuntimeManager({
     resolveMission,
