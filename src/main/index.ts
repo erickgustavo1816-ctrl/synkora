@@ -53,6 +53,9 @@ import { createMaestroEngine, type MaestroBackend } from './maestroEngine'
 import { createMissionEngine } from './missionEngine'
 import { createPaneLifecycle } from './paneLifecycle'
 import { buildPlansApi } from './mcpApi/plans'
+import { buildMissionLifecycle } from './missionLifecycle'
+import { buildReleaseMissions } from './releaseMissions'
+import { releaseConversationError } from './releaseAuthority'
 import { registerMaestroIpc } from './ipc/maestro'
 import { registerMissionsIpc } from './ipc/missions'
 import { registerPtyIpc } from './ipc/pty'
@@ -3932,6 +3935,12 @@ app.whenReady().then(async () => {
   // delegador (helper_cancel).
   setInterval(() => guiHelperEngine.sweep(), 60_000).unref()
   const guiDelegation = buildGuiDelegationApi({
+    releaseAllowed: (identity) => {
+      const mission = identity.missionId ? missions.get(identity.missionId) : undefined
+      return !releaseConversationError({ identity, mission,
+        live: hub.identityByPane(identity.paneId), project: projects.get(identity.projectId),
+        version: mission?.versionId ? backlog.getVersion(mission.versionId) : undefined })
+    },
     engine: guiHelperEngine,
     delegator: (paneId) => guiSessions?.delegatorFor(paneId),
     // O PINO DO DONO no painel do chat (D8): pedido sem modelo/effort abre com
@@ -4125,7 +4134,20 @@ app.whenReady().then(async () => {
     })
   })
 
+  const missionLifecycle = buildMissionLifecycle(ctx, {
+    engine: missionEngine, orchKey, emitBacklogChanged, killMissionGuiPanes,
+    guiSessions: { forgetWhere: (match) => guiSessions?.forgetWhere(match) ?? 0 }
+  })
+  const releaseMissions = buildReleaseMissions({
+    context: ctx, lifecycle: missionLifecycle,
+    releaseBusy: (projectId) => releaseMutationLocks.has(projectId),
+    audit: (event, projectId, missionId, targetId) => blackbox.record({
+      cat: 'mcp', event, actor: 'agent-release', ids: { projectId, missionId }, detail: { targetId }
+    })
+  })
+
   const mcpApi: McpApi = {
+    releaseMissions,
     ...buildPlansApi(ctx, {
       proposePlanToPane: (paneId, draft) =>
         guiSessions?.proposePlan(paneId, draft) ?? {
@@ -4878,6 +4900,7 @@ app.whenReady().then(async () => {
     surveySystemPromptFile
   })
   registerMissionsIpc(ctx, {
+    lifecycle: missionLifecycle,
     projectContextBriefing: projectContext.briefing,
     engine: missionEngine,
     maestroEngine,

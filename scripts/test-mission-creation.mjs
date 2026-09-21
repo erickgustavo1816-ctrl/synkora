@@ -22,7 +22,7 @@ import { join } from 'node:path'
 import test from 'node:test'
 
 const require = createRequire(import.meta.url)
-const COMPILED = join(import.meta.dirname, '..', '.tmp', 'mission-creation-test')
+const COMPILED = join(import.meta.dirname, '..', '.tmp', 'mission-creation-test', 'main')
 
 // ——— stub do electron, instalado ANTES de requerer o fecho compilado ———
 const userData = mkdtempSync(join(tmpdir(), 'synkora-mission-create-'))
@@ -1514,6 +1514,56 @@ test('integration waits for managed Mobile and Expo cleanup before merging or de
   assert.equal(existsSync(join(h.version.worktree, 'mobile-cleanup.txt')), true)
   assert.equal(existsSync(mission.worktree), false)
 })
+
+test('completed mission deletion uses the same cleanup as an archived mission', async (t) => {
+  const projectPath = mkdtempSync(join(tmpdir(), 'synkora-completed-removal-'))
+  t.after(() => rmSync(projectPath, { recursive: true, force: true }))
+  const mission = { id: 'completed-synthetic', projectId: 'proj-1', title: 'Synthetic completed mission', status: 'concluida' }
+  const effects = []
+  createHarness({ configure: (ctx, extras) => {
+    ctx.projects.get = () => ({ id: 'proj-1', path: projectPath })
+    ctx.missions = { get: () => mission, remove: () => effects.push('removed') }
+    ctx.integrationQueue = { getByMission: () => undefined }
+    ctx.ptys.kill = () => {}
+    ctx.backlog.releaseMissionItems = () => effects.push('backlog')
+    ctx.maestro.forget = () => effects.push('maestro')
+    ctx.hub.purgeMissionEvents = () => effects.push('events')
+    ctx.pushAll = () => {}
+    extras.guiSessions.forgetWhere = () => effects.push('chats')
+    extras.killMissionGuiPanes = async () => {
+      await new Promise(resolve => setImmediate(resolve))
+      effects.push('closed')
+    }
+  } })
+  assert.equal(await handlers.get('missions:remove')({}, mission.id), true)
+  assert.deepEqual(effects, ['closed', 'backlog', 'removed', 'chats', 'maestro', 'events'])
+})
+
+for (const scenario of ['uncommitted changes', 'wrong branch']) {
+test(`mission deletion preserves the record and worktree with ${scenario}`, async (t) => {
+  const h = createIntegrationHarness(t)
+  const mission = await h.missionWithDelivery('Uncommitted deletion', 'keep-changes.txt', 'synthetic delivery\n')
+  mission.status = 'arquivada'
+  if (scenario === 'uncommitted changes') writeFileSync(join(mission.worktree, 'keep-changes.txt'), 'uncommitted owner changes\n')
+  else mission.branch = 'mission/wrong-synthetic-branch'
+  let removed = 0
+  createHarness({ configure: (ctx, extras) => {
+    ctx.projects.get = () => ({ id: 'proj-1', path: h.projectPath })
+    ctx.missions = { get: () => mission, remove: () => { removed++ } }
+    ctx.integrationQueue = { getByMission: () => undefined }
+    ctx.ptys.kill = () => {}
+    ctx.backlog.releaseMissionItems = () => {}
+    ctx.maestro.forget = () => {}
+    ctx.hub.purgeMissionEvents = () => {}
+    ctx.pushAll = () => {}
+    extras.guiSessions.forgetWhere = () => {}
+  } })
+  assert.equal(await handlers.get('missions:remove')({}, mission.id), false)
+  assert.equal(removed, 0)
+  assert.equal(readFileSync(join(mission.worktree, 'keep-changes.txt'), 'utf8'),
+    scenario === 'uncommitted changes' ? 'uncommitted owner changes\n' : 'synthetic delivery\n')
+})
+}
 
 test('mission deletion rechecks archived state after awaiting Mobile and Expo cleanup', async (t) => {
   const h = createIntegrationHarness(t)
