@@ -1191,6 +1191,7 @@ const api = {
       cursor: number
       exists: boolean
       alive: boolean
+      permissionMode?: GuiPermissionMode
     }> =>
       ipcRenderer.invoke('gui:state', paneId),
     /** Lista read-only de caminhos relativos para o autocomplete @arquivo.

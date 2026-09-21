@@ -233,6 +233,7 @@ export interface GuiStatePayload {
   cursor: number
   exists: boolean
   alive: boolean
+  permissionMode?: GuiPermissionMode
 }
 
 /** Resposta padrão dos canais gui:* — `error` em PT-BR, é texto de UI. */
@@ -4067,7 +4068,8 @@ export class GuiSessionRegistry {
    * é terminal (não entra em recibo de apresentação) e nunca ocupa um seq real.
    */
   state(paneId: string): GuiStatePayload {
-    const ring = this.panes.get(paneId)?.ring ?? this.restoreTranscript(paneId)
+    const entry = this.panes.get(paneId)
+    const ring = entry?.ring ?? this.restoreTranscript(paneId)
     if (!ring) return { events: [], cursor: 0, exists: false, alive: false }
     const pruned: GuiSequencedEvent[] =
       ring.evictedCount > 0 ? [{ seq: 0, evt: guiHistoryPrunedEvent(ring.evictedCount) }] : []
@@ -4075,7 +4077,8 @@ export class GuiSessionRegistry {
       events: [...pruned, ...ring.sequencedSnapshot()],
       cursor: ring.cursor,
       exists: true,
-      alive: this.panes.get(paneId)?.session.alive ?? false
+      alive: entry?.session.alive ?? false,
+      ...(entry ? { permissionMode: entry.spawn.permissionMode ?? 'default' } : {})
     }
   }
 

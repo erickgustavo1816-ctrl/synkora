@@ -1149,6 +1149,7 @@ export default function Board({ projectId }: Props): React.JSX.Element {
                     resumeSessionId={slot.spawn.resumeSessionId}
                     firstPrompt={slot.spawn.firstPrompt}
                     permissionMode={slot.spawn.permissionMode}
+                    missionType={missionTypeOf(missions.find((mission) => mission.id === mid))}
                     fast={slot.spawn.fast}
                     mcp={slot.spawn.mcp}
                     onPermissionMode={(pm) => setMissionSlotPermission(mid, slot.spawn.paneId, pm)}
