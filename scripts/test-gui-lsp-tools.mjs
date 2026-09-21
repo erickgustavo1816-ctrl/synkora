@@ -666,7 +666,8 @@ test('os TRÊS chats ganham o kit de código sem perder o que já tinham', async
   )
   assert.deepEqual(
     await toolNames(url, 'token-release', 'kit-release'),
-    sorted(['commentary'], RELEASE_TOOLS, LSP_TOOLS, CONTEXT_READ)
+    sorted(['commentary', 'release_missions', 'release_mission_update', 'release_mission_remove'], RELEASE_TOOLS,
+      PLANNER_TOOLS, DELEGATOR_TOOLS, LSP_TOOLS, CONTEXT_WRITE, BROWSER_TOOLS, MOBILE_TOOLS, SKILL_TOOLS)
   )
 })
 

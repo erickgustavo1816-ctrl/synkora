@@ -962,11 +962,11 @@ export default function Board({ projectId }: Props): React.JSX.Element {
     ) : undefined
 
   const measuredMaestroBox = maestroTerminalBox.w > 0 ? maestroTerminalBox : undefined
-  const maestroTerminalFont = settings?.terminalFontSize ?? TERMINAL_DEFAULT_FONT_SIZE
-  const maestroTerminalLineHeight =
-    settings?.terminalLineHeight ?? TERMINAL_DEFAULT_LINE_HEIGHT
-  const maestroTerminalFontFamily =
-    settings?.terminalFontFamily ?? TERMINAL_DEFAULT_FONT_FAMILY
+  // ACESSIBILIDADE: os terminais seguem a escala (zoom da janela) e a fonte
+  // do app; as métricas próprias de terminal morreram com a seção antiga.
+  const maestroTerminalFont = TERMINAL_DEFAULT_FONT_SIZE
+  const maestroTerminalLineHeight = TERMINAL_DEFAULT_LINE_HEIGHT
+  const maestroTerminalFontFamily = settings?.uiFontFamily ?? TERMINAL_DEFAULT_FONT_FAMILY
   const maestroTerminalFallbackFor = (kind: Pane['kind']): { cols: number; rows: number } =>
     terminalFallbackForHost(
       measuredMaestroBox,

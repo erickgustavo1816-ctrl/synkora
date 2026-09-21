@@ -62,6 +62,11 @@ import {
   MISSION_RELEASE_NOT_QUEUEABLE
 } from './guiMissionContracts'
 import { notifyDesktop } from './desktopNotifications'
+import {
+  desktopConflictBody,
+  desktopMergedBody,
+  desktopNotifyTitle
+} from './desktopNotificationPolicy'
 import { type IntegrationQueueTicketView } from './integrationQueue'
 import { gitOff } from './gitAsync'
 import { reapVisualsUnder } from './reapVisualsUnder'
@@ -2050,12 +2055,13 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
       notifyDesktop({
         kind: 'conflict',
         key: mission.id,
-        title: 'Synkora — a integração parou',
-        body:
-          `"${mission.title}" não integrou com ${target?.label ?? 'o destino'}` +
-          (conflictFiles?.length
-            ? ` · ${conflictFiles.length} arquivo(s) em conflito`
-            : `: ${detail.slice(0, 120)}`)
+        title: desktopNotifyTitle({
+          missionTitle: mission.title,
+          projectName: projects.get(mission.projectId)?.name
+        }),
+        body: desktopConflictBody({ conflictFiles: conflictFiles?.length, detail }),
+        // O clique abre a missão parada: é nela que o conflito se resolve.
+        target: { projectId: mission.projectId, missionId: mission.id }
       })
     }
     const behind = integrationQueue
@@ -2809,8 +2815,13 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
           notifyDesktop({
             kind: 'merged',
             key: missionId,
-            title: 'Synkora — missão integrada',
-            body: `"${mission.title}" foi integrada na ${mergeTarget}`
+            title: desktopNotifyTitle({
+              missionTitle: mission.title,
+              projectName: project.name
+            }),
+            body: desktopMergedBody(mergeTarget),
+            // Missão integrada não existe mais no board: o clique abre o projeto.
+            target: { projectId, destination: 'project' }
           })
         if (target.kind === 'version') {
           // versão avançou: só as missões da MESMA versão precisam de sync

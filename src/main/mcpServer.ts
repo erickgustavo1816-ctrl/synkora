@@ -17,6 +17,8 @@ import {  mkdirSync, writeFileSync } from 'fs'
 import {   join } from 'path'
 import type { Hub, PaneIdentity } from './hub'
 import type { PlanPatch } from './plans'
+import { registerPlanKit } from './planToolCatalog'
+import { registerReleaseMissionKit, type ReleaseMissionToolkit } from './releaseMissionTools'
 // Os números que o catálogo ENSINA ao agente saem do motor, nunca de uma
 // cópia à mão: teto de espera, teto de prompt e a trava anti-laço. Se o motor
 // mudar um deles, a descrição da ferramenta muda junto — descrição que mente
@@ -70,24 +72,14 @@ const requireFromMain = createRequire(
 // identifica QUEM chama (a role, o projeto, a missão, o worktree) e as
 // ferramentas agem no contexto certo. HTTP em 127.0.0.1, porta aleatória.
 //
-// Catálogos fechados por retorno antecipado (ver `buildServer`): `gui-planner`
-// recebe o kit de PLANOS + o de AJUDANTES (2026-08-30 — o planejador delega
-// pesquisa), `gui-delegator` o de AJUDANTES (+ integração, só no chat de dev),
-// `gui-release` o de RELEASE e `ajudante` SÓ o de código. Um pane tem UM
-// papel, e qualquer outra identidade recebe um servidor VAZIO — nunca um erro.
-// O antigo catálogo por papel (maestro/dev/review/qa) morreu com a era F6.
-//
-// Os kits de CÓDIGO (R14) e de AJUDANTES são compartilhados entre papéis por
-// registradores únicos (`registerLspKit`, `registerDelegationKit`): ler código
-// não é autoridade sobre nada, e a autoridade da frota é a MESMA nos dois
-// chats que a têm — quem continua fora dela é o próprio ajudante (frota que
-// abre frota é o laço que o backstop existe para conter).
+// Os retornos antecipados separam os catálogos. Planner e Release compartilham
+// planos; chats compartilham delegação e validação conforme o papel. Somente o
+// dev integra missões; ajudantes headless nunca abrem outra frota.
 
 /** Implementada em index.ts — as tools delegam para o harness real. */
 export interface McpApi {
   hub: Hub
-  // ——— kit do CHAT de planejamento (2.0, onda D — role 'gui-planner') ———
-  // É o catálogo INTEIRO: nenhuma outra identidade recebe ferramenta nenhuma.
+  // Planos: mesmo serviço para planejamento e Release.
   /** Todos os planos do universo com o progresso derivado das missões. */
   listPlans: (id: PaneIdentity) => string
   /** Um plano inteiro, com o `updatedAt` que o CAS do update exige. */
@@ -144,6 +136,7 @@ export interface McpApi {
   // O botão "subir pra main" da versão abre a conversa; estas cascas finas
   // falam com o releaseChat/index — a mecânica do release mora lá.
   /** A fotografia do release: trava do plano, fila, branches, receita. */
+  releaseMissions?: ReleaseMissionToolkit
   releaseStatus?: (id: PaneIdentity) => string
   releaseTarget?: (id: PaneIdentity, branch: string) => Promise<string>
   /** Sobe a versão desta conversa para a main (o clique do dono é o mandato). */
@@ -338,21 +331,6 @@ function lspPositionSchema(): {
       )
   }
 }
-
-/**
- * R16 — O `context` DE CADA ITEM É O MAPA DA FATIA (design de 2026-08-19).
- *
- * FONTE ÚNICA das três aparições do campo (propose_plan.items,
- * update_plan.items e update_plan.addItems): o agente lê a MESMA regra
- * onde quer que escreva, e o teste a prende num lugar só.
- *
- * O porquê está dito ao agente de propósito: este texto viaja VERBATIM para o
- * `goal` da missão (planItemMissionGoal) e de lá para o briefing do dev. Item
- * sem mapa condena o dev a re-derivar o repositório que o planejador acabou de
- * estudar — os 10 minutos de estudo que esta rodada existe para matar.
- */
-const PLAN_ITEM_CONTEXT_DESCRIBE =
-  'seção Contexto — o MAPA DA FATIA: arquivos/módulos que importam, o que JÁ existe neles, o que será criado e onde NÃO mexer quando isso desenha a fronteira. Ele viaja VERBATIM para o briefing do dev desta missão: item sem mapa obriga o dev a re-derivar sozinho o repositório que você acabou de estudar.'
 
 /**
  * O KIT DE AJUDANTES — as sete tools da delegação (delegate, list_seats,
@@ -556,187 +534,14 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
   }
 
   if (['gui-planner', 'gui-delegator', 'gui-release', 'ajudante'].includes(identity.role)) {
-    registerProjectContextKit(server, api.context, identity, identity.role === 'gui-planner' ||
+    registerProjectContextKit(server, api.context, identity, identity.role === 'gui-planner' || identity.role === 'gui-release' ||
       (identity.role === 'gui-delegator' && guiMissionRoleOf(identity.paneId) === 'dev' && Boolean(identity.missionId)))
   }
 
   // ————— CHAT DE PLANEJAMENTO (2.0, onda D) — catálogo PRÓPRIO e FECHADO —————
   //
-  // O pane GUI de planejamento é o primeiro chat da era 2.0 com ferramentas
-  // Synkora, e ele recebe SÓ o kit de planos. O retorno antecipado é a cerca:
-  // as tools abaixo são registradas dentro deste bloco, então nenhum outro
-  // papel — inclusive os gates read-only — pode enxergá-las, e este papel não
-  // enxerga uma linha do catálogo legado.
   if (identity.role === 'gui-planner') {
-    server.registerTool(
-      'list_plans',
-      {
-        description:
-          'Os planos deste universo, com o progresso real de cada missão vinculada. Chame antes de propor qualquer coisa: propor de novo o que já está planejado é retrabalho.'
-      },
-      async () => text(api.listPlans(identity))
-    )
-
-    server.registerTool(
-      'get_plan',
-      {
-        description:
-          'Um plano inteiro: descrição, missões, objetivo/critérios/tier/contexto de cada uma e o updatedAt que o update_plan exige.',
-        inputSchema: {
-          planId: z.string().min(1).max(120).describe('id do plano (vem do list_plans)')
-        }
-      },
-      async ({ planId }) => text(api.getPlan(identity, planId))
-    )
-
-    server.registerTool(
-      'propose_plan',
-      {
-        description:
-          'APRESENTA um plano novo ao dono, como card dentro desta conversa. NUNCA cria nada: quem cria é o clique dele. Chame só depois que ele concordar com o recorte em palavras — e então ENCERRE o turno e espere. Silêncio não é consentimento. Cada item é UMA missão entregável; os campos espelham as seções que você já escreve em plano/NNN-slug.md. DECLARAR DEPENDÊNCIA É PARTE DO PLANEJAMENTO: a missão que precisa de outra PRONTA antes nomeia a key dela em dependsOn — no quadro do dono a tag ganha check quando a dependida conclui, e só então o começar dela destrava. As que ficam sem dependsOn são exatamente as que ele roda EM PARALELO.',
-        inputSchema: {
-          title: z.string().min(1).max(120).describe('nome do plano, em PT-BR'),
-          description: z
-            .string()
-            .max(4_000)
-            .optional()
-            .describe('o recorte em prosa que o dono julga sem ler código'),
-          kind: z
-            .enum(['mestre', 'livre'])
-            .optional()
-            .describe(
-              "'mestre' = o plano de fundo do universo (só UM ativo); 'livre' (padrão) = um recorte que atravessa versões"
-            ),
-          items: z
-            .array(
-              z.object({
-                key: z
-                  .string()
-                  .max(60)
-                  .optional()
-                  .describe('apelido curto desta missão, usado por outras em dependsOn'),
-                title: z.string().min(1).max(120).describe('UMA entrega — título com "e" são duas missões'),
-                objective: z.string().min(1).max(2_000).describe('seção Objetivo'),
-                outOfScope: z.string().max(2_000).optional().describe('seção Fora de escopo'),
-                doneCriteria: z
-                  .array(z.string().max(400))
-                  .max(10)
-                  .optional()
-                  .describe('seção Critério de pronto: binário e observável, nunca "ficou bom"'),
-                tier: z.enum(['pequeno', 'medio', 'grande']).optional().describe('seção Tier'),
-                context: z.string().max(2_000).optional().describe(PLAN_ITEM_CONTEXT_DESCRIBE),
-                dependsOn: z
-                  .array(z.string().max(60))
-                  .max(12)
-                  .optional()
-                  .describe(
-                    'keys de missões ANTERIORES desta mesma lista que precisam estar PRONTAS antes desta começar'
-                  ),
-                docPath: z
-                  .string()
-                  .max(240)
-                  .optional()
-                  .describe("brief em prosa no repo, ex.: 'plano/003-fila.md'")
-              })
-            )
-            .min(1)
-            .max(24)
-        }
-      },
-      async (draft) => text(api.proposePlan(identity, draft))
-    )
-
-    server.registerTool(
-      'update_plan',
-      {
-        description:
-          'Edita um plano que JÁ existe — isto executa na hora (editar é reversível). Mande o updatedAt que veio do get_plan: se o plano mudou nesse meio-tempo, a alteração é recusada em vez de sobrescrever o que o dono viu. O estado "concluida" e o vínculo com a missão são derivados da missão real e não se escrevem aqui. A designação de plano mestre não passa por aqui — ela é um gesto do dono no mapa. MANTER O GRAFO EM DIA É PARTE DA EDIÇÃO: dependsOn é o que o quadro do dono lê para travar o começar de uma missão até a dependida concluir, e para mostrar o que sobra livre para rodar EM PARALELO.',
-        inputSchema: {
-          planId: z.string().min(1).max(120),
-          expectedUpdatedAt: z
-            .string()
-            .max(64)
-            .optional()
-            .describe('o updatedAt lido no get_plan'),
-          title: z.string().min(1).max(120).optional(),
-          description: z.string().max(4_000).nullable().optional(),
-          status: z.enum(['ativo', 'concluido', 'arquivado']).optional(),
-          items: z
-            .array(
-              z.object({
-                id: z.string().min(1).max(120).describe('id do item (vem do get_plan)'),
-                title: z.string().min(1).max(120).optional(),
-                objective: z.string().min(1).max(2_000).optional(),
-                outOfScope: z.string().max(2_000).nullable().optional(),
-                doneCriteria: z.array(z.string().max(400)).max(10).optional(),
-                tier: z.enum(['pequeno', 'medio', 'grande']).nullable().optional(),
-                context: z
-                  .string()
-                  .max(2_000)
-                  .nullable()
-                  .optional()
-                  .describe(PLAN_ITEM_CONTEXT_DESCRIBE),
-                dependsOn: z
-                  .array(z.string().max(120))
-                  .max(12)
-                  .optional()
-                  .describe(
-                    'ids de itens DESTE plano que precisam estar PRONTOS antes deste começar — a lista mandada SUBSTITUI a anterior'
-                  ),
-                docPath: z.string().max(240).nullable().optional(),
-                status: z
-                  .enum(['planejada', 'em_andamento', 'descartada'])
-                  .optional()
-                  .describe('"concluida" não entra: ela vem da missão vinculada')
-              })
-            )
-            .max(24)
-            .optional(),
-          addItems: z
-            .array(
-              z.object({
-                key: z.string().max(60),
-                title: z.string().min(1).max(120),
-                objective: z.string().min(1).max(2_000),
-                outOfScope: z.string().max(2_000).optional(),
-                doneCriteria: z.array(z.string().max(400)).max(10),
-                tier: z.enum(['pequeno', 'medio', 'grande']).optional(),
-                context: z.string().max(2_000).optional().describe(PLAN_ITEM_CONTEXT_DESCRIBE),
-                dependsOn: z
-                  .array(z.string().max(120))
-                  .max(12)
-                  .describe(
-                    'o que precisa estar PRONTO antes deste item começar: keys de itens novos desta mesma chamada ou ids de itens que já estão no plano'
-                  ),
-                docPath: z.string().max(240).optional()
-              })
-            )
-            .max(24)
-            .optional(),
-          removeItemIds: z
-            .array(z.string().max(120))
-            .max(24)
-            .optional()
-            .describe('item que já virou missão não sai: marque status descartada')
-        }
-      },
-      async ({ planId, expectedUpdatedAt, ...patch }) =>
-        text(api.updatePlan(identity, planId, patch as PlanPatch, expectedUpdatedAt))
-    )
-
-    server.registerTool(
-      'delete_plan',
-      {
-        description:
-          'ARQUIVA um plano (reversível): a aba some do mapa e o conteúdo fica. Exclusão definitiva não existe por ferramenta — é gesto do dono no mapa.',
-        inputSchema: {
-          planId: z.string().min(1).max(120),
-          expectedUpdatedAt: z.string().max(64).optional()
-        }
-      },
-      async ({ planId, expectedUpdatedAt }) =>
-        text(api.deletePlan(identity, planId, expectedUpdatedAt))
-    )
+    registerPlanKit(server, api, identity)
 
     // O PLANEJADOR DELEGA (ordem do dono, 2026-08-30: "coloque os ajudantes
     // também para eu selecionar"): pesquisa é o trabalho dele, e a frota via
@@ -856,9 +661,15 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
   }
 
   // R10 — O CHAT DE RELEASE (role 'gui-release'): a conversa que o botão
-  // "subir pra main" da VERSÃO abre. Catálogo mínimo de propósito — subir a
-  // versão É o show inteiro; delegação e integração de missão não moram aqui.
+  // "subir pra main" da VERSÃO abre. Gestão e validação usam os kits comuns;
+  // integração de missão continua exclusiva do dev com ticket do dono.
   if (identity.role === 'gui-release') {
+    registerPlanKit(server, api, identity)
+    registerReleaseMissionKit(server, api.releaseMissions, identity)
+    registerDelegationKit(server, api, identity)
+    registerSkillsKit(server, api.skills, identity)
+    registerBrowserKit(server, api.browser, identity)
+    registerMobileKit(server, api.mobile, identity)
     server.registerTool(
       'release_save',
       {

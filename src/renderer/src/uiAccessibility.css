@@ -1,0 +1,10 @@
+/* ACESSIBILIDADE DO SYNKORA — a leitura do chat obedece às preferências do
+   dono (Ajustes ▸ Aparência ▸ Acessibilidade do Synkora). As variáveis são
+   escritas no <html> por `applyUiAccessibilityVars` (uiAccessibility.ts); os
+   padrões aqui são os mesmos do global.css, então sem preferência nada muda.
+   `.gui-pane .gui-msg` bate a regra base `.gui-msg` do global.css por
+   especificidade, não por ordem de import. */
+.gui-pane .gui-msg {
+  font-size: var(--chat-font-size, 12.5px);
+  line-height: var(--chat-line-height, 1.55);
+}

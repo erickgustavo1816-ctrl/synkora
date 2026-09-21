@@ -856,17 +856,16 @@ function delegationApi(overrides = {}) {
 
 const delegatorId = { paneId: 'p1', role: 'gui-delegator', projectId: 'proj', cwd: '/w' }
 
-test('dev e PLANEJADOR delegam; release/ajudante não — e só sobre os PRÓPRIOS ajudantes', async () => {
+test('dev e PLANEJADOR delegam; Release sem autoridade e ajudante recusam', async () => {
   const { api } = delegationApi()
   // 2026-08-30 (ordem do dono): o planejador entrou no regime da delegação —
   // o portão aceita o papel dele nos sete verbos.
   const planner = { ...delegatorId, role: 'gui-planner' }
   assert.doesNotMatch(await api.delegateHelpers(planner, [{ prompt: 'x' }]), /não delega/u)
   assert.doesNotMatch(api.helpersStatus(planner), /não delega/u)
-  // A cerca de autoridade continua para quem nunca delegou: release e o
-  // próprio ajudante (frota que abre frota).
+  // Release exige a validação da missão viva, ausente nesta bancada.
   const release = { ...delegatorId, role: 'gui-release' }
-  assert.match(await api.delegateHelpers(release, [{ prompt: 'x' }]), /não delega/u)
+  assert.match(await api.delegateHelpers(release, [{ prompt: 'x' }]), /Release.*sessão viva/u)
   assert.match(api.helpersStatus({ ...delegatorId, role: 'ajudante' }), /não delega/u)
 
   assert.match(
@@ -2465,12 +2464,11 @@ test('helper_resume: a tool existe, chega ao motor e o texto ensina o par de ver
   assert.match(text, /helpers_status|helper_result/u, 'a resposta diz como acompanhar a volta')
 
   // Escopo por pane: o id opaco de outro chat não é autorização, aqui como nas
-  // outras cinco. Papel sem delegação (release, ajudante) recusa — o
-  // gui-planner DEIXOU de recusar em 2026-08-30 (ele delega pesquisa).
+  // outras cinco. Release sem autoridade de missão viva também recusa.
   assert.match(api.helperResume(delegatorId, 'h-alheio'), /não é deste chat/u)
   assert.match(
     api.helperResume({ ...delegatorId, role: 'gui-release' }, 'h-meu'),
-    /não delega/u
+    /Release.*sessão viva/u
   )
 })
 

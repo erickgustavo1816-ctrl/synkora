@@ -980,7 +980,13 @@ select {
   gap: 10px;
   padding: 12px 0;
   overflow-y: auto;
+  /* barra ESCONDIDA de propósito (o trilho rola pela roda); o par
+     ::-webkit-scrollbar abaixo é a receita da casa para esconder */
   scrollbar-width: none;
+}
+
+.project-rail::-webkit-scrollbar {
+  display: none;
 }
 
 .rail-list {
@@ -1166,8 +1172,18 @@ select {
   color: var(--ink-2);
 }
 
-/* ---------- scrollbars retrô ---------- */
-
+/* ---------- a barra de rolagem da casa (ÚNICA regra global) ---------- */
+/* Fundo papel: trilho invisível, polegar tinta. Toda caixa que rola no app
+   herda este desenho sem declarar nada — não existe segunda regra global.
+   ARMADILHA (Chromium ≥121, o do Electron): `scrollbar-width: thin|none` ou
+   `scrollbar-color` em QUALQUER elemento DESLIGA os ::-webkit-scrollbar dele
+   e o Chromium desenha a barra NATIVA do Windows (trilho branco, setas) —
+   foi assim que a nativa vazou em menus, árvore de arquivos e chips (print do
+   dono, 21/09). Regra da casa: nunca `scrollbar-width`/`scrollbar-color`
+   fora de dois usos sancionados — `none` para ESCONDER a barra (sempre em par
+   com `::-webkit-scrollbar { display: none }`) e `auto` para RELIGÁ-LA dentro
+   de um pai que a escondeu. Largura só pelo token `--scrollbar-w`: quem
+   reserva calha (`scrollbar-gutter: stable`) alinha por ele. */
 ::-webkit-scrollbar {
   width: var(--scrollbar-w);
   height: var(--scrollbar-w);
@@ -1178,30 +1194,47 @@ select {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--line-strong);
-  border-radius: 999px;
-  border: 3px solid var(--paper);
+  background: rgba(38, 32, 25, 0.28);
+  border-radius: 6px;
+  border: 2px solid transparent;
+  background-clip: content-box;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--ink-3);
+  background: rgba(38, 32, 25, 0.45);
+  border: 2px solid transparent;
+  background-clip: content-box;
 }
 
 ::-webkit-scrollbar-corner {
   background: transparent;
 }
 
-/* dentro dos painéis escuros */
+/* Superfícies ESCURAS (term-window, dropdowns, blocos de código, xterm):
+   polegar claro discreto. Vale para a barra da PRÓPRIA superfície (um
+   .term-window que rola, como o menu de uso da barra de título) e para a de
+   qualquer caixa que role dentro dela. */
+.term-window::-webkit-scrollbar-thumb,
 .term-window ::-webkit-scrollbar-thumb,
 .terminal-host ::-webkit-scrollbar-thumb,
+.sel-menu::-webkit-scrollbar-thumb,
+.md-view pre::-webkit-scrollbar-thumb,
 .xterm-viewport::-webkit-scrollbar-thumb {
-  background: #514c40;
-  border-color: var(--panel);
+  background: rgba(239, 232, 214, 0.22);
+  border-radius: 6px;
+  border: 2px solid transparent;
+  background-clip: content-box;
 }
 
+.term-window::-webkit-scrollbar-thumb:hover,
 .term-window ::-webkit-scrollbar-thumb:hover,
+.terminal-host ::-webkit-scrollbar-thumb:hover,
+.sel-menu::-webkit-scrollbar-thumb:hover,
+.md-view pre::-webkit-scrollbar-thumb:hover,
 .xterm-viewport::-webkit-scrollbar-thumb:hover {
-  background: #6b6553;
+  background: rgba(239, 232, 214, 0.4);
+  border: 2px solid transparent;
+  background-clip: content-box;
 }
 
 /* ---------- botões ---------- */
@@ -7362,7 +7395,6 @@ body.pane-docking .pane-bar.draggable {
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
-  scrollbar-width: thin;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -7915,7 +7947,6 @@ body.pane-docking .pane-bar.draggable {
   overflow: auto;
   padding: 7px 6px 10px;
   overscroll-behavior: contain;
-  scrollbar-width: thin;
 }
 
 .files-nav-tree.loading {
@@ -11775,52 +11806,8 @@ button.pd-mission.waiting:hover {
   background: none;
 }
 
-/* ---------- scrollbars customizadas ---------- */
-/* app (fundo papel): trilho invisível, polegar tinta */
-::-webkit-scrollbar {
-  width: var(--scrollbar-w);
-  height: var(--scrollbar-w);
-}
-
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-::-webkit-scrollbar-thumb {
-  background: rgba(38, 32, 25, 0.28);
-  border-radius: 6px;
-  border: 2px solid transparent;
-  background-clip: content-box;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: rgba(38, 32, 25, 0.45);
-  border: 2px solid transparent;
-  background-clip: content-box;
-}
-
-::-webkit-scrollbar-corner {
-  background: transparent;
-}
-
-/* painéis escuros (term-window, dropdowns, xterm): polegar claro discreto */
-.term-window ::-webkit-scrollbar-thumb,
-.sel-menu::-webkit-scrollbar-thumb,
-.xterm-viewport::-webkit-scrollbar-thumb {
-  background: rgba(239, 232, 214, 0.22);
-  border-radius: 6px;
-  border: 2px solid transparent;
-  background-clip: content-box;
-}
-
-.term-window ::-webkit-scrollbar-thumb:hover,
-.sel-menu::-webkit-scrollbar-thumb:hover,
-.xterm-viewport::-webkit-scrollbar-thumb:hover {
-  background: rgba(239, 232, 214, 0.4);
-  border: 2px solid transparent;
-  background-clip: content-box;
-}
-
+/* ---------- xterm: a barra do Chromium fica escondida ---------- */
+/* (a barra global da casa mora junto das regras base, no alto do arquivo) */
 /* O viewport legado do xterm não desenha uma segunda barra do Chromium. A
    barra oficial do xterm 6 vive em `.xterm-scrollable-element` logo abaixo. */
 .xterm-viewport {
@@ -18148,7 +18135,6 @@ details.gui-error-line {
   max-width: min(320px, calc(100cqw - 24px));
   max-height: 300px;
   overflow-y: auto;
-  scrollbar-width: thin;
   display: flex;
   flex-direction: column;
   gap: 1px;
@@ -19307,12 +19293,15 @@ details.gui-error-line {
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
-  scrollbar-width: thin;
+  /* RELIGA a barra que `.gui-mode-menu` esconde com `none`. Só `auto` serve:
+     `thin` também religa, mas entrega a rolagem à barra NATIVA do Windows
+     (o Chromium ignora os ::-webkit-scrollbar de quem declara thin/none). */
+  scrollbar-width: auto;
 }
 
 .gui-composer-model .gui-mode-menu::-webkit-scrollbar {
   display: block;
-  width: 6px;
+  width: var(--scrollbar-w);
 }
 
 .gui-composer-model .gui-mode-menu .gui-menu-item {
@@ -19337,12 +19326,13 @@ details.gui-error-line {
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
-  scrollbar-width: thin;
+  /* mesma receita do menu de modelo: `auto` religa a barra da casa */
+  scrollbar-width: auto;
 }
 
 .gui-effort-menu::-webkit-scrollbar {
   display: block;
-  width: 6px;
+  width: var(--scrollbar-w);
 }
 
 .gui-effort-menu .gui-menu-item {
@@ -19883,7 +19873,6 @@ details.gui-error-line {
   overflow-x: auto;
   padding: 7px 10px;
   border-bottom: 1px solid var(--line);
-  scrollbar-width: thin;
 }
 
 .command-palette-filters button {

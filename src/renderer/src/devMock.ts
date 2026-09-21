@@ -331,9 +331,11 @@ export function installDevMock(): void {
 
   let appSettings: SynkoraSettings = {
     externalServicePreparation: 'automatic',
-    terminalFontSize: 13,
-    terminalLineHeight: 1.25,
-    terminalFontFamily: 'Cascadia Code',
+    uiScale: 100,
+    uiFontFamily: 'Cascadia Code',
+    uiReduceMotion: false,
+    chatFontSize: 12.5,
+    chatLineHeight: 1.55,
     chatNotifyNeedsYou: true,
     chatNotifyFinished: true,
     chatNotifyFailed: true,
@@ -458,6 +460,7 @@ export function installDevMock(): void {
     },
     backlog: {
       listVersions: async () => [],
+      manifestVersion: async () => null,
       versionReleases: async () => [],
       projectReleases: async () => [],
       createVersion: async () => ({ ok: false, error: 'preview: sem backlog no browser' }),

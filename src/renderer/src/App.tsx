@@ -10,7 +10,8 @@ import ProjectRail from './components/ProjectRail'
 import TitleBar from './components/TitleBar'
 import TooltipLayer from './components/Tooltip'
 import GuiPanelErrorBoundary from './components/GuiPanelErrorBoundary'
-import { TERMINAL_DEFAULT_FONT_SIZE } from './terminalGeometry'
+import { applyUiAccessibilityVars, stepUiScale } from './uiAccessibility'
+import './uiAccessibility.css'
 import { installGlobalGuiEscape } from './guiEscape'
 import { guiApi } from './guiApi'
 import GuiQueueDispatcher from './components/GuiQueueDispatcher'
@@ -27,6 +28,7 @@ export default function App(): React.JSX.Element {
   const loadProjects = useStore((s) => s.loadProjects)
   const loadSeats = useStore((s) => s.loadSeats)
   const loadSettings = useStore((s) => s.loadSettings)
+  const settings = useStore((s) => s.settings)
   const openProject = useStore((s) => s.openProject)
   const setUniverseTab = useStore((s) => s.setUniverseTab)
 
@@ -137,14 +139,22 @@ export default function App(): React.JSX.Element {
               : null
       if (action === null) return
       event.preventDefault()
+      // ACESSIBILIDADE: Ctrl + −/+/0 regulam a ESCALA DA INTERFACE (zoom da
+      // janela, aplicado pelo main ao gravar) — antes mexiam só na fonte xterm.
       const state = useStore.getState()
-      const current = state.settings?.terminalFontSize ?? TERMINAL_DEFAULT_FONT_SIZE
-      const next = action === 0 ? TERMINAL_DEFAULT_FONT_SIZE : Math.max(8, Math.min(24, current + action))
-      if (next !== current) void state.patchSettings({ terminalFontSize: next })
+      const current = state.settings?.uiScale
+      const next = stepUiScale(current, action)
+      if (next !== current) void state.patchSettings({ uiScale: next })
     }
     window.addEventListener('keydown', onKeyDown, true)
     return () => window.removeEventListener('keydown', onKeyDown, true)
   }, [])
+
+  // ACESSIBILIDADE: fonte do app e leitura do chat viram variáveis CSS no
+  // <html>; a escala e o movimento são da janela e o main os aplica.
+  useEffect(() => {
+    applyUiAccessibilityVars(settings)
+  }, [settings])
 
   if (!bridgeOk) {
     return (

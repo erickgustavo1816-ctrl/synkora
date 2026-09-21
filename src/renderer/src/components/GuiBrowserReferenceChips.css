@@ -15,8 +15,6 @@
 .gui-composer-attachments > .gui-browser-references {
   max-height: min(180px, 25vh);
   overflow-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: var(--muted) transparent;
   margin-bottom: 5px;
 }
 

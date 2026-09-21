@@ -45,10 +45,11 @@ export function buildProjectContextTools(deps: ProjectContextDeps): ProjectConte
     if (pathKey(identity.cwd) !== pathKey(expected)) throw new Error('A pasta desta conversa não corresponde à missão. Reabra o chat.')
     if (write && (!data.mission || data.mission.status === 'arquivada' ||
       identity.paneId !== guiMissionPaneId('dev', data.mission.id) ||
-      !['gui-delegator', 'gui-planner'].includes(identity.role) ||
+      !['gui-delegator', 'gui-planner', 'gui-release'].includes(identity.role) ||
+      (identity.role === 'gui-release' && (!data.mission.direct || !['ativa', 'integrando'].includes(data.mission.status))) ||
       (identity.role === 'gui-delegator' && missionTypeOf(data.mission) !== 'dev') ||
       guiMissionRoleOf(identity.paneId) !== 'dev'))
-      throw new Error('Somente o chat de desenvolvimento ou planejamento da própria missão registra contexto. Consulte com context_read.')
+      throw new Error('Somente o chat de desenvolvimento, planejamento ou Release viva da própria missão registra contexto. Consulte com context_read.')
     return data
   }
   function audit(event: string, identity: PaneIdentity, detail: Record<string, unknown>): void {

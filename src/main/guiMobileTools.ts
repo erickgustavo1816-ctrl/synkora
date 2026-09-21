@@ -1,4 +1,4 @@
-/** Agent tools bind the authenticated conversation to a live development mission. */
+/** Agent tools bind the authenticated conversation to a live dev or Release mission. */
 import { lstatSync, realpathSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { guiMissionPaneId, missionTypeOf } from './guiMissionContracts'
@@ -9,7 +9,7 @@ import type { MobileExpoStartRequest, MobileExpoState } from '../shared/mobileEx
 
 export const MOBILE_TOOL_NAMES = ['mobile_status', 'mobile_start', 'mobile_stop', 'mobile_screenshot', 'mobile_action', 'mobile_expo'] as const
 export const MOBILE_ENGINE_OFF = 'O motor Mobile não está disponível. Nenhum dispositivo foi iniciado ou verificado. Reinicie o Synkora e chame mobile_status para conferir a disponibilidade.'
-const CONTEXT_REFUSAL = 'Esta conversa não tem uma missão de desenvolvimento ativa e válida para o Mobile. Reabra o chat da missão e chame mobile_status. Nenhum comando foi enviado.'
+const CONTEXT_REFUSAL = 'Esta conversa não tem uma missão de desenvolvimento ou Release ativa e válida para o Mobile. Reabra o chat da missão e chame mobile_status. Nenhum comando foi enviado.'
 
 export interface MobileRuntimeLike {
   inspect(missionId: string, actor?: MobileActor): Promise<MobileResult<MobileState>>
@@ -81,24 +81,26 @@ function sameIdentity(left: PaneIdentity, right: PaneIdentity): boolean {
 export function resolveMobileAgentTarget(deps: MobileAgentContextDeps, identity: PaneIdentity): MobileAgentTarget | undefined {
   const live = deps.identityOf(identity.paneId)
   if (!live || !sameIdentity(live, identity)) return undefined
-  let developer = live
+  let controller = live
   if (live.role === 'ajudante') {
     const helper = deps.helperOf(live.paneId)
     const delegator = live.delegatorPaneId ? deps.identityOf(live.delegatorPaneId) : undefined
     if (!helper || !delegator || !['spawning', 'working'].includes(helper.state) ||
       helper.delegatorPaneId !== live.delegatorPaneId || helper.projectId !== live.projectId ||
       delegator.projectId !== live.projectId || !sameRoot(helper.cwd, live.cwd) || !sameRoot(delegator.cwd, live.cwd)) return undefined
-    developer = delegator
-  } else if (live.role !== 'gui-delegator') return undefined
-  if (developer.role !== 'gui-delegator' || !developer.missionId ||
-    developer.paneId !== guiMissionPaneId('dev', developer.missionId)) return undefined
-  if (live.missionId && live.missionId !== developer.missionId) return undefined
-  const mission = deps.missionOf(developer.missionId)
+    controller = delegator
+  }
+  if (!['gui-delegator', 'gui-release'].includes(controller.role) || !controller.missionId ||
+    controller.paneId !== guiMissionPaneId('dev', controller.missionId)) return undefined
+  if (live.missionId && live.missionId !== controller.missionId) return undefined
+  const mission = deps.missionOf(controller.missionId)
   const project = deps.projectOf(live.projectId)
+  const release = controller.role === 'gui-release'
   if (!mission || !project || project.id !== live.projectId || mission.projectId !== project.id ||
-    !mission.direct || missionTypeOf(mission) !== 'dev' || !['ativa', 'integrando'].includes(mission.status)) return undefined
-  const rootPath = physicalRoot(mission.worktree || project.path)
-  if (!rootPath || !sameRoot(live.cwd, rootPath) || !sameRoot(developer.cwd, rootPath)) return undefined
+    mission.id !== controller.missionId || !mission.direct || missionTypeOf(mission) !== (release ? 'release' : 'dev') ||
+    !['ativa', 'integrando'].includes(mission.status)) return undefined
+  const rootPath = physicalRoot(release ? project.path : mission.worktree || project.path)
+  if (!rootPath || !sameRoot(live.cwd, rootPath) || !sameRoot(controller.cwd, rootPath)) return undefined
   return { paneId: live.paneId, missionId: mission.id, projectId: project.id, rootPath }
 }
 

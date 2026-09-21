@@ -251,9 +251,9 @@ test('o campo do número próprio só existe enquanto o projeto tem ZERO versõe
   // aplica a MESMA), nunca de uma comparação escrita aqui.
   assert.match(
     view,
-    /import \{ allowsOwnVersionNumber, versionSuggestions \} from '\.\.\/versionChoice'/u
+    /import \{ allowsOwnVersionNumber, manifestVersionNote, versionSuggestions \} from '\.\.\/versionChoice'/u
   )
-  assert.match(view, /const nextOptions = versionSuggestions\(versions\)/u)
+  assert.match(view, /const nextOptions = versionSuggestions\(versions, manifestVersion\)/u)
   assert.match(view, /\{allowsOwnVersionNumber\(versions\) && \(/u)
 
   // O gate cobre o CAMPO, nunca as sugestões: elas continuam sendo o caminho

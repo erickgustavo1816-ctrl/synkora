@@ -53,6 +53,9 @@ import { createMaestroEngine, type MaestroBackend } from './maestroEngine'
 import { createMissionEngine } from './missionEngine'
 import { createPaneLifecycle } from './paneLifecycle'
 import { buildPlansApi } from './mcpApi/plans'
+import { buildMissionLifecycle } from './missionLifecycle'
+import { buildReleaseMissions } from './releaseMissions'
+import { releaseConversationError } from './releaseAuthority'
 import { registerMaestroIpc } from './ipc/maestro'
 import { registerMissionsIpc } from './ipc/missions'
 import { registerPtyIpc } from './ipc/pty'
@@ -78,6 +81,7 @@ import {
   missionTypeOf
 } from './guiMissionContracts'
 import { initDesktopNotifications } from './desktopNotifications'
+import { createUiAccessibilityApplier } from './uiAccessibility'
 import {
   WINDOWS_TOAST_ACTIVATOR_CLSID,
   windowsNotificationShortcutSpec
@@ -798,6 +802,17 @@ function showMainWindow(): void {
   mainWindow.focus()
 }
 
+// ACESSIBILIDADE DO SYNKORA: escala (zoom da janela) e movimento reduzido
+// (mídia emulada) são aplicados pelo main. O store de settings nasce no
+// whenReady; até lá o leitor devolve null e não há o que aplicar.
+const uiAccessibility = createUiAccessibilityApplier()
+let readUiAccessibility: () => { uiScale: number; uiReduceMotion: boolean } | null = () => null
+function applyUiAccessibilityToMainWindow(): void {
+  const view = readUiAccessibility()
+  if (!view || !mainWindow || mainWindow.isDestroyed()) return
+  void uiAccessibility.apply(mainWindow.webContents, view)
+}
+
 function deliverProgressOpenTarget(target?: ProgressOpenTarget): void {
   if (target) pendingProgressOpenTarget = target
   if (
@@ -971,6 +986,9 @@ function createWindow(): BrowserWindow {
   win.webContents.on('did-finish-load', () => {
     mainLoadRetries = 0
     uiSender = win.webContents
+    // ACESSIBILIDADE: escala e movimento voltam a valer a cada carga (reload
+    // pós-crash inclusive) — o zoom do Chromium não é persistido por nós.
+    applyUiAccessibilityToMainWindow()
     win.webContents.send('voice:overlay-visibility', synVoiceDetached)
     refreshProgressSnapshot()
   })
@@ -2426,6 +2444,7 @@ app.whenReady().then(async () => {
   })
   const maestro = new MaestroStore()
   const settings = new SettingsStore()
+  readUiAccessibility = () => settings.view()
   endBootStores()
   // AS SKILLS DO KIT CHEGAM COM O INSTALADOR (2026-09-21): o app empacotado
   // tem userData próprio e nascia com a biblioteca vazia — o kit semeado citava
@@ -3932,6 +3951,12 @@ app.whenReady().then(async () => {
   // delegador (helper_cancel).
   setInterval(() => guiHelperEngine.sweep(), 60_000).unref()
   const guiDelegation = buildGuiDelegationApi({
+    releaseAllowed: (identity) => {
+      const mission = identity.missionId ? missions.get(identity.missionId) : undefined
+      return !releaseConversationError({ identity, mission,
+        live: hub.identityByPane(identity.paneId), project: projects.get(identity.projectId),
+        version: mission?.versionId ? backlog.getVersion(mission.versionId) : undefined })
+    },
     engine: guiHelperEngine,
     delegator: (paneId) => guiSessions?.delegatorFor(paneId),
     // O PINO DO DONO no painel do chat (D8): pedido sem modelo/effort abre com
@@ -4125,7 +4150,20 @@ app.whenReady().then(async () => {
     })
   })
 
+  const missionLifecycle = buildMissionLifecycle(ctx, {
+    engine: missionEngine, orchKey, emitBacklogChanged, killMissionGuiPanes,
+    guiSessions: { forgetWhere: (match) => guiSessions?.forgetWhere(match) ?? 0 }
+  })
+  const releaseMissions = buildReleaseMissions({
+    context: ctx, lifecycle: missionLifecycle,
+    releaseBusy: (projectId) => releaseMutationLocks.has(projectId),
+    audit: (event, projectId, missionId, targetId) => blackbox.record({
+      cat: 'mcp', event, actor: 'agent-release', ids: { projectId, missionId }, detail: { targetId }
+    })
+  })
+
   const mcpApi: McpApi = {
+    releaseMissions,
     ...buildPlansApi(ctx, {
       proposePlanToPane: (paneId, draft) =>
         guiSessions?.proposePlan(paneId, draft) ?? {
@@ -4671,7 +4709,9 @@ app.whenReady().then(async () => {
   // createWindow só roda no fim deste bloco, e o módulo só consulta a janela
   // na hora de notificar (é ela que decide se o app está em foco; em foco,
   // nada é notificado). Mesmo padrão do `window: () => mainWindow` da view.
-  initDesktopNotifications(() => mainWindow)
+  // O clique no toast navega pelo MESMO canal do radar de andamento
+  // (`progress:open-target`): missão/chat do aviso, ou só o projeto.
+  initDesktopNotifications(() => mainWindow, deliverProgressOpenTarget)
   // O ATUALIZADOR DO SYNKORA (2026-09-21): só o app EMPACOTADO carrega o
   // electron-updater e agenda as verificações (15 s após o boot, depois a cada
   // 6 h); em dev o controlador responde `unsupported` com o motivo. O feed é o
@@ -4769,7 +4809,11 @@ app.whenReady().then(async () => {
     }
   })
   registerFilesIpc(ctx, { assertAppRendererSender })
-  registerSettingsIpc(ctx, { assertMainRendererSender, assertAppRendererSender })
+  registerSettingsIpc(ctx, {
+    assertMainRendererSender,
+    assertAppRendererSender,
+    applyUiAccessibility: () => applyUiAccessibilityToMainWindow()
+  })
   // BROWSER EMBUTIDO: a superfície do DONO (barra de URL, abas, ← → ⟳,
   // devtools, bounds do painel). O agente entra pelo MCP, nunca por aqui.
   registerBrowserIpc(ctx, {
@@ -4878,6 +4922,7 @@ app.whenReady().then(async () => {
     surveySystemPromptFile
   })
   registerMissionsIpc(ctx, {
+    lifecycle: missionLifecycle,
     projectContextBriefing: projectContext.briefing,
     engine: missionEngine,
     maestroEngine,

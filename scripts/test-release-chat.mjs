@@ -645,9 +645,12 @@ test('R38 — a persona: a ascensão fecha NADA, e o release_done é do agente',
   assert.match(prompt, /ascent closes NOTHING/u, 'a subida não é o fim — dito em voz alta')
   assert.match(
     prompt,
-    /SIX tools run this show/u,
+    /RELEASE PROCESS:/u,
     'o inventário do papel acompanha o catálogo real'
   )
+  for (const tool of ['release_missions', 'release_mission_update', 'release_mission_remove', 'list_plans', 'get_plan']) {
+    assert.ok(prompt.includes(tool), `a Release precisa conhecer ${tool}`)
+  }
   assert.match(
     prompt,
     /that work happens HERE/u,

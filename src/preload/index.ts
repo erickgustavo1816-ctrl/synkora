@@ -641,10 +641,16 @@ export interface SynkoraPreferences {
    *  O campo existe em main/settings.ts desde a F5.1 e o main já o aplica em
    *  `ptys.setConptyDll`; faltava só no espelho de tipo daqui. */
   conptyDll?: boolean
-  /** Métricas fixas de todos os terminais do Synkora. */
-  terminalFontSize: number
-  terminalLineHeight: number
-  terminalFontFamily: string
+  /** ACESSIBILIDADE DO SYNKORA (2026-09-21) — espelho de main/settingsCore.ts.
+   *  Escala da interface em porcento (zoom da janela, aplicado pelo main),
+   *  fonte de todo o texto (inclusive terminais), movimento reduzido forçado, e
+   *  a leitura das mensagens do chat por cima da escala. Quem consome no
+   *  renderer é `uiAccessibility.ts`. */
+  uiScale: number
+  uiFontFamily: string
+  uiReduceMotion: boolean
+  chatFontSize: number
+  chatLineHeight: number
   /** vazio/ausente usa o microfone padrão do sistema */
   synVoiceInputDeviceId?: string
   /** Avisos do chat e seu vocabulário sonoro (globais à máquina). */
@@ -1371,6 +1377,11 @@ const api = {
   backlog: {
     listVersions: (projectId: string): Promise<Version[]> =>
       ipcRenderer.invoke('backlog:listVersions', projectId),
+    /** O `version` do package.json da pasta do projeto (a main) — o número que
+     *  o produto já lançou; `null` sem manifesto. As telas de versão sugerem
+     *  a partir dele em vez de pedir o número ao dono. */
+    manifestVersion: (projectId: string): Promise<string | null> =>
+      ipcRenderer.invoke('backlog:manifestVersion', projectId),
     /** Devolve a VERSÃO criada ou o MOTIVO da recusa (nome vazio, duplicado,
      *  abaixo/igual à lançada): o número passou a ser digitável na lateral de
      *  Versões, e um clique que não cria nada precisa dizer por quê. */

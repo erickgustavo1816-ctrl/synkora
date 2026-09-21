@@ -1567,7 +1567,7 @@ test('CATÁLOGO: o browser chega a quem VERIFICA A PRÓPRIA TELA — dev e ajuda
   assert.deepEqual([...receipt.tools].sort(), sorted(LSP_TOOLS, BROWSER_TOOLS, MOBILE_TOOLS, SKILL_TOOLS, CONTEXT_READ))
 })
 
-test('CATÁLOGO: reviewer, planejador e release NÃO recebem o browser — a cerca é mecânica', async (t) => {
+test('CATÁLOGO: Release valida com browser; reviewer e planejador continuam sem esse kit', async (t) => {
   const { hub, root } = hubIn(t)
   const { url } = await serverIn(t, hub)
   // O REVIEWER é a exceção deliberada: o contrato dele é LER o diff e reportar,
@@ -1601,12 +1601,12 @@ test('CATÁLOGO: reviewer, planejador e release NÃO recebem o browser — a cer
   const planner = await toolNames(url, 'token-planner', 'cat-planner')
   assert.deepEqual(planner, sorted(['commentary'], PLANNER_TOOLS, DELEGATOR_TOOLS, LSP_TOOLS, SKILL_TOOLS, CONTEXT_WRITE))
   const release = await toolNames(url, 'token-release', 'cat-release')
-  assert.deepEqual(release, sorted(['commentary'], RELEASE_TOOLS, LSP_TOOLS, CONTEXT_READ))
+  assert.deepEqual(release, sorted(['commentary', 'release_missions', 'release_mission_update', 'release_mission_remove'],
+    RELEASE_TOOLS, PLANNER_TOOLS, DELEGATOR_TOOLS, LSP_TOOLS, CONTEXT_WRITE, BROWSER_TOOLS, MOBILE_TOOLS, SKILL_TOOLS))
 
   for (const [label, tools] of [
     ['reviewer', rev],
-    ['planejador', planner],
-    ['release', release]
+    ['planejador', planner]
   ]) {
     for (const forbidden of BROWSER_TOOLS) {
       assert.equal(tools.includes(forbidden), false, `o ${label} enxergou ${forbidden}`)

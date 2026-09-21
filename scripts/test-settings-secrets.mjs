@@ -35,6 +35,7 @@ const F6_DOCUMENT = {
   githubToken: 'github_pat_legacy_987654',
   externalServicePreparation: 'on-demand',
   terminalFontSize: 14,
+  terminalFontFamily: 'Fira Code',
   chatNotifyFinished: false
 }
 
@@ -48,7 +49,10 @@ test('um settings.json do build F6 carrega, descarta as chaves órfãs e não la
   // As preferências que SOBREVIVERAM chegam com o valor gravado — o descarte
   // é seletivo, não um reset.
   assert.equal(view.externalServicePreparation, 'on-demand')
-  assert.equal(view.terminalFontSize, 14)
+  // a fonte do terminal de antes vira a fonte do app; o tamanho xterm morreu
+  assert.equal(view.uiFontFamily, 'Fira Code')
+  assert.equal(view.uiScale, 100)
+  assert.equal(view.terminalFontSize, undefined)
   assert.equal(view.chatNotifyFinished, false)
   // ...e as que morreram não voltam por nenhuma porta.
   for (const dead of [
@@ -80,11 +84,11 @@ test('a primeira gravação limpa as chaves órfãs do disco sem tocar em outro 
   writeFileSync(vault, vaultBody)
 
   const store = new SettingsStoreCore({ userDataPath: root })
-  store.update({ terminalFontSize: 16 })
+  store.update({ uiScale: 110 })
 
   const persisted = readFileSync(join(root, 'settings.json'), 'utf8')
   assert.doesNotMatch(persisted, /openrouterKey|githubToken|imageProvider|codeIntelligenceMode/)
-  assert.match(persisted, /"terminalFontSize": 16/)
+  assert.match(persisted, /"uiScale": 110/)
   assert.equal(readFileSync(vault, 'utf8'), vaultBody, 'o cofre antigo fica intacto')
 })
 
@@ -176,7 +180,7 @@ test('documento corrompido ou de tipo errado cai nos defaults sem lançar', (t) 
   const root = tempStore(t)
   writeFileSync(join(root, 'settings.json'), '{ isto não é json')
   assert.doesNotThrow(() => new SettingsStoreCore({ userDataPath: root }))
-  assert.equal(new SettingsStoreCore({ userDataPath: root }).view().terminalFontSize, 13)
+  assert.equal(new SettingsStoreCore({ userDataPath: root }).view().uiScale, 100)
 
   const other = tempStore(t)
   writeFileSync(join(other, 'settings.json'), JSON.stringify(['array', 'no', 'lugar', 'errado']))
@@ -200,4 +204,26 @@ test('o interruptor do skill_pull nasce LIGADO e só um `false` explícito o des
   const torto = tempStore(t)
   writeFileSync(join(torto, 'settings.json'), JSON.stringify({ skillsAgentPull: 'talvez' }))
   assert.equal(new SettingsStoreCore({ userDataPath: torto }).view().skillsAgentPull, true)
+})
+
+test('acessibilidade: faixas e passos na leitura, e o padrão de quem nunca mexeu', (t) => {
+  const root = tempStore(t)
+  const view = new SettingsStoreCore({ userDataPath: root }).view()
+  assert.deepEqual(
+    [view.uiScale, view.uiFontFamily, view.uiReduceMotion, view.chatFontSize, view.chatLineHeight],
+    [100, 'Cascadia Code', false, 12.5, 1.55]
+  )
+  writeFileSync(
+    join(root, 'settings.json'),
+    JSON.stringify({ uiScale: 400, uiReduceMotion: 'sim', chatFontSize: 13.3, chatLineHeight: 0.4 })
+  )
+  const clamped = new SettingsStoreCore({ userDataPath: root }).view()
+  assert.equal(clamped.uiScale, 150, 'teto da escala')
+  assert.equal(clamped.uiReduceMotion, false, 'só `true` liga o movimento reduzido')
+  assert.equal(clamped.chatFontSize, 13.5, 'fonte do chat assenta em meio ponto')
+  assert.equal(clamped.chatLineHeight, 1.2, 'piso da altura da linha')
+  writeFileSync(join(root, 'settings.json'), JSON.stringify({ uiScale: 60, chatFontSize: 99 }))
+  const low = new SettingsStoreCore({ userDataPath: root }).view()
+  assert.equal(low.uiScale, 80)
+  assert.equal(low.chatFontSize, 20)
 })

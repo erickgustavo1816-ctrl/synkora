@@ -31,6 +31,8 @@ import { BROWSER_TOOL_NAMES } from './guiBrowserTools'
 import { MOBILE_TOOL_NAMES } from './guiMobileTools'
 import { SKILL_TOOL_NAMES } from './guiSkillKit'
 import { CONTEXT_TOOL_NAMES } from './projectContextKit'
+import { PLAN_TOOL_NAMES } from './planToolCatalog'
+import { RELEASE_MISSION_TOOL_NAMES } from './releaseMissionTools'
 
 /** A cerca anti-subagente-nativo do claude (sonda 2026-08-18: cerca de 1-2
  *  nomes NÃO basta — o modelo desvia por RemoteTrigger etc.; esta lista de 12
@@ -119,8 +121,6 @@ export function guiPaneToolKind(
   // `gui-dev-<id8>` (papel dev, missão de planejamento) e é planejador. Missão
   // legada sem carimbo é 'dev' por definição — nada no disco muda de natureza.
   if (missionTypeOf(mission) === 'planejamento') return 'planner'
-  // R10: a missão de RELEASE tem catálogo próprio (release_status/release_run)
-  // — ela nunca delega nem integra missão; a subida da versão é o show inteiro.
   if (missionTypeOf(mission) === 'release') return 'release'
   return 'delegator'
 }
@@ -213,19 +213,11 @@ export const GUI_DELEGATE_CLAUDE_ALLOWED_TOOLS: readonly string[] = [
   ...SKILL_TOOL_NAMES.map((tool) => `mcp__synkora__${tool}`)
 ]
 
-/**
- * As CINCO tools do kit de PLANOS, no nome interno (o catálogo delas continua
- * no `buildServer`, bloco `gui-planner`). Elas viram pré-sanção AQUI porque o
- * planejador passou a delegar (ordem do dono, 2026-08-30) e o arm dele agora é
- * o mesmo dos outros chats: com `--allowedTools` presente, tool fora da lista
- * volta a pedir permissão — e o kit de planos pedindo card seria regressão.
- */
-export const GUI_PLAN_TOOL_NAMES: readonly string[] = [
-  'list_plans',
-  'get_plan',
-  'propose_plan',
-  'update_plan',
-  'delete_plan'
+export const GUI_RELEASE_CLAUDE_ALLOWED_TOOLS: readonly string[] = [
+  ...GUI_DELEGATE_CLAUDE_ALLOWED_TOOLS.filter((tool) =>
+    !['mcp__synkora__integration_status', 'mcp__synkora__integration_run', 'mcp__synkora__mission_summary'].includes(tool)),
+  ...PLAN_TOOL_NAMES.map((tool) => `mcp__synkora__${tool}`),
+  ...RELEASE_MISSION_TOOL_NAMES.map((tool) => `mcp__synkora__${tool}`)
 ]
 
 /**
@@ -236,7 +228,7 @@ export const GUI_PLAN_TOOL_NAMES: readonly string[] = [
 export const GUI_PLANNER_CLAUDE_ALLOWED_TOOLS: readonly string[] = [
   'mcp__synkora__commentary',
   ...CONTEXT_TOOL_NAMES.map((tool) => `mcp__synkora__${tool}`),
-  ...GUI_PLAN_TOOL_NAMES.map((tool) => `mcp__synkora__${tool}`),
+  ...PLAN_TOOL_NAMES.map((tool) => `mcp__synkora__${tool}`),
   ...GUI_HELPER_TOOL_NAMES.map((tool) => `mcp__synkora__${tool}`),
   ...LSP_TOOL_NAMES.map((tool) => `mcp__synkora__${tool}`),
   // SKILLS 3.0 (2026-09-08, ADR-0011): o planejador escolhe o MÉTODO do mesmo
@@ -262,19 +254,21 @@ export function guiDelegateClaudeArgs(
     '--allowedTools',
     (role === 'gui-planner'
       ? GUI_PLANNER_CLAUDE_ALLOWED_TOOLS
-      : GUI_DELEGATE_CLAUDE_ALLOWED_TOOLS
+      : role === 'gui-release' ? GUI_RELEASE_CLAUDE_ALLOWED_TOOLS : GUI_DELEGATE_CLAUDE_ALLOWED_TOOLS
     ).join(',')
   ]
 }
 
 /** Overrides `-c` do codex: os do planejador + teto de tool + a cerca. */
-export function guiDelegateCodexArgs(port: number): string[] {
+export function guiDelegateCodexArgs(port: number, role?: 'gui-delegator' | 'gui-release' | 'gui-planner'): string[] {
   return [
     ...guiPlannerCodexArgs(port),
     '-c',
     `mcp_servers.synkora.tool_timeout_sec=${GUI_DELEGATE_CODEX_TOOL_TIMEOUT_SEC}`,
     '-c',
-    CODEX_NATIVE_AGENT_FENCE_ARG
+    CODEX_NATIVE_AGENT_FENCE_ARG,
+    ...(role === 'gui-release' ? ['-c', `mcp_servers.synkora.enabled_tools=[${GUI_RELEASE_CLAUDE_ALLOWED_TOOLS
+      .map(tool => `'${tool.replace('mcp__synkora__', '')}'`).join(',')}]`] : [])
   ]
 }
 
@@ -323,7 +317,7 @@ export function armGuiDelegateMcp(
   }
   deps.remember(input.paneId, { token })
   return {
-    args: guiDelegateCodexArgs(port),
+    args: guiDelegateCodexArgs(port, role),
     env: { [GUI_PLANNER_TOKEN_ENV]: token }
   }
 }

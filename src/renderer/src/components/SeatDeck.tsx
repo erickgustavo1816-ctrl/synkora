@@ -357,9 +357,7 @@ export default function SeatDeck({
                 cwd=""
                 kind={openLogin.cli}
                 seatId={openLogin.id}
-                fontSize={settings?.terminalFontSize ?? TERMINAL_DEFAULT_FONT_SIZE}
-                lineHeight={settings?.terminalLineHeight ?? TERMINAL_DEFAULT_LINE_HEIGHT}
-                fontFamily={settings?.terminalFontFamily ?? TERMINAL_DEFAULT_FONT_FAMILY}
+                fontFamily={settings?.uiFontFamily ?? TERMINAL_DEFAULT_FONT_FAMILY}
                 voiceEnabled={false}
                 startupMessage="preparando o ambiente de login…"
               />
