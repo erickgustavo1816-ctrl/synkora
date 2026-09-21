@@ -80,8 +80,9 @@ export function resetNotifyThrottleForTests(): void {
 }
 
 // ————— O TEXTO DO TOAST (2026-09-21) —————
-// Ordem do dono: título e corpo DIRETOS. O título é o ASSUNTO ("<missão> ·
-// <projeto>", ou "Planejamento · <projeto>" no chat de planejamento) e o corpo
+// Ordem do dono: título e corpo DIRETOS. O título é o ASSUNTO ("<projeto> ·
+// <missão>", ou "<projeto> · Planejamento" no chat de planejamento — o projeto
+// vem PRIMEIRO, escolha dele em 2026-09-21) e o corpo
 // é UMA frase que diz o que aconteceu e, quando cabe, o que fazer. Nada de
 // prefixo "Synkora —": o Windows já mostra o nome do app no cabeçalho do toast.
 
@@ -96,7 +97,7 @@ export type DesktopChatNoticeKind = 'needs-you' | 'finished' | 'failed'
 export function desktopNotifyTitle(subject: DesktopNotifySubject): string {
   const scope = subject.missionTitle?.trim() || 'Planejamento'
   const project = subject.projectName?.trim()
-  return project ? `${scope} · ${project}` : scope
+  return project ? `${project} · ${scope}` : scope
 }
 
 /** Quem falou, quando não é o dev da missão: o dev é o padrão e fica implícito. */

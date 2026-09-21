@@ -352,9 +352,9 @@ test('registro de visibilidade isola renderers e conserva um pane ativo enquanto
 // está muito boa. Precisava de algo mais direto." O nome do app já vem no
 // cabeçalho do toast do Windows — repeti-lo no título era ruído.
 
-test('título do toast é o assunto: "<missão> · <projeto>", ou o planejamento do projeto', () => {
-  assert.equal(desktopNotifyTitle({ missionTitle: 'Bug', projectName: 'Synkora' }), 'Bug · Synkora')
-  assert.equal(desktopNotifyTitle({ projectName: 'Synkora' }), 'Planejamento · Synkora')
+test('título do toast é o assunto: "<projeto> · <missão>", ou o planejamento do projeto', () => {
+  assert.equal(desktopNotifyTitle({ missionTitle: 'Bug', projectName: 'Synkora' }), 'Synkora · Bug')
+  assert.equal(desktopNotifyTitle({ projectName: 'Synkora' }), 'Synkora · Planejamento')
   assert.equal(desktopNotifyTitle({ missionTitle: '  Bug ' }), 'Bug')
   assert.equal(desktopNotifyTitle({}), 'Planejamento')
   assert.doesNotMatch(desktopNotifyTitle({ missionTitle: 'Bug', projectName: 'Synkora' }), /Synkora —/u)
