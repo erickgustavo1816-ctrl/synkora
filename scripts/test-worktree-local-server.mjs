@@ -6,7 +6,7 @@ import { mkdtempSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os'
 import { join, relative, resolve, sep } from 'node:path'
 import { probeWorktreePreviewProcesses, stopProbedWorktreePreviewProcesses, stopWorktreePreviewProcesses }
-  from '../.tmp/worktree-preview-processes-test/worktreePreviewProcesses.js'
+  from '../.tmp/worktree-preview-processes-test/main/worktreePreviewProcesses.js'
 
 test('Windows: a custom loopback proxy is closed by workspace ownership, without a framework name', {
   skip: process.platform !== 'win32', timeout: 60_000

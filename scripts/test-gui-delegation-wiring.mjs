@@ -23,36 +23,36 @@ import test from 'node:test'
 // Namespace de propósito: com destructure no topo, UM export faltando derruba o
 // arquivo inteiro e a suíte deixa de discriminar. Assim, a ausência de uma peça
 // reprova só o teste que depende dela — que é como o vermelho vira diagnóstico.
-import * as cards from '../.tmp/gui-delegation-wiring-test/guiHelperCards.js'
-import * as sessions from '../.tmp/gui-delegation-wiring-test/guiSessions.js'
-import * as wiring from '../.tmp/gui-delegation-wiring-test/guiDelegationWiring.js'
-import * as engineModule from '../.tmp/gui-delegation-wiring-test/guiHelperSessions.js'
+import * as cards from '../.tmp/gui-delegation-wiring-test/main/guiHelperCards.js'
+import * as sessions from '../.tmp/gui-delegation-wiring-test/main/guiSessions.js'
+import * as wiring from '../.tmp/gui-delegation-wiring-test/main/guiDelegationWiring.js'
+import * as engineModule from '../.tmp/gui-delegation-wiring-test/main/guiHelperSessions.js'
 // R14 (L3): o REGISTRO de identidade de verdade (nada de hub dublê — quem
 // autentica o bearer do ajudante no servidor MCP é este) e a convenção de paneId
 // de missão, que o endereço do ajudante não pode imitar.
-import * as hubModule from '../.tmp/gui-delegation-wiring-test/hub.js'
-import * as contracts from '../.tmp/gui-delegation-wiring-test/guiMissionContracts.js'
+import * as hubModule from '../.tmp/gui-delegation-wiring-test/main/hub.js'
+import * as contracts from '../.tmp/gui-delegation-wiring-test/main/guiMissionContracts.js'
 // O kit SÓ-LSP (módulo NOVO da R14) entra pela porta tolerante, no mesmo
 // espírito do namespace acima e um passo além: import estático de arquivo
 // AUSENTE derruba a suíte INTEIRA, e ela deixaria de discriminar. Sem o módulo,
 // caem só os testes do kit.
-const lspMcp = await import('../.tmp/gui-delegation-wiring-test/guiHelperLspMcp.js').catch(
+const lspMcp = await import('../.tmp/gui-delegation-wiring-test/main/guiHelperLspMcp.js').catch(
   () => ({})
 )
 // O POTE DO DONO (módulo NOVO da R22) pela mesma porta tolerante: sem ele, caem
 // só os testes da carona — e caem dizendo o que falta.
-const ownerMailModule = await import('../.tmp/gui-delegation-wiring-test/guiOwnerMail.js').catch(
+const ownerMailModule = await import('../.tmp/gui-delegation-wiring-test/main/guiOwnerMail.js').catch(
   () => ({})
 )
 // A DÍVIDA DE RESPOSTA (módulo NOVO da R32) pela mesma porta tolerante: sem
 // ele, caem só os testes da cobrança — e caem dizendo o que falta.
 const ownerReplyModule = await import(
-  '../.tmp/gui-delegation-wiring-test/guiOwnerReplyDebt.js'
+  '../.tmp/gui-delegation-wiring-test/main/guiOwnerReplyDebt.js'
 ).catch(() => ({}))
 // O RASTRO DO HARNESS DA MISSÃO (módulo NOVO da fatia 5.B, Skills 3.0) pela
 // MESMA porta tolerante: sem ele cai só o teste do briefing do ajudante.
 const harnessModule = await import(
-  '../.tmp/gui-delegation-wiring-test/skillsHarness.js'
+  '../.tmp/gui-delegation-wiring-test/main/skillsHarness.js'
 ).catch(() => ({}))
 
 const {

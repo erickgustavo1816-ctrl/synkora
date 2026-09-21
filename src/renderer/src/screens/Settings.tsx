@@ -1,6 +1,7 @@
 import { useStore, type SettingsSection } from '../store'
 import AppearanceSettings from '../components/AppearanceSettings'
 import ChatNoticeSettings from '../components/ChatNoticeSettings'
+import ChatWritingSettings from '../components/ChatWritingSettings'
 import SeatDeck from '../components/SeatDeck'
 import SkillsSettings from '../components/SkillsSettings'
 import SynVoiceMicrophoneSettings from '../components/SynVoiceMicrophoneSettings'
@@ -15,7 +16,7 @@ interface NavItem {
 }
 
 const NAV: NavItem[] = [
-  { id: 'appearance', glyph: 'Aa', label: 'Aparência', description: 'fonte dos painéis' },
+  { id: 'appearance', glyph: 'Aa', label: 'Aparência', description: 'painéis e escrita do chat' },
   { id: 'accounts', glyph: '●', label: 'Minhas contas', description: 'seats e logins' },
   { id: 'skills', glyph: '❖', label: 'Skills', description: 'biblioteca e kits' },
   { id: 'voice', glyph: '◉', label: 'SynVoice', description: 'microfone e voz' }
@@ -111,6 +112,12 @@ export default function Settings(): React.JSX.Element {
                       label="as configurações de aparência"
                     >
                       <AppearanceSettings />
+                    </GuiPanelErrorBoundary>
+                    <GuiPanelErrorBoundary
+                      paneId="settings:chat-writing"
+                      label="a escrita do chat"
+                    >
+                      <ChatWritingSettings />
                     </GuiPanelErrorBoundary>
                     <GuiPanelErrorBoundary
                       paneId="settings:chat-notices"

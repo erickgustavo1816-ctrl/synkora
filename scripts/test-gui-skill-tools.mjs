@@ -43,7 +43,7 @@ import {
   SKILL_TOOL_NAMES,
   buildGuiSkillTools,
   registerSkillsKit
-} from '../.tmp/gui-skill-tools-test/guiSkillTools.js'
+} from '../.tmp/gui-skill-tools-test/main/guiSkillTools.js'
 
 const TARGETS = ['.claude/skills', '.agents/skills']
 

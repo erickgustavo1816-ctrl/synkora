@@ -1828,10 +1828,19 @@ test('cópia final oferece uma única ação discreta e sempre escreve texto lim
     new URL('../src/renderer/src/components/GuiMarkdown.tsx', import.meta.url),
     'utf8'
   )
+  // A ESCRITA DO CHAT (2026-09-21): a fala é UM componente do primeiro delta à
+  // mensagem parada — `GuiStreamText` carrega o botão de copiar; o único
+  // container à parte é o card JSON, que só existe com o texto completo.
   const streamBranch = pane.indexOf('<GuiStreamText')
-  const staticBranch = pane.indexOf('<GuiMessageCopy')
-  assert.ok(streamBranch >= 0 && staticBranch > streamBranch)
+  assert.ok(streamBranch >= 0)
+  assert.match(pane, /const jsonCard = revealing \? null : parseGuiJsonCard\(item\.text\)/u)
   assert.match(pane, /<GuiMessageCopy markdown=\{item\.text\} \/>/u)
+  const stream = readFileSync(
+    new URL('../src/renderer/src/components/GuiStreamText.tsx', import.meta.url),
+    'utf8'
+  )
+  assert.match(stream, /<GuiMessageCopy markdown=\{text\} \/>/u)
+  assert.match(stream, /className=\{`gui-msg dev\$\{revealing \? ' stream' : ''\}`\}/u, 'o container é o mesmo do início ao fim')
   assert.doesNotMatch(pane, /innerText/u)
   assert.match(pane, /if \(item\.kind === 'error'\) return <GuiErrorLine/u)
   assert.match(copy, /className=\{`gui-copy-action \$\{feedback\.kind\}`\}/u)
@@ -2077,9 +2086,13 @@ test('texto final conserva o item vivo até o revelador terminar', () => {
   assert.match(store, /activeAssistantId/u)
   assert.match(store, /function finalizeGuiStream/u)
   assert.match(store, /animateFrom: Math\.min\(item\.animateFrom, evt\.text\.length\)/u)
-  assert.match(stream, /nextGuiWordEnd\(textRef\.current, current\)/u)
+  // 2026-09-21: a cadência é adaptativa (palavras inteiras por tique, decididas
+  // em guiStreamReveal.ts) e o relógio só depende da cadência escolhida —
+  // nunca de `text`, senão cada rajada rearmaria o tique.
+  assert.match(stream, /nextGuiRevealShown\(textRef\.current, current, words\)/u)
+  assert.match(stream, /guiRevealWordsThisTick\(textRef\.current, current, completeRef\.current, paceRef\.current, tickMs\)/u)
   assert.match(stream, /setInterval/u)
-  assert.match(stream, /\}, \[\]\)/u, 'o relógio não pode reiniciar a cada delta')
+  assert.match(stream, /\}, \[tickMs\]\)/u, 'o relógio não pode reiniciar a cada delta')
   assert.doesNotMatch(stream, /speed\s*=\s*Math\.max/u)
 })
 
@@ -3202,7 +3215,11 @@ test('o card rico substitui o card cru da tool e some na conversa congelada', ()
   assert.match(pane, /'mcp__synkora__propose_plan'/u)
   // Mesma cerca das outras decisões: histórico local aberto ou pane read-only
   // NÃO renderiza card vivo (`inert`), e o composer cede a vez ao card.
-  assert.match(pane, /\{!inert && planProposalCard && \(/u)
+  // 2026-09-21: as decisões esperam o escritor da vez terminar de escrever o
+  // que já recebeu (UM escritor por conversa) — a régua é `guiHeldItems`.
+  assert.match(pane, /\{!inert && planProposalCard && !writerBusy && \(/u)
+  assert.match(pane, /\{!inert && gui\.question && !writerBusy && \(/u)
+  assert.match(pane, /guiThreadRenderItems\(guiHeldItems\(visibleItems, writerBusy\)\)/u)
   assert.match(pane, /const awaitingCard = Boolean\(gui\.question \|\| gui\.planReview \|\| planProposalCard\)/u)
   assert.match(pane, /answerGuiPlanProposal\(projectId, paneId, approve, note\)/u)
 

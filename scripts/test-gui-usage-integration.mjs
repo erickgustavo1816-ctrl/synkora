@@ -4,11 +4,11 @@ import { createRequire } from 'node:module'
 import { join, resolve, sep } from 'node:path'
 import test from 'node:test'
 import { buildSync } from 'esbuild'
-import { GuiSessionRegistry, isGuiPersistedEvent } from '../.tmp/gui-sessions-test/guiSessions.js'
-import { MaestroSession } from '../.tmp/gui-sessions-test/maestroSession.js'
-import { CodexSession } from '../.tmp/gui-sessions-test/codexSession.js'
-import { GuiClaudeTaskRegistry } from '../.tmp/gui-sessions-test/guiClaudeTasks.js'
-import { GuiOwnerMailbox } from '../.tmp/gui-sessions-test/guiOwnerMail.js'
+import { GuiSessionRegistry, isGuiPersistedEvent } from '../.tmp/gui-sessions-test/main/guiSessions.js'
+import { MaestroSession } from '../.tmp/gui-sessions-test/main/maestroSession.js'
+import { CodexSession } from '../.tmp/gui-sessions-test/main/codexSession.js'
+import { GuiClaudeTaskRegistry } from '../.tmp/gui-sessions-test/main/guiClaudeTasks.js'
+import { GuiOwnerMailbox } from '../.tmp/gui-sessions-test/main/guiOwnerMail.js'
 
 const compiledStore = buildSync({ stdin: { contents: `export { useStore, EMPTY_GUI_PANE } from './src/renderer/src/store';`,
   resolveDir: process.cwd(), loader: 'ts' }, bundle: true, platform: 'node', format: 'cjs',

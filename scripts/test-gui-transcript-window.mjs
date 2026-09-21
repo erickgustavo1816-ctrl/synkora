@@ -57,7 +57,9 @@ test('integra a janela no bloco de render/scroll sem alterar o cap do store', ()
   assert.match(pane, /useGuiTranscriptWindow/u)
   // P11 acrescenta a etapa de aninhamento, mas a fonte continua sendo a janela
   // paginada — nunca `gui.items` inteiro.
-  assert.match(pane, /guiThreadRenderItems\(visibleItems\)/u)
+  // 2026-09-21: a janela continua sendo a fonte do bloco de render; entre ela e
+  // o agrupamento entra só a retenção do escritor único (guiHeldItems).
+  assert.match(pane, /guiThreadRenderItems\(guiHeldItems\(visibleItems, writerBusy\)\)/u)
   assert.match(pane, /onScroll=\{onTranscriptScroll\}/u)
   assert.match(pane, /onClick=\{loadAll\}/u)
   assert.match(pane, /carregar todas as \{totalItems\}/u)

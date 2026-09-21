@@ -31,10 +31,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client'
-import { Hub } from '../.tmp/gui-planner-mcp-test/hub.js'
-import { GUI_PLANNER_TOKEN_ENV } from '../.tmp/gui-planner-mcp-test/guiPlannerMcp.js'
-import { armGuiDelegateMcp } from '../.tmp/gui-planner-mcp-test/guiDelegateMcp.js'
-import { startMcpServer } from '../.tmp/gui-planner-mcp-test/mcpServer.js'
+import { Hub } from '../.tmp/gui-planner-mcp-test/main/hub.js'
+import { GUI_PLANNER_TOKEN_ENV } from '../.tmp/gui-planner-mcp-test/main/guiPlannerMcp.js'
+import { armGuiDelegateMcp } from '../.tmp/gui-planner-mcp-test/main/guiDelegateMcp.js'
+import { startMcpServer } from '../.tmp/gui-planner-mcp-test/main/mcpServer.js'
 
 // O ARM DO PLANEJADOR (2026-08-30): a trilha própria (`armGuiPlannerMcp`)
 // morreu quando o planejador entrou no regime da delegação — ele arma pelo

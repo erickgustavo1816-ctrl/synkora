@@ -6,12 +6,12 @@ import test from 'node:test'
 import { buildSync } from 'esbuild'
 import React from 'react'
 import { act, create } from 'react-test-renderer'
-import { GuiSessionRegistry } from '../.tmp/gui-sessions-test/guiSessions.js'
-import { MaestroSession } from '../.tmp/gui-sessions-test/maestroSession.js'
-import { GuiClaudeTaskRegistry } from '../.tmp/gui-sessions-test/guiClaudeTasks.js'
-import { GuiOwnerMailbox } from '../.tmp/gui-sessions-test/guiOwnerMail.js'
-import { GuiOwnerReplyDebt } from '../.tmp/gui-sessions-test/guiOwnerReplyDebt.js'
-import { guiOwnerDebtHookSettings } from '../.tmp/gui-sessions-test/guiOwnerDebtHook.js'
+import { GuiSessionRegistry } from '../.tmp/gui-sessions-test/main/guiSessions.js'
+import { MaestroSession } from '../.tmp/gui-sessions-test/main/maestroSession.js'
+import { GuiClaudeTaskRegistry } from '../.tmp/gui-sessions-test/main/guiClaudeTasks.js'
+import { GuiOwnerMailbox } from '../.tmp/gui-sessions-test/main/guiOwnerMail.js'
+import { GuiOwnerReplyDebt } from '../.tmp/gui-sessions-test/main/guiOwnerReplyDebt.js'
+import { guiOwnerDebtHookSettings } from '../.tmp/gui-sessions-test/main/guiOwnerDebtHook.js'
 
 const compiled = buildSync({
   stdin: { contents: `
