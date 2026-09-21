@@ -1,14 +1,21 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { GuiAlertSequencer } from '../src/main/guiNotices.ts'
+import { readFile } from 'node:fs/promises'
 import {
   canShowDesktopNotification,
+  desktopChatNoticeBody,
+  desktopConflictBody,
+  desktopMergedBody,
+  desktopNotifyTitle,
   resetNotifyThrottleForTests,
   shouldNotify,
   WINDOWS_APP_USER_MODEL_ID,
   WINDOWS_TOAST_ACTIVATOR_CLSID,
   windowsNotificationShortcutSpec
 } from '../src/main/desktopNotificationPolicy.ts'
+
+const source = (path) => readFile(new URL(`../${path}`, import.meta.url), 'utf8')
 import {
   GUI_READY_CLEAR_MS,
   GUI_WINDOW_READY_TITLE,
@@ -338,4 +345,63 @@ test('registro de visibilidade isola renderers e conserva um pane ativo enquanto
   assert.equal(visibility.isActive('pane-a'), true)
   assert.deepEqual(new Set(visibility.dropSender(2)), new Set(['pane-a', 'pane-b']))
   assert.equal(visibility.isActive('pane-a'), false)
+})
+
+// ————— o TEXTO do toast: assunto no título, uma frase direta no corpo —————
+// Ordem do dono (2026-09-21): "está muito feio o título e a descrição não
+// está muito boa. Precisava de algo mais direto." O nome do app já vem no
+// cabeçalho do toast do Windows — repeti-lo no título era ruído.
+
+test('título do toast é o assunto: "<missão> · <projeto>", ou o planejamento do projeto', () => {
+  assert.equal(desktopNotifyTitle({ missionTitle: 'Bug', projectName: 'Synkora' }), 'Bug · Synkora')
+  assert.equal(desktopNotifyTitle({ projectName: 'Synkora' }), 'Planejamento · Synkora')
+  assert.equal(desktopNotifyTitle({ missionTitle: '  Bug ' }), 'Bug')
+  assert.equal(desktopNotifyTitle({}), 'Planejamento')
+  assert.doesNotMatch(desktopNotifyTitle({ missionTitle: 'Bug', projectName: 'Synkora' }), /Synkora —/u)
+})
+
+test('corpo do aviso de chat é direto e só nomeia quem fala quando não é o dev', () => {
+  assert.equal(desktopChatNoticeBody('needs-you', 'dev'), 'Precisa de você')
+  assert.equal(desktopChatNoticeBody('needs-you', undefined), 'Precisa de você')
+  assert.equal(desktopChatNoticeBody('finished', 'dev'), 'Terminou o turno')
+  assert.equal(desktopChatNoticeBody('failed', 'dev'), 'Falhou. Veja o erro no chat')
+  assert.equal(desktopChatNoticeBody('needs-you', 'reviewer'), 'O revisor precisa de você')
+  assert.equal(desktopChatNoticeBody('finished', 'helper'), 'Um ajudante terminou o turno')
+  assert.equal(desktopChatNoticeBody('failed', 'reviewer'), 'O revisor falhou. Veja o erro no chat')
+})
+
+test('corpo da fila: conflito conta arquivos (singular/plural) ou traz o detalhe curto; merge diz o destino', () => {
+  assert.equal(desktopConflictBody({ conflictFiles: 3, detail: 'x' }), 'Integração parou: 3 arquivos em conflito')
+  assert.equal(desktopConflictBody({ conflictFiles: 1, detail: 'x' }), 'Integração parou: 1 arquivo em conflito')
+  assert.equal(desktopConflictBody({ conflictFiles: 0, detail: ' worktree sujo ' }), 'Integração parou: worktree sujo')
+  assert.equal(desktopConflictBody({ detail: 'a'.repeat(200) }).length, 'Integração parou: '.length + 120)
+  assert.equal(desktopConflictBody({ detail: '' }), 'Integração parou')
+  assert.equal(desktopMergedBody('version/V0.1.2'), 'Integrada na version/V0.1.2')
+})
+
+// ————— o CLIQUE leva a algum lugar —————
+// "quando clico na notificação nada acontece": dois motivos. O `onClick` nunca
+// era passado, e a instância da Notification ficava sem referência — o Electron
+// só entrega `click` enquanto ela vive. Contrato de fonte, sem Electron real.
+
+test('notifyDesktop segura a instância até fechar e navega pelo alvo no clique', async () => {
+  const src = await source('src/main/desktopNotifications.ts')
+  assert.match(src, /const live = new Set<Notification>\(\)/u)
+  assert.match(src, /live\.add\(notification\)/u)
+  assert.match(src, /notification\.on\('close', release\)/u)
+  assert.match(src, /if \(input\.target\) navigate\(input\.target\)/u)
+  const index = await source('src/main/index.ts')
+  assert.match(index, /initDesktopNotifications\(\(\) => mainWindow, deliverProgressOpenTarget\)/u)
+})
+
+test('cada aviso viaja com o alvo do clique: chat abre o pane, conflito abre a missão, merge abre só o projeto', async () => {
+  const gui = await source('src/main/ipc/gui.ts')
+  const chatCall = gui.slice(gui.indexOf("kind: `chat-${kind}`"))
+  assert.match(chatCall.slice(0, 600), /destination: 'chat'/u)
+  assert.match(chatCall.slice(0, 600), /paneId,/u)
+  const engine = await source('src/main/missionEngine.ts')
+  const conflict = engine.slice(engine.indexOf("kind: 'conflict'"), engine.indexOf("kind: 'conflict'") + 600)
+  assert.match(conflict, /target: \{ projectId: mission\.projectId, missionId: mission\.id \}/u)
+  const merged = engine.slice(engine.indexOf("kind: 'merged'"), engine.indexOf("kind: 'merged'") + 600)
+  assert.match(merged, /target: \{ projectId, destination: 'project' \}/u)
 })

@@ -4671,7 +4671,9 @@ app.whenReady().then(async () => {
   // createWindow só roda no fim deste bloco, e o módulo só consulta a janela
   // na hora de notificar (é ela que decide se o app está em foco; em foco,
   // nada é notificado). Mesmo padrão do `window: () => mainWindow` da view.
-  initDesktopNotifications(() => mainWindow)
+  // O clique no toast navega pelo MESMO canal do radar de andamento
+  // (`progress:open-target`): missão/chat do aviso, ou só o projeto.
+  initDesktopNotifications(() => mainWindow, deliverProgressOpenTarget)
   // O ATUALIZADOR DO SYNKORA (2026-09-21): só o app EMPACOTADO carrega o
   // electron-updater e agenda as verificações (15 s após o boot, depois a cada
   // 6 h); em dev o controlador responde `unsupported` com o motivo. O feed é o
