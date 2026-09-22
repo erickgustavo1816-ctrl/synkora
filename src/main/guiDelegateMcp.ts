@@ -33,6 +33,7 @@ import { SKILL_TOOL_NAMES } from './guiSkillKit'
 import { CONTEXT_TOOL_NAMES } from './projectContextKit'
 import { PLAN_TOOL_NAMES } from './planToolCatalog'
 import { RELEASE_MISSION_TOOL_NAMES } from './releaseMissionTools'
+import { GUI_PLAN_APPROVAL_CLAUDE_TOOL } from './guiPlanApproval'
 
 /** A cerca anti-subagente-nativo do claude (sonda 2026-08-18: cerca de 1-2
  *  nomes NÃO basta — o modelo desvia por RemoteTrigger etc.; esta lista de 12
@@ -174,6 +175,9 @@ export const GUI_HELPER_TOOL_NAMES: readonly string[] = [
 
 export const GUI_DELEGATE_CLAUDE_ALLOWED_TOOLS: readonly string[] = [
   'mcp__synkora__commentary',
+  // O cartão de plano do Synkora (2026-09-22): sem a pré-sanção, o mini-plano
+  // levantaria um cartão de PERMISSÃO antes do cartão de aprovação.
+  GUI_PLAN_APPROVAL_CLAUDE_TOOL,
   ...CONTEXT_TOOL_NAMES.map((tool) => `mcp__synkora__${tool}`),
   ...GUI_HELPER_TOOL_NAMES.map((tool) => `mcp__synkora__${tool}`),
   // R9 — o AGENTE é o integrador. Sem a pré-sanção, o ⇪ do dono levantaria um
@@ -227,6 +231,7 @@ export const GUI_RELEASE_CLAUDE_ALLOWED_TOOLS: readonly string[] = [
  */
 export const GUI_PLANNER_CLAUDE_ALLOWED_TOOLS: readonly string[] = [
   'mcp__synkora__commentary',
+  GUI_PLAN_APPROVAL_CLAUDE_TOOL,
   ...CONTEXT_TOOL_NAMES.map((tool) => `mcp__synkora__${tool}`),
   ...PLAN_TOOL_NAMES.map((tool) => `mcp__synkora__${tool}`),
   ...GUI_HELPER_TOOL_NAMES.map((tool) => `mcp__synkora__${tool}`),

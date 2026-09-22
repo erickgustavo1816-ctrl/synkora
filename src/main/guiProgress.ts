@@ -19,7 +19,8 @@ interface TrackedPane {
   projectId: string
   state: Exclude<GuiProgressState, 'waiting_user'>
   activityAt?: string
-  pending: Map<string, { kind: GuiProgressPendingKind; blocking: boolean }>
+  /** `persistent` = the tool already returned; the card outlives the turn. */
+  pending: Map<string, { kind: GuiProgressPendingKind; blocking: boolean; persistent?: boolean }>
 }
 const PENDING_ORDER: Record<GuiProgressPendingKind, number> = {
   permission: 0, question: 1, 'plan-review': 2, 'plan-proposal': 3
@@ -40,6 +41,10 @@ export class GuiProgressTracker {
       const event = (envelope.evt ?? item) as { type?: unknown; requestId?: unknown }
       if (typeof event.requestId !== 'string') continue
       if (event.type === 'plan-proposal') pane.pending.set(event.requestId, { kind: 'plan-proposal', blocking: false })
+      // Async questions (Codex request_user_input_async, Synkora plan_approval)
+      // already returned the tool: like proposals, they wait past the turn.
+      if (event.type === 'question' && (event as { asynchronous?: unknown }).asynchronous === true)
+        pane.pending.set(event.requestId, { kind: 'question', blocking: false, persistent: true })
       if (event.type === 'interaction-resolved' || event.type === 'permission-cancel') pane.pending.delete(event.requestId)
     }
     this.panes.set(identity.paneId, pane)
@@ -52,8 +57,10 @@ export class GuiProgressTracker {
     if (!pane) return false
     let changed = true
     const clearTurnPending = (): void => {
-      for (const [id, pending] of pane.pending) if (pending.kind !== 'plan-proposal') pane.pending.delete(id)
+      for (const [id, pending] of pane.pending)
+        if (pending.kind !== 'plan-proposal' && !pending.persistent) pane.pending.delete(id)
     }
+    const asynchronous = event.type === 'question' && event.asynchronous === true
     switch (event.type) {
       case 'turn-started': pane.state = 'working'; break
       case 'ready':
@@ -63,10 +70,11 @@ export class GuiProgressTracker {
         if (terminal(pane.state)) return false
         pane.state = 'working'; break
       case 'permission': case 'question': case 'plan-review': case 'plan-proposal':
-        if (terminal(pane.state) && event.type !== 'plan-proposal') return false
+        if (terminal(pane.state) && event.type !== 'plan-proposal' && !asynchronous) return false
         pane.pending.set(event.requestId, {
           kind: event.type,
-          blocking: event.type !== 'plan-proposal' && (event.type !== 'question' || event.blocking !== false)
+          blocking: event.type !== 'plan-proposal' && (event.type !== 'question' || event.blocking !== false),
+          ...(asynchronous ? { persistent: true } : {})
         }); break
       case 'interaction-resolved': case 'permission-cancel':
         changed = pane.pending.delete(event.requestId); break

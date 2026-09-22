@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { dirname, join } from 'path'
+import type { DesktopNotifyFocusMode } from './desktopNotificationPolicy'
 
 /**
  * PREFERÊNCIAS DO SYNKORA — e nada mais.
@@ -48,6 +49,13 @@ export interface SynkoraPreferences {
   chatNotifyFailed: boolean
   chatSoundsEnabled: boolean
   /**
+   * COM O SYNKORA ABERTO (ordem do dono, 2026-09-22): o que vira toast com a
+   * janela em foco. 'off-screen' (padrão) avisa tudo que o dono não está
+   * vendo; 'always' avisa até o chat na tela; 'never' cala tudo em foco.
+   * Quem aplica é `desktopNotificationPolicy.canShowDesktopNotification`.
+   */
+  desktopNotifyWhileFocused: DesktopNotifyFocusMode
+  /**
    * INTERRUPTOR do `skill_pull` de rede (Skills 3.0 — ADR-0010, 2026-09-08).
    * Ligado por padrão: o harness é do agente ("ele vá atrás, ela busque, ela
    * pegue e ela faça"). Desligado, o pull de catálogo/URL recusa NOMEANDO este
@@ -89,6 +97,7 @@ const DEFAULTS: SynkoraPreferences = {
   chatNotifyFinished: true,
   chatNotifyFailed: true,
   chatSoundsEnabled: true,
+  desktopNotifyWhileFocused: 'off-screen',
   skillsAgentPull: true,
   chatWritingWordsPerSecond: 20,
   chatWritingMaxLagMs: 1000,
@@ -166,6 +175,11 @@ function sanitizePreferences(value: unknown): SynkoraPreferences {
     chatNotifyFinished: source.chatNotifyFinished !== false,
     chatNotifyFailed: source.chatNotifyFailed !== false,
     chatSoundsEnabled: source.chatSoundsEnabled !== false,
+    // Ausente/torto = o padrão "fora da tela": o documento de antes do ajuste.
+    desktopNotifyWhileFocused:
+      source.desktopNotifyWhileFocused === 'always' || source.desktopNotifyWhileFocused === 'never'
+        ? source.desktopNotifyWhileFocused
+        : DEFAULTS.desktopNotifyWhileFocused,
     // Ausente/torto = LIGADO: a ausência do campo é o documento de antes da
     // ADR-0010, e o padrão dela é o agente podendo puxar.
     skillsAgentPull: source.skillsAgentPull !== false,

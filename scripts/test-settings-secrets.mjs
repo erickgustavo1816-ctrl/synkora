@@ -145,6 +145,21 @@ test('preferências de aviso nascem ligadas e persistem cada escolha desligada',
   assert.equal(reloaded.view().chatSoundsEnabled, false)
 })
 
+test('o aviso com o Synkora aberto nasce em "fora da tela", persiste a escolha e recusa valor torto', (t) => {
+  // 2026-09-22 (ordem do dono): com o app em foco, avisa o que está fora da tela.
+  const root = tempStore(t)
+  const store = new SettingsStoreCore({ userDataPath: root })
+  assert.equal(store.view().desktopNotifyWhileFocused, 'off-screen')
+
+  store.update({ desktopNotifyWhileFocused: 'never' })
+  assert.equal(new SettingsStoreCore({ userDataPath: root }).view().desktopNotifyWhileFocused, 'never')
+  store.update({ desktopNotifyWhileFocused: 'always' })
+  assert.equal(new SettingsStoreCore({ userDataPath: root }).view().desktopNotifyWhileFocused, 'always')
+
+  store.update({ desktopNotifyWhileFocused: 'talvez' })
+  assert.equal(store.view().desktopNotifyWhileFocused, 'off-screen')
+})
+
 test('a escrita do chat nasce no padrão, persiste a escolha e prende às faixas', (t) => {
   // 2026-09-21: velocidade/atraso/fade são do dono (Ajustes › Aparência ›
   // Escrita do chat); campo torto ou fora da faixa nunca chega ao renderer.

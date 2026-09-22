@@ -1554,7 +1554,7 @@ test('CATÁLOGO: o browser chega a quem VERIFICA A PRÓPRIA TELA — dev e ajuda
 
   assert.deepEqual(
     await toolNames(url, 'token-dev', 'cat-dev'),
-    sorted(['commentary'], DELEGATOR_TOOLS, INTEGRATION_TOOLS, LSP_TOOLS, BROWSER_TOOLS, MOBILE_TOOLS, SKILL_TOOLS, CONTEXT_WRITE, ['mission_summary'])
+    sorted(['commentary', 'plan_approval'], DELEGATOR_TOOLS, INTEGRATION_TOOLS, LSP_TOOLS, BROWSER_TOOLS, MOBILE_TOOLS, SKILL_TOOLS, CONTEXT_WRITE, ['mission_summary'])
   )
   // O QA DELEGADO é o caso real do design: o dev abre um ajudante só para
   // varrer a tela enquanto ele segue no código.
@@ -1594,14 +1594,14 @@ test('CATÁLOGO: Release valida com browser; reviewer e planejador continuam sem
   })
 
   const rev = await toolNames(url, 'token-reviewer', 'cat-rev')
-  assert.deepEqual(rev, sorted(['commentary'], DELEGATOR_TOOLS, LSP_TOOLS, CONTEXT_READ))
+  assert.deepEqual(rev, sorted(['commentary', 'plan_approval'], DELEGATOR_TOOLS, LSP_TOOLS, CONTEXT_READ))
   // 2026-08-30: o planejador delega (kit de ajudantes no catálogo dele) — e a
   // propriedade DESTE teste segue de pé: browser continua fora; quem navega na
   // pesquisa dele é o AJUDANTE.
   const planner = await toolNames(url, 'token-planner', 'cat-planner')
-  assert.deepEqual(planner, sorted(['commentary'], PLANNER_TOOLS, DELEGATOR_TOOLS, LSP_TOOLS, SKILL_TOOLS, CONTEXT_WRITE))
+  assert.deepEqual(planner, sorted(['commentary', 'plan_approval'], PLANNER_TOOLS, DELEGATOR_TOOLS, LSP_TOOLS, SKILL_TOOLS, CONTEXT_WRITE))
   const release = await toolNames(url, 'token-release', 'cat-release')
-  assert.deepEqual(release, sorted(['commentary', 'release_missions', 'release_mission_update', 'release_mission_remove'],
+  assert.deepEqual(release, sorted(['commentary', 'plan_approval', 'release_missions', 'release_mission_update', 'release_mission_remove'],
     RELEASE_TOOLS, PLANNER_TOOLS, DELEGATOR_TOOLS, LSP_TOOLS, CONTEXT_WRITE, BROWSER_TOOLS, MOBILE_TOOLS, SKILL_TOOLS))
 
   for (const [label, tools] of [

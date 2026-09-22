@@ -300,7 +300,8 @@ export type GuiSessionEvent =
         | { kind: 'plan-proposal'; approve: boolean; planTitle?: string }
         | { kind: 'stale' }
     }
-  | { type: 'question'; requestId: string; questions: GuiQuestion[]; blocking?: boolean; asynchronous?: boolean }
+  /** `plan`: o corpo em markdown do cartão de plano do Synkora (plan_approval). */
+  | { type: 'question'; requestId: string; questions: GuiQuestion[]; blocking?: boolean; asynchronous?: boolean; plan?: string }
   | { type: 'plan-review'; requestId: string; plan: string }
   /** PROPOSTA DE PLANO (D4.4): nasce no HARNESS, não no CLI — quando a tool
    *  `propose_plan` chega, o main injeta este evento no anel da sessão. A

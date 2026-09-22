@@ -54,16 +54,46 @@ const THROTTLE_MS: Record<DesktopNotifyKind, number> = {
 
 const lastShownAt = new Map<string, number>()
 
-/**
- * Avisos gerais continuam silenciosos com a janela em foco; o chat pode pedir
- * explicitamente um toast tambem durante o uso do app.
- */
+// ————— COM O SYNKORA ABERTO (ordem do dono, 2026-09-22) —————
+// "Se termina outro projeto o qual não estou com a tela nele, eu queria ser
+// notificado." Janela sem foco avisa tudo; em foco, o modo escolhido em
+// Ajustes › Avisos decide. O padrão cala SÓ o que o dono já está vendo.
+
+/** Espelho em `preload/index.ts` (`SynkoraPreferences.desktopNotifyWhileFocused`). */
+export type DesktopNotifyFocusMode = 'off-screen' | 'always' | 'never'
+
+/** De onde o aviso fala: o chat exato, ou a missão (qualquer chat dela). */
+export interface DesktopNotifySource {
+  paneId?: string
+  missionId?: string
+}
+
 export function canShowDesktopNotification(input: {
   supported: boolean
   windowFocused: boolean
-  showWhenFocused?: boolean
+  focusMode: DesktopNotifyFocusMode
+  sourceOnScreen: boolean
 }): boolean {
-  return input.supported && (!input.windowFocused || input.showWhenFocused === true)
+  if (!input.supported) return false
+  if (!input.windowFocused || input.focusMode === 'always') return true
+  return input.focusMode === 'off-screen' && !input.sourceOnScreen
+}
+
+/**
+ * "Na tela" = o chat do aviso está ativo, ou algum chat da missão dona dele.
+ * Origem desconhecida nunca cala: na dúvida, o dono é avisado.
+ */
+export function isDesktopNotifySourceOnScreen(
+  source: DesktopNotifySource | undefined,
+  presence: {
+    isPaneActive(paneId: string): boolean
+    missionPaneIds(missionId: string): readonly string[]
+  }
+): boolean {
+  if (!source) return false
+  if (source.paneId && presence.isPaneActive(source.paneId)) return true
+  if (!source.missionId) return false
+  return presence.missionPaneIds(source.missionId).some((paneId) => presence.isPaneActive(paneId))
 }
 
 /** Regra pura de throttle; a identidade efetiva é `<tipo>:<paneId>`. */

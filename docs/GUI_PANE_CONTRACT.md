@@ -96,6 +96,22 @@ deliberada do trio: `plan-proposal` NÃO bloqueia o CLI, então sobrevive ao
 pane (eco factual `stale`). O desfecho volta como `interaction-resolved`
 `{kind:'plan-proposal', approve, planId?, planTitle?}`.
 
+O CARTÃO DE PLANO DO SYNKORA (2026-09-22, ordem do dono: "um sistema para
+mostrar o plano, independente se é o Codex ou o Claude que está propondo"). O
+caso medido: o Claude gravou o mini-plano no canal de RACIOCÍNIO (que o chat
+esconde — P13) e chamou `AskUserQuestion`; o dono viu "aprova o plano?" sem
+plano. A tool `plan_approval` (`mcp__synkora__plan_approval` no claude; chats de
+dev, reviewer, helper de missão, release e planejador) recebe o plano como
+ARGUMENTO (`plan` markdown ≤4k, `question?`, `header?`, `options?` 2–6) e o
+main injeta no ring uma pergunta ASSÍNCRONA — `question {requestId
+'synkora-plan-…', questions, plan, blocking:false, asynchronous:true}` — a mesma
+família do `request_user_input_async` do Codex: a tool devolve na hora com a
+receita "ENCERRE O TURNO", o card sobrevive ao `result`, um `plan_approval`
+novo supersede o pendente (`stale`), e o clique do dono vira MENSAGEM NOVA
+(`answerQuestion` reconhece o prefixo em QUALQUER CLI). O campo `plan` é
+aditivo no evento `question` e o `GuiQuestionCard` o renderiza (markdown)
+ACIMA da pergunta, nas duas variantes. Módulo puro: `guiPlanApproval.ts`.
+
 COREOGRAFIA DO CARD (2026-08-16, ordem do dono depois de ver o card nascer no
 meio da fala e sumir): a proposta chega COM O AGENTE AINDA FALANDO — a tool
 responde na hora e o turno segue. Três regras, e as três são obrigatórias:

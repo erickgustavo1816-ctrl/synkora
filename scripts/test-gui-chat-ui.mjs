@@ -78,6 +78,7 @@ import {
   groupConsecutiveGuiTools,
   guiToolGroupPreview,
   guiToolResultTargetIndex,
+  guiToolStartActivity,
   isGuiShellTool,
   lastPendingGuiToolActivity
 } from '../src/renderer/src/guiToolPresentation.ts'
@@ -722,6 +723,40 @@ test('nome diferente e ferramenta interativa quebram o agrupamento', () => {
   assert.equal(hiddenReasoning[0].items.length, 2)
 })
 
+// PEDIDO DO DONO 2026-09-22 — "o SYNKORA COMMENTARY meio que fica duplicado".
+// O main entrega a fala da commentary como mensagem do agente; o card cru da
+// tool repetia o mesmo texto logo acima dela.
+test('a commentary não vira card nem quebra a sequência de ferramentas', () => {
+  const spoken = (id) => ({
+    id,
+    kind: 'assistant',
+    text: 'achei o bug',
+    at: 1,
+    live: false,
+    animateFrom: 0
+  })
+  for (const name of ['mcp__synkora__commentary', 'commentary']) {
+    const thread = [tool('fala-tool', name, '{"message":"achei o bug"}'), spoken('fala')]
+    assert.deepEqual(groupConsecutiveGuiTools(thread).map((item) => item.id), ['fala'], name)
+  }
+
+  // A recusada some igual: o agente reenvia ou escreve a fala como texto.
+  const refused = groupConsecutiveGuiTools([
+    tool('a'),
+    {
+      ...tool('c', 'mcp__synkora__commentary'),
+      result: { text: 'recusada', isError: true, lineCount: 1, truncated: false }
+    },
+    tool('b')
+  ])
+  assert.equal(refused.length, 1)
+  assert.equal(refused[0].kind, 'tool-group')
+  assert.deepEqual(refused[0].items.map((item) => item.id), ['a', 'b'])
+
+  const otherSynkoraTool = groupConsecutiveGuiTools([tool('h', 'mcp__synkora__helper_send')])
+  assert.deepEqual(otherSynkoraTool.map((item) => item.kind), ['tool'])
+})
+
 test('família de terminal é classificada por token', () => {
   for (const name of ['Bash', 'shell_command', 'ExecCommand', 'run-terminal']) {
     assert.equal(isGuiShellTool(name), true, name)
@@ -1177,6 +1212,29 @@ test('resultado fora de ordem conserva a atividade factual ainda pendente', () =
     }
   ]
   assert.equal(lastPendingGuiToolActivity(items), 'Read · a.ts')
+})
+
+test('commentary pendente não é a ferramenta que o turno está esperando', () => {
+  const items = [
+    tool('a', 'Read', 'a.ts'),
+    tool('c', 'mcp__synkora__commentary', '{"message":"lendo"}')
+  ]
+  assert.equal(lastPendingGuiToolActivity(items), 'Read · a.ts')
+  assert.equal(lastPendingGuiToolActivity([tool('c', 'commentary', '{"message":"lendo"}')]), null)
+
+  // Ao COMEÇAR, a fala herda a atividade que já estava de pé.
+  assert.equal(
+    guiToolStartActivity('mcp__synkora__commentary', '{"message":"lendo"}', 'Read · a.ts'),
+    'Read · a.ts'
+  )
+  assert.equal(guiToolStartActivity('commentary', '{"message":"lendo"}', null), null)
+  assert.equal(guiToolStartActivity('Read', 'b.ts', null), 'Read · b.ts')
+  const store = readFileSync(new URL('../src/renderer/src/store.ts', import.meta.url), 'utf8')
+  assert.match(
+    store,
+    /guiToolStartActivity\(evt\.name, summary, base\.activityText\)/u,
+    'o applyGuiEvent decide pelo módulo puro'
+  )
 })
 
 test('resultado de tool encontra o card pelo id, inclusive fora de ordem', () => {
@@ -2592,6 +2650,24 @@ test('avisos do chat têm som apenas no host, visibilidade real e ajustes acess�
   for (const label of ['Precisa de você', 'Turno concluído', 'Turno falhou', 'Sons de atenção']) {
     assert.match(settings, new RegExp(label, 'u'))
   }
+})
+
+test('com o Synkora aberto: Ajustes › Avisos escolhe fora da tela, sempre ou nunca', () => {
+  const settings = readFileSync(
+    new URL('../src/renderer/src/components/ChatNoticeSettings.tsx', import.meta.url),
+    'utf8'
+  )
+  const css = readFileSync(new URL('../src/renderer/src/global.css', import.meta.url), 'utf8')
+
+  assert.match(settings, /settings\?\.desktopNotifyWhileFocused \?\? 'off-screen'/u)
+  assert.match(settings, /patchSettings\(\{ desktopNotifyWhileFocused: choice\.value \}\)/u)
+  assert.match(settings, /className="pref-choice"[\s\S]*role="group"/u)
+  assert.match(settings, /aria-pressed=\{choice\.value === focusMode\}/u)
+  for (const label of ['fora da tela', 'sempre', 'nunca']) {
+    assert.match(settings, new RegExp(`label: '${label}'`, 'u'))
+  }
+  // A escolha segmentada é peça compartilhada (Acessibilidade e Avisos).
+  assert.match(css, /\.pref-choice > button\[aria-pressed='true'\]/u)
 })
 
 test('subagentes usam somente linhagem explícita e preservam o transcript cru', () => {

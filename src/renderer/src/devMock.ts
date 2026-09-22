@@ -339,7 +339,8 @@ export function installDevMock(): void {
     chatNotifyNeedsYou: true,
     chatNotifyFinished: true,
     chatNotifyFailed: true,
-    chatSoundsEnabled: true
+    chatSoundsEnabled: true,
+    desktopNotifyWhileFocused: 'off-screen'
   }
 
   let voiceProvider: SynVoiceProvider = 'openai'

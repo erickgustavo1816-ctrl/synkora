@@ -86,7 +86,7 @@ const CONTEXT_WRITE = [...CONTEXT_READ, 'context_record']
 /** O que o pane de PLANEJAMENTO enxerga hoje, inteiro: planos + ajudantes +
  *  código + skills — e NADA de integração, release ou browser. */
 const PLANNER_TOOLS = Object.freeze(
-  ['commentary', ...PLAN_TOOLS, ...HELPER_TOOLS, ...LSP_TOOLS, ...SKILL_TOOLS, ...CONTEXT_WRITE].sort()
+  ['commentary', 'plan_approval', ...PLAN_TOOLS, ...HELPER_TOOLS, ...LSP_TOOLS, ...SKILL_TOOLS, ...CONTEXT_WRITE].sort()
 )
 
 /** Hub REAL com as dependências mínimas que ele exige (o registro de

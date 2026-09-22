@@ -13019,6 +13019,13 @@ textarea.synvoice-target:not(.gui-input) {
   margin: 10px 11px 0;
 }
 
+/* "com o Synkora aberto": fecha a lista dos avisos do Windows */
+.chat-notice-focus {
+  margin-top: 12px;
+  padding: 14px 11px 0;
+  border-top: 1px solid var(--line);
+}
+
 .typography-layout {
   display: grid;
   grid-template-columns: minmax(280px, 0.82fr) minmax(330px, 1.18fr);
@@ -13068,6 +13075,44 @@ textarea.synvoice-target:not(.gui-input) {
   color: var(--ink-3);
   font-size: 9.5px;
   line-height: 1.45;
+}
+
+/* escolha segmentada: movimento (Acessibilidade) e "com o Synkora aberto" (Avisos) */
+.pref-choice {
+  display: flex;
+  gap: 6px;
+}
+
+.pref-choice > button {
+  flex: 1;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-2);
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.pref-choice > button:hover {
+  border-color: var(--accent);
+  color: var(--accent-deep);
+}
+
+.pref-choice > button[aria-pressed='true'] {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: var(--paper);
+}
+
+.pref-choice > button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .font-stepper,
@@ -17357,6 +17402,41 @@ details.gui-error-line {
   line-height: 1.5;
   color: var(--ink);
   user-select: text;
+}
+
+/* O CARTÃO DE PLANO DO SYNKORA (plan_approval): o mini-plano mora DENTRO do
+   cartão, acima da pergunta — papel sobre papel, com o fio do acento que o
+   plano do modo plano já usa (.gui-plan). */
+.gui-question-plan {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 9px 11px;
+  border: 1px solid var(--gui-line-strong);
+  border-left: 3px solid var(--accent);
+  border-radius: 8px;
+  background: var(--card);
+}
+
+.gui-question-plan-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--ink-3);
+}
+
+.gui-question-plan-body {
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--ink);
+  user-select: text;
+  max-height: 360px;
+  overflow-y: auto;
+  /* O overflow também corta em x, e o marcador "1." de um <ol> (fora da caixa,
+     18px de recuo no .gui-md-content) perdia um pixel à esquerda — medido no
+     mockup de 2026-09-22. Quatro pixels devolvem o marcador inteiro. */
+  padding-inline-start: 4px;
 }
 
 .gui-question-options {

@@ -121,7 +121,11 @@ export function guiPulseVerbFor(name: string): PulseVerb {
 type WorkTool = Extract<GuiItem, { kind: 'tool' }>
 
 /** Só o trabalho do PAI conta: ajudantes têm atividade própria na lateral e a
- *  fala pública (commentary) não é ferramenta. */
+ *  fala pública (commentary) não é ferramenta.
+ *
+ *  Cópia deliberada de `isGuiCommentaryTool` (guiToolPresentation): as suítes
+ *  carregam este módulo com type-stripping do node, que não resolve import de
+ *  irmão sem extensão — um import de VALOR aqui derrubaria os testes. */
 function isWorkTool(item: GuiItem): item is WorkTool {
   return (
     item.kind === 'tool' &&
