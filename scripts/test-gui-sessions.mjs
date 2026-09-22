@@ -5266,6 +5266,110 @@ test('a proposta SOBREVIVE ao fim do turno — ela não bloqueia o CLI', () => {
   )
 })
 
+// ————— O CARTÃO DE PLANO DO SYNKORA (plan_approval, 2026-09-22) —————
+//
+// O caso medido: o Claude gravou o mini-plano no canal de RACIOCÍNIO (que o
+// chat esconde por decisão do dono) e chamou AskUserQuestion — o dono viu
+// "aprova o plano?" sem plano. Aqui o plano viaja DENTRO do pedido e vira uma
+// pergunta assíncrona com o plano no corpo, em qualquer CLI.
+
+function planApprovalPane(gui, paneId, cli = 'claude') {
+  const ring = new GuiEventRing()
+  const sent = []
+  const session = { alive: true, turnActive: false, send: (text) => sent.push(text),
+    answerQuestion() { throw new Error('o cartão de plano nunca usa o RPC de pergunta bloqueante') } }
+  gui.panes.set(paneId, {
+    spawn: { paneId, projectId: 'proj', cli, configDir: 'c', cwd: '/tmp' },
+    fingerprint: 'teste',
+    session,
+    ring,
+    token: { alive: true },
+    sink: (evt) => ring.push(evt)
+  })
+  return { ring, sent, session }
+}
+
+test('plan_approval publica uma pergunta assíncrona com o plano no corpo e acorda o dono', () => {
+  const woken = []
+  const gui = new GuiSessionRegistry({
+    push: () => undefined,
+    systemPromptFile: () => undefined,
+    onPermissionPending: (input) => woken.push(input)
+  })
+  const { ring } = planApprovalPane(gui, 'gui-dev-aprov0001')
+  const plan = '1. Ler o motor\n2. Corrigir o cartão\n3. Testar'
+  const presented = gui.planApproval({ paneId: 'gui-dev-aprov0001', projectId: 'proj' }, { plan })
+  assert.equal(presented.ok, true)
+  assert.match(presented.requestId, /^synkora-plan-/u)
+
+  const [event] = ring.snapshot()
+  assert.equal(event.type, 'question')
+  assert.equal(event.requestId, presented.requestId)
+  assert.equal(event.plan, plan, 'o plano é parte do evento — é ele que o cartão mostra')
+  assert.equal(event.blocking, false)
+  assert.equal(event.asynchronous, true)
+  assert.deepEqual(event.questions.map((q) => [q.id, q.question, q.options.map((o) => o.label)]),
+    [['plan', 'Aprova este plano?', ['Aprovar', 'Não aprovar']]])
+  assert.ok(isGuiPersistedEvent(event), 'o evento com o plano passa pela porteira do anel')
+  assert.deepEqual(woken, [
+    { paneId: 'gui-dev-aprov0001', projectId: 'proj', toolName: 'plan_approval', kind: 'question' }
+  ])
+})
+
+test('plan_approval recusa em PT-BR: pedido torto, projeto alheio e conversa fechada', () => {
+  const gui = registry()
+  const { session } = planApprovalPane(gui, 'gui-dev-aprov0002')
+  const torto = gui.planApproval({ paneId: 'gui-dev-aprov0002', projectId: 'proj' }, { plan: '   ' })
+  assert.equal(torto.ok, false)
+  assert.match(torto.error, /plan/u)
+  const alheio = gui.planApproval({ paneId: 'gui-dev-aprov0002', projectId: 'outro' }, { plan: 'x' })
+  assert.equal(alheio.ok, false)
+  assert.match(alheio.error, /não está aberta/u)
+  session.alive = false
+  const fechada = gui.planApproval({ paneId: 'gui-dev-aprov0002', projectId: 'proj' }, { plan: 'x' })
+  assert.equal(fechada.ok, false)
+  assert.match(fechada.error, /cartão de pergunta/u, 'a recusa nomeia a receita')
+})
+
+test('o cartão de plano SOBREVIVE ao fim do turno e um novo supera o antigo', () => {
+  const gui = registry()
+  const { ring } = planApprovalPane(gui, 'gui-dev-aprov0003')
+  const first = gui.planApproval({ paneId: 'gui-dev-aprov0003', projectId: 'proj' }, { plan: 'primeiro' })
+  ring.push({ type: 'question', requestId: 'req-rpc', questions: [] })
+  ring.push({ type: 'result', isError: false })
+  assert.deepEqual(ring.pendingIdsOfType('question'), [first.requestId],
+    'a pergunta RPC morre com o turno; o cartão de plano fica')
+
+  const second = gui.planApproval({ paneId: 'gui-dev-aprov0003', projectId: 'proj' }, { plan: 'segundo' })
+  assert.deepEqual(ring.pendingIdsOfType('question'), [second.requestId])
+  const stale = ring.snapshot().find((evt) => evt.type === 'interaction-resolved' && evt.requestId === first.requestId)
+  assert.deepEqual(stale?.resolution, { kind: 'stale' })
+})
+
+test('a decisão do dono no cartão de plano vira mensagem nova — no Claude e no Codex', () => {
+  for (const cli of ['claude', 'codex']) {
+    const gui = registry()
+    const { ring, sent } = planApprovalPane(gui, `gui-dev-aprov-${cli}`, cli)
+    const identity = { paneId: `gui-dev-aprov-${cli}`, projectId: 'proj' }
+    const presented = gui.planApproval(identity, { plan: 'o plano', question: 'Sigo assim?' })
+
+    assert.equal(gui.answerQuestion(identity.paneId, presented.requestId, { invented: 'Aprovar' }).ok, false,
+      'id de pergunta inventado não vira resposta')
+    assert.deepEqual(gui.answerQuestion(identity.paneId, presented.requestId, { plan: 'Aprovar' }), { ok: true })
+    assert.equal(sent.length, 1, `${cli}: a resposta é UMA mensagem do dono`)
+    assert.match(sent[0], /Sigo assim\?/u)
+    assert.match(sent[0], /Aprovar/u)
+    const events = ring.snapshot()
+    const receipt = events.find((evt) => evt.type === 'interaction-resolved' && evt.requestId === presented.requestId)
+    assert.equal(receipt?.resolution.kind, 'question')
+    assert.deepEqual(receipt?.resolution.entries, [{ question: 'Sigo assim?', answer: 'Aprovar' }])
+    assert.equal(receipt?.resolution.messageId, events.find((evt) => evt.type === 'user-message')?.id)
+    assert.deepEqual(ring.pendingIdsOfType('question'), [])
+    assert.equal(gui.answerQuestion(identity.paneId, presented.requestId, { plan: 'Aprovar' }).ok, false,
+      'entrega única: o cartão respondido não responde de novo')
+  }
+})
+
 test('o desfecho do card fecha a pendência e o eco nomeia o plano criado', () => {
   const gui = registry()
   const ring = planProposalPane(gui, 'gui-dev-plan0004')

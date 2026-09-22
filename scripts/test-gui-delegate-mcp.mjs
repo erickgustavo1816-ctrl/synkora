@@ -128,9 +128,9 @@ const CONTEXT_WRITE = [...CONTEXT_READ, 'context_record']
  * missão verifica a própria tela (com browser, sem integração). As `skill_*`
  * seguem a MESMA divisão (2026-09-08): o reviewer não monta harness.
  */
-const REVIEWER_TOOLS = Object.freeze(['commentary', ...HELPER_TOOLS, ...LSP_TOOLS, ...CONTEXT_READ].sort())
+const REVIEWER_TOOLS = Object.freeze(['commentary', 'plan_approval', ...HELPER_TOOLS, ...LSP_TOOLS, ...CONTEXT_READ].sort())
 const HELPER_PANE_TOOLS = Object.freeze(
-  ['commentary', ...HELPER_TOOLS, ...LSP_TOOLS, ...BROWSER_TOOLS, ...SKILL_TOOLS, ...CONTEXT_READ].sort()
+  ['commentary', 'plan_approval', ...HELPER_TOOLS, ...LSP_TOOLS, ...BROWSER_TOOLS, ...SKILL_TOOLS, ...CONTEXT_READ].sort()
 )
 
 /**
@@ -142,7 +142,7 @@ const HELPER_PANE_TOOLS = Object.freeze(
  */
 const INTEGRATION_TOOLS = Object.freeze(['integration_run', 'integration_status'])
 const DEV_MISSION_TOOLS = Object.freeze(
-  ['commentary', ...HELPER_TOOLS, ...LSP_TOOLS, ...BROWSER_TOOLS, ...MOBILE_TOOLS, ...INTEGRATION_TOOLS, ...SKILL_TOOLS, ...CONTEXT_WRITE, 'mission_summary'].sort()
+  ['commentary', 'plan_approval', ...HELPER_TOOLS, ...LSP_TOOLS, ...BROWSER_TOOLS, ...MOBILE_TOOLS, ...INTEGRATION_TOOLS, ...SKILL_TOOLS, ...CONTEXT_WRITE, 'mission_summary'].sort()
 )
 
 /** O KIT DO CHAT DE RELEASE (R10): a conversa que sobe a VERSÃO. O papel
@@ -152,7 +152,7 @@ const DEV_MISSION_TOOLS = Object.freeze(
  *  R38 (2026-08-29): entrou o `release_done` — o FECHO deixou de ser efeito
  *  colateral da subida e virou decisão do agente (a subida fechava a conversa
  *  antes da caixa existir). */
-const RELEASE_TOOLS = Object.freeze(['commentary', 'release_done', 'release_push', 'release_run', 'release_save', 'release_status', 'release_target'])
+const RELEASE_TOOLS = Object.freeze(['commentary', 'plan_approval', 'release_done', 'release_push', 'release_run', 'release_save', 'release_status', 'release_target'])
 
 const PLAN_TOOLS = Object.freeze([
   'delete_plan',
@@ -166,7 +166,7 @@ const PLAN_TOOLS = Object.freeze([
 // SKILLS 3.0 (2026-09-08): ele TAMBÉM monta harness — o método do planejamento
 // (ADR-0011) é escolhido do mesmo cardápio que o dev usa.
 const PLANNER_TOOLS = Object.freeze(
-  ['commentary', ...PLAN_TOOLS, ...HELPER_TOOLS, ...LSP_TOOLS, ...SKILL_TOOLS, ...CONTEXT_WRITE].sort()
+  ['commentary', 'plan_approval', ...PLAN_TOOLS, ...HELPER_TOOLS, ...LSP_TOOLS, ...SKILL_TOOLS, ...CONTEXT_WRITE].sort()
 )
 
 /** Hub REAL com o mínimo que ele exige (o registro de identidade não usa nada
@@ -265,6 +265,10 @@ async function serverIn(t, hub, { engine = true, release = false } = {}) {
         commentary: (id, message) => {
           calls.push({ tool: 'commentary', paneId: id.paneId, projectId: id.projectId, message })
           return { ok: true }
+        },
+        planApproval: (id, input) => {
+          calls.push({ tool: 'plan_approval', paneId: id.paneId, projectId: id.projectId, input })
+          return { ok: true, requestId: 'synkora-plan-synthetic' }
         },
         integrationRun: async (id, summary) => {
           calls.push({
@@ -1090,6 +1094,35 @@ test('public commentary belongs to the authenticated conversation and rejects em
   for (const invalid of ['', '  ', 'x'.repeat(2001)])
     assert.equal((await client.callTool({ name: 'commentary', arguments: { message: invalid } })).isError, true)
   assert.equal(calls.length, 1)
+})
+
+test('plan_approval carries the plan inside the card request, bound to the authenticated conversation', async (t) => {
+  const { hub, root } = hubIn(t)
+  const { url, calls } = await serverIn(t, hub)
+  const { token } = delegator(hub, root, 4242)
+  const client = await connect(t, url, token, 'plan-approval')
+  const plan = '1. Ler o motor\n2. Corrigir o cartão\n3. Testar'
+  const result = await client.callTool({ name: 'plan_approval', arguments: {
+    plan, question: 'Sigo assim?', paneId: 'another-pane', projectId: 'another-project'
+  } })
+  assert.notEqual(result.isError, true)
+  assert.match(textOf(result), /ENCERRE O TURNO AGORA/u)
+  assert.deepEqual(calls, [{ tool: 'plan_approval', paneId: 'gui-dev-abcd1234', projectId: 'universo-1',
+    input: { plan, question: 'Sigo assim?' } }])
+  for (const invalid of [{}, { plan: '  ' }, { plan: 'x'.repeat(4001) }, { plan: 'ok', options: [{ label: 'só uma' }] }])
+    assert.equal((await client.callTool({ name: 'plan_approval', arguments: invalid })).isError, true)
+  assert.equal(calls.length, 1)
+})
+
+test('unavailable plan_approval names the fallback recipe and never claims a card', async (t) => {
+  const { hub, root } = hubIn(t)
+  const { url } = await serverIn(t, hub, { engine: false })
+  const { token } = delegator(hub, root, 4242)
+  const client = await connect(t, url, token, 'plan-approval-off')
+  const result = await client.callTool({ name: 'plan_approval', arguments: { plan: 'um plano' } })
+  assert.equal(result.isError, true)
+  assert.match(textOf(result), /cartão de pergunta/u)
+  assert.doesNotMatch(textOf(result), /publicado/u)
 })
 
 test('unavailable commentary asks for ordinary public text and never claims delivery', async (t) => {

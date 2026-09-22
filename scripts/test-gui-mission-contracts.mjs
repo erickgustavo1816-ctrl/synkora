@@ -171,8 +171,13 @@ test('cada papel tem contrato próprio e todos respondem em PT-BR', () => {
     // 16311, o ajudante 14316 e o reviewer segue intocado em 8188. O orquestrador
     // subiu 16500→17000 no review da fatia: 184 chars de folga não são uma régua
     // do dono, e o teto existe para caber a próxima — contra constituição, não
-    // contra régua.
-    assert.ok(contract.length < 17000, `${role}: contrato virou constituição (${contract.length})`)
+    // contra régua. E de 17000 para 17500 em 2026-09-22 pelo CARTÃO DE PLANO
+    // DO SYNKORA ("um sistema para mostrar o plano, independente se é o Codex
+    // ou o Claude que está propondo"): o Claude gravou o mini-plano no canal
+    // de raciocínio e o dono viu "aprova o plano?" sem plano. A linha do
+    // mini-plano do dev apontou para plan_approval e o bloco de escolhas ganhou
+    // a régua de que o plano vai DENTRO do cartão: o dev mede 17427.
+    assert.ok(contract.length < 17500, `${role}: contrato virou constituição (${contract.length})`)
     assert.ok(/PT-BR/.test(contract), `${role}: sem a regra do idioma`)
     assert.equal(seen.has(contract), false, `${role}: contrato repetido`)
     seen.add(contract)
@@ -189,6 +194,25 @@ test('o dev espera aval antes de trabalho grande e trabalha só no worktree', ()
   const contract = guiMissionSystemPrompt('dev')
   assert.match(contract, /MINI-PLAN/)
   assert.match(contract, /ONLY inside this worktree/i)
+})
+
+test('o mini-plano viaja DENTRO do cartão de plano do Synkora, nunca em fala solta antes do cartão', () => {
+  // 2026-09-22: o Claude gravou o plano no canal de raciocínio e chamou
+  // AskUserQuestion — o dono viu "aprova o plano?" sem plano. A persona manda
+  // o plano pela tool, e o primeiro turno da missão repete a receita.
+  const contract = guiMissionSystemPrompt('dev')
+  assert.match(contract, /MINI-PLAN of at most 5 lines through plan_approval/u)
+  assert.match(contract, /mcp__synkora__plan_approval/u)
+  assert.match(contract, /END YOUR TURN and WAIT for the owner's answer/u)
+  assert.doesNotMatch(contract, /post a MINI-PLAN of at most 5 lines and request approval with the QUESTION CARD/u)
+  for (const chat of [
+    ...GUI_MISSION_ROLES.map(guiMissionSystemPrompt), guiPlanningSystemPrompt(), guiReleaseSystemPrompt()
+  ]) {
+    assert.match(chat, /A PLAN is approved through plan_approval/u)
+    assert.match(chat, /Text written before a card can vanish in this chat/u)
+  }
+  const first = guiMissionFirstPrompt('dev', { title: 'Bug', branch: 'mission/x' })
+  assert.match(first, /mini-plan of at most 5 lines through plan_approval/u)
 })
 
 test('escolhas do dono usam o cartão nativo de cada CLI em todo chat GUI', () => {
@@ -1196,8 +1220,11 @@ test('o planejador PROPÕE o plano, não executa produto nem cria missão', () =
   // VINCULANTE dos dois blocos não caberia (10861 - 886 + 2309 + 2 + 863 =
   // 13149); o teto sobe para 13600, que devolve a folga de UMA régua do dono
   // (446 chars, a mesma ordem de grandeza do 10900 sobre 10471). Ele continua
-  // sendo contra CONSTITUIÇÃO — régua nova cabe, discurso não.
-  assert.ok(contract.length < 13600, `contrato virou constituição (${contract.length})`)
+  // sendo contra CONSTITUIÇÃO — régua nova cabe, discurso não. E de 13600 para
+  // 14200 em 2026-09-22 pelo CARTÃO DE PLANO DO SYNKORA: o bloco de escolhas,
+  // que os cinco chats compartilham, ganhou a régua de que um plano é aprovado
+  // por plan_approval com o plano DENTRO do cartão. Mede 13943.
+  assert.ok(contract.length < 14200, `contrato virou constituição (${contract.length})`)
   assert.match(contract, /"mestre" is a DESIGNATION the owner grants/u)
   assert.match(contract, /only his click designates or removes it/u)
   assert.match(contract, /PROJECT_PLAN\.md/u)

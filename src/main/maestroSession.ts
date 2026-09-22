@@ -433,7 +433,10 @@ export type SessionEvent =
     }
   /** AskUserQuestion virou card de opções (2.0): a resposta volta por
    *  answerQuestion, no mesmo canal de control_response da permissão. */
-  | { type: 'question'; requestId: string; questions: GuiQuestion[]; blocking?: boolean; asynchronous?: boolean }
+  /** `plan` (aditivo, 2026-09-22): o corpo em markdown que o cartão mostra
+   *  ACIMA da pergunta — o mini-plano da tool `plan_approval` do Synkora, que
+   *  viaja dentro do pedido em vez de depender de fala solta antes do cartão. */
+  | { type: 'question'; requestId: string; questions: GuiQuestion[]; blocking?: boolean; asynchronous?: boolean; plan?: string }
   /** ExitPlanMode (modo plano): o plano em markdown para o dono aprovar
    *  (answerPlanReview) — construir = allow, revisar = deny. */
   | { type: 'plan-review'; requestId: string; plan: string }

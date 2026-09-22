@@ -1,9 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 import type { GuiQuestion } from '../guiApi'
+import GuiQuestionPlan from './GuiQuestionPlan'
 
 /** Two explicit, single-choice options are actions, not inferred approval.
- * Labels and question IDs come from the structured request of either CLI. */
-export default function GuiQuickQuestionCard({ question, onAnswer, onSkip, disabled = false }: {
+ * Labels and question IDs come from the structured request of either CLI.
+ * `plan` is the Synkora plan card body (plan_approval): the owner reads the
+ * plan inside the card before deciding. */
+export default function GuiQuickQuestionCard({ paneId, plan, question, onAnswer, onSkip, disabled = false }: {
+  paneId: string
+  plan?: string
   question: GuiQuestion
   onAnswer: (answers: Record<string, string>) => void
   onSkip: () => void
@@ -40,6 +45,7 @@ export default function GuiQuickQuestionCard({ question, onAnswer, onSkip, disab
       <div className="gui-question-head">
         <span className="gui-question-title">{question.header?.trim() || 'Sua decisão'}</span>
       </div>
+      {plan && <GuiQuestionPlan paneId={paneId} plan={plan} />}
       <div className="gui-question-text">{question.question}</div>
       <div className="gq-quick-options">
         {question.options.map(option => (

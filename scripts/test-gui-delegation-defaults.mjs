@@ -887,11 +887,14 @@ test('a ordem permanente avisa o agente que o dono pode ter carimbado o padrão'
   // os 886 do cardápio velho. A ordem permanente seguiu intocada (2922), o dev
   // mede 16316 e o ajudante 14321. Os DOIS tetos andam juntos, sempre — e o
   // orquestrador subiu 16500→17000 nos dois no review da fatia (184 chars de
-  // folga não são uma régua do dono).
+  // folga não são uma régua do dono). E 17000→17500 em 2026-09-22 pelo CARTÃO
+  // DE PLANO DO SYNKORA (plan_approval: o mini-plano viaja DENTRO do cartão,
+  // porque o Claude o gravava no canal de raciocínio e o dono via "aprova o
+  // plano?" sem plano) — a ordem permanente seguiu intocada e o dev mede 17393.
   assert.ok(order.length < 3000, `a ordem permanente virou constituição (${order.length})`)
   for (const role of GUI_MISSION_ROLES) {
     assert.ok(
-      guiMissionSystemPrompt(role).length < 17000,
+      guiMissionSystemPrompt(role).length < 17500,
       `${role}: contrato virou constituição (${guiMissionSystemPrompt(role).length})`
     )
   }
@@ -907,8 +910,10 @@ test('a ordem permanente avisa o agente que o dono pode ter carimbado o padrão'
   // 2309 e o planejador ganhou o MÉTODO por cima (863, ADR-0011: "é um
   // planejamento simples… é um planejamento mais abstrato"). Mede 13154; o
   // design pedia 12000, número escrito antes da medição e no qual o texto
-  // vinculante não caberia. Os DOIS tetos andam juntos, sempre.
-  assert.ok(planning.length < 13600, `o planejador virou constituição (${planning.length})`)
+  // vinculante não caberia. Os DOIS tetos andam juntos, sempre. E 13600→14200
+  // em 2026-09-22 pelo CARTÃO DE PLANO DO SYNKORA: o bloco de escolhas que os
+  // cinco chats compartilham ganhou a régua do plan_approval; mede 13943.
+  assert.ok(planning.length < 14200, `o planejador virou constituição (${planning.length})`)
 })
 
 // O BROWSER DA CASA (2026-08-29 — DESIGN_BROWSER_EMBUTIDO, fatia H4) entrou em

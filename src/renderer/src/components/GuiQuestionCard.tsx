@@ -1,9 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { GuiQuestion } from '../guiApi'
 import GuiQuickQuestionCard from './GuiQuickQuestionCard'
+import GuiQuestionPlan from './GuiQuestionPlan'
 
 interface GuiQuestionCardProps {
+  paneId: string
   questions: GuiQuestion[]
+  /** O CARTÃO DE PLANO DO SYNKORA (plan_approval): o mini-plano em markdown
+   *  que o dono lê ANTES de decidir — ele viaja dentro do pedido, nunca em
+   *  fala solta antes do cartão. */
+  plan?: string
   onAnswer: (answers: Record<string, string>) => void
   onSkip: () => void
   disabled?: boolean
@@ -12,8 +18,8 @@ interface GuiQuestionCardProps {
 export default function GuiQuestionCard(props: GuiQuestionCardProps): React.JSX.Element {
   const single = props.questions.length === 1 ? props.questions[0] : undefined
   if (single && !single.multiSelect && single.options.length === 2) {
-    return <GuiQuickQuestionCard question={single} onAnswer={props.onAnswer}
-      onSkip={props.onSkip} disabled={props.disabled} />
+    return <GuiQuickQuestionCard paneId={props.paneId} plan={props.plan} question={single}
+      onAnswer={props.onAnswer} onSkip={props.onSkip} disabled={props.disabled} />
   }
   return <GuiQuestionnaire {...props} />
 }
@@ -31,16 +37,13 @@ export default function GuiQuestionCard(props: GuiQuestionCardProps): React.JSX.
 //    Esc pula. O card recebe o foco sozinho a cada passo.
 
 function GuiQuestionnaire({
+  paneId,
+  plan,
   questions,
   onAnswer,
   onSkip,
   disabled = false
-}: {
-  questions: GuiQuestion[]
-  onAnswer: (answers: Record<string, string>) => void
-  onSkip: () => void
-  disabled?: boolean
-}): React.JSX.Element {
+}: GuiQuestionCardProps): React.JSX.Element {
   const [step, setStep] = useState(0)
   // Escolhas por índice de pergunta: Set de labels + o texto livre do "outra".
   const [picked, setPicked] = useState<Record<number, Set<string>>>({})
@@ -175,6 +178,8 @@ function GuiQuestionnaire({
           </span>
         )}
       </div>
+
+      {plan && step === 0 && <GuiQuestionPlan paneId={paneId} plan={plan} />}
 
       <div className="gui-question-text">{current.question}</div>
 

@@ -50,6 +50,30 @@ test('optional question and proposal coexist with work; terminal clears only tur
   emit(value, { type: 'interaction-resolved', requestId: 'proposal' })
   assert.equal(first(value).pendingCount, 0)
 })
+test('async question (plan_approval / request_user_input_async) outlives the turn like a proposal and survives replay', () => {
+  const value = tracker()
+  emit(value, { type: 'turn-started' })
+  emit(value, { type: 'question', requestId: 'synkora-plan-1', questions: [{ id: 'plan', question: 'Aprova?', options: [] }],
+    plan: 'SYNTHETIC_PLAN', blocking: false, asynchronous: true })
+  assert.equal(first(value).state, 'working', 'the tool already returned: the agent keeps talking')
+  emit(value, { type: 'result', isError: false })
+  assert.equal(first(value).state, 'turn_finished')
+  assert.equal(first(value).pendingCount, 1, 'the plan card waits for the owner past the turn')
+  assert.equal(first(value).pendingKind, 'question')
+  emit(value, { type: 'interaction-resolved', requestId: 'synkora-plan-1' })
+  assert.equal(first(value).pendingCount, 0)
+
+  // Replay across a process boundary restores the pending card, never a non-async one.
+  const restored = new GuiProgressTracker()
+  restored.open(identity, [
+    { evt: { type: 'question', requestId: 'synkora-plan-2', questions: [], plan: 'x', blocking: false, asynchronous: true } },
+    { evt: { type: 'question', requestId: 'rpc-question', questions: [] } },
+    { evt: { type: 'question', requestId: 'synkora-plan-3', questions: [], blocking: false, asynchronous: true } },
+    { evt: { type: 'interaction-resolved', requestId: 'synkora-plan-3' } }
+  ])
+  assert.equal(restored.snapshot()[0].pendingCount, 1)
+  assert.equal(restored.snapshot()[0].pendingKind, 'question')
+})
 test('continuation remains working after normalized result and ends only on continuation end', () => {
   const value = tracker()
   emit(value, { type: 'turn-started' })
