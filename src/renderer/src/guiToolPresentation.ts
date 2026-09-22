@@ -25,6 +25,18 @@ export function isGuiInteractiveTool(name: string): boolean {
   return INTERACTIVE_TOOLS.has(name.toLowerCase())
 }
 
+/** A FALA PÚBLICA não é trabalho: o main já entrega a `commentary` como
+ *  mensagem do agente no fio, e o card cru repetiria o mesmo texto logo acima
+ *  dela (pedido do dono, 2026-09-22). Claude chama pelo nome prefixado; codex,
+ *  pelo nome cru do MCP. O ITEM fica no store — o pareamento do resultado
+ *  depende dele —, só não se desenha nem vira a ferramenta que o turno espera.
+ *  Par deliberado: `isWorkTool` do pulso (guiAgentPulse). */
+const COMMENTARY_TOOLS = new Set(['commentary', 'mcp__synkora__commentary'])
+
+export function isGuiCommentaryTool(name: string): boolean {
+  return COMMENTARY_TOOLS.has(name.toLowerCase())
+}
+
 /** Qual card ESTE item merece. Decisão de apresentação em módulo puro: o
  *  componente só obedece, e o agrupamento consulta a MESMA função — sem isso os
  *  dois divergiriam em silêncio, e um chip agrupado é um chip invisível. */
@@ -63,6 +75,16 @@ export function guiToolActivityText(name: string, rawSummary: string): string {
   return summary ? `${name} · ${summary}` : name
 }
 
+/** A atividade quando uma ferramenta COMEÇA: a fala pública herda a que já
+ *  estava de pé. */
+export function guiToolStartActivity(
+  name: string,
+  summary: string,
+  current: string | null
+): string | null {
+  return isGuiCommentaryTool(name) ? current : guiToolActivityText(name, summary)
+}
+
 /** Card de nível raiz da conversa. Ferramenta de thread filha só existe por
  *  causa do pai: ela nunca dirige status nem recebe desfecho por conta própria. */
 function isRootGuiToolCard(item: GuiToolItem): boolean {
@@ -93,7 +115,12 @@ function acceptsGuiToolResult(item: GuiToolItem): boolean {
 export function lastPendingGuiToolActivity(items: readonly GuiItem[]): string | null {
   for (let index = items.length - 1; index >= 0; index -= 1) {
     const item = items[index]
-    if (item.kind === 'tool' && !item.result && isRootGuiToolCard(item))
+    if (
+      item.kind === 'tool' &&
+      !item.result &&
+      isRootGuiToolCard(item) &&
+      !isGuiCommentaryTool(item.name)
+    )
       return guiToolActivityText(item.name, item.summary)
   }
   return null
@@ -224,8 +251,10 @@ export function groupConsecutiveGuiTools(items: readonly GuiPresentationItem[]):
   }
 
   for (const item of items) {
-    // Raciocínio oculto não é uma interrupção visual da sequência.
-    if (item.kind === 'invisible') continue
+    // Raciocínio oculto e a fala pública (já no fio como mensagem) não se
+    // desenham nem interrompem a sequência.
+    if (item.kind === 'invisible' || (item.kind === 'tool' && isGuiCommentaryTool(item.name)))
+      continue
     // O chip de skill é MARCO do fio, não ferramenta: colapsar duas entradas em
     // "Skill ×2" esconderia justamente o que o dono pediu para ver.
     const canGroup =

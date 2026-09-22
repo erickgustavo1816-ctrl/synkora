@@ -39,7 +39,7 @@ import {
   countGuiOutputLines,
   denyLatestPendingGuiTool,
   guiToolResultTargetIndex,
-  guiToolActivityText,
+  guiToolStartActivity,
   isLaunchedGuiSubagentTool,
   lastPendingGuiToolActivity
 } from './guiToolPresentation'
@@ -1215,7 +1215,9 @@ function reduceGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState
           at: Date.now()
         }),
         thinking: background ? base.thinking : false,
-        activityText: background ? base.activityText : guiToolActivityText(evt.name, summary),
+        activityText: background
+          ? base.activityText
+          : guiToolStartActivity(evt.name, summary, base.activityText),
         ...guiStatusPatch(base, busy(base))
       }
     }
