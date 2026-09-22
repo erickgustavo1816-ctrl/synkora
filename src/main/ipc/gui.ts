@@ -66,10 +66,14 @@ import type { GuiBrowserReferencesResult } from '../guiBrowserReferenceTypes'
 import { renderGuiAttachmentPreview } from '../guiAttachmentMedia'
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
-import { guiMissionRoleOf, planApprovedReceipt } from '../guiMissionContracts'
+import { guiMissionPaneId, guiMissionRoleOf, planApprovedReceipt } from '../guiMissionContracts'
 import { guiMissionOf, noteSkillsSync, syncSpawnSkills } from '../guiSpawnSkills'
-import { notifyDesktop } from '../desktopNotifications'
-import { desktopChatNoticeBody, desktopNotifyTitle } from '../desktopNotificationPolicy'
+import { notifyDesktop, setDesktopNotifyPresence } from '../desktopNotifications'
+import {
+  desktopChatNoticeBody,
+  desktopNotifyTitle,
+  isDesktopNotifySourceOnScreen
+} from '../desktopNotificationPolicy'
 import { GuiPaneVisibilityRegistry, GuiWindowReadyController } from '../guiWindowReady'
 import type { GuiHelperOwnerDismissResult } from '../guiHelperSessions'
 import type { GuiAlertPayload, GuiNoticeKind } from '../guiNotices'
@@ -348,6 +352,20 @@ export function registerGuiIpc(ctx: MainContext, extras: GuiIpcExtras): GuiSessi
     createGuiOwnerMailStore(join(dirname(extras.storeFile), GUI_OWNER_MAIL_STORE_FILE))
   )
   const visibility = new GuiPaneVisibilityRegistry()
+  // COM O SYNKORA ABERTO, AVISA O QUE ESTÁ FORA DA TELA (2026-09-22): o toast
+  // só cala o chat que o dono está vendo — ou, num aviso de missão, qualquer
+  // chat dela na tela. A mesma visibilidade que decide o [pronto] do título.
+  setDesktopNotifyPresence({
+    focusMode: () => ctx.settings.view().desktopNotifyWhileFocused,
+    isOnScreen: (source) =>
+      isDesktopNotifySourceOnScreen(source, {
+        isPaneActive: (paneId) => visibility.isActive(paneId),
+        missionPaneIds: (missionId) => [
+          guiMissionPaneId('dev', missionId),
+          guiMissionPaneId('reviewer', missionId)
+        ]
+      })
+  })
   const readyTitle = new GuiWindowReadyController({
     setTitle: (title) => {
       const win = ctx.mainWindow
@@ -416,8 +434,9 @@ export function registerGuiIpc(ctx: MainContext, extras: GuiIpcExtras): GuiSessi
         },
         // O vocabulário sonoro próprio é sintetizado pelo host (P20).
         silent: true,
-        // P19 é uma saída do sistema, inclusive durante o uso do app.
-        showWhenFocused: true
+        // Só o chat exato conta como visto: o revisor da mesma missão aberto
+        // na tela não esconde o turno que o dev acabou de fechar.
+        source: { paneId }
       })
     },
     // Um único teardown cobre kill do renderer, arquivamento em lote, troca de

@@ -2050,8 +2050,8 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
           ? `receita do bloqueio entregue na conversa do dev: ${detail.slice(0, 300)}`
           : `conversa do dev não está aberta — a receita fica no board: ${detail.slice(0, 300)}`
       })
-      // ONDA D: a fila parou e o dono pode estar em outra janela. Com o app em
-      // foco os sinais internos bastam — o notifyDesktop só fala fora dele.
+      // ONDA D: a fila parou e o dono pode estar em outro projeto ou janela.
+      // Com o app em foco, só cala se um chat DESTA missão estiver na tela.
       notifyDesktop({
         kind: 'conflict',
         key: mission.id,
@@ -2061,7 +2061,8 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
         }),
         body: desktopConflictBody({ conflictFiles: conflictFiles?.length, detail }),
         // O clique abre a missão parada: é nela que o conflito se resolve.
-        target: { projectId: mission.projectId, missionId: mission.id }
+        target: { projectId: mission.projectId, missionId: mission.id },
+        source: { missionId: mission.id }
       })
     }
     const behind = integrationQueue
@@ -2808,9 +2809,10 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
           text: `missão "${mission.title}" INTEGRADA na ${mergeTarget} (${mergeDetail})${doneItems > 0 ? ` · ${doneItems} item(ns) do backlog concluído(s)` : ''}${target.kind === 'version' ? ' — a main só recebe quando o usuário subir a versão' : ''}`,
           actor: 'harness'
         })
-        // ONDA D: o merge é o marco que o dono espera de longe — avisa fora do
-        // app (dentro dele o blip/board já contam). Missão 2.0 apenas: a legada
-        // tem orquestrador e board próprios para narrar o desfecho.
+        // ONDA D: o merge é o marco que o dono espera de longe — avisa quando
+        // ele não está olhando o chat desta missão (em outro projeto, outra
+        // missão ou fora do app). Missão 2.0 apenas: a legada tem orquestrador
+        // e board próprios para narrar o desfecho.
         if (isDirectMission(mission))
           notifyDesktop({
             kind: 'merged',
@@ -2821,7 +2823,8 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
             }),
             body: desktopMergedBody(mergeTarget),
             // Missão integrada não existe mais no board: o clique abre o projeto.
-            target: { projectId, destination: 'project' }
+            target: { projectId, destination: 'project' },
+            source: { missionId }
           })
         if (target.kind === 'version') {
           // versão avançou: só as missões da MESMA versão precisam de sync

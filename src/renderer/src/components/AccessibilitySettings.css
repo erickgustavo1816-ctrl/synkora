@@ -1,46 +1,9 @@
 /* Ajustes ▸ Aparência ▸ ACESSIBILIDADE DO SYNKORA. O cartão, os campos, o
    stepper e o slider vestem as classes de `.typography-*` / `.pref-*` do
-   global.css (a roupa da seção que este cartão substituiu); aqui só o que é
-   novo: a escolha segmentada do movimento, o grupo do chat e a prévia em
-   PAPEL (a prévia antiga era um terminal escuro — o que se regula agora é o
-   app inteiro, e o app é papel). */
-
-.pref-choice {
-  display: flex;
-  gap: 6px;
-}
-
-.pref-choice > button {
-  flex: 1;
-  height: 32px;
-  padding: 0 10px;
-  border: 1px solid var(--line-strong);
-  border-radius: 6px;
-  background: transparent;
-  color: var(--ink-2);
-  font-family: var(--mono);
-  font-size: 9.5px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  cursor: pointer;
-}
-
-.pref-choice > button:hover {
-  border-color: var(--accent);
-  color: var(--accent-deep);
-}
-
-.pref-choice > button[aria-pressed='true'] {
-  border-color: var(--ink);
-  background: var(--ink);
-  color: var(--paper);
-}
-
-.pref-choice > button:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
+   global.css (a roupa da seção que este cartão substituiu), inclusive a
+   escolha segmentada `.pref-choice`, que os Avisos também usam; aqui só o que
+   é deste cartão: o grupo do chat e a prévia em PAPEL (a prévia antiga era um
+   terminal escuro — o que se regula agora é o app inteiro, e o app é papel). */
 
 /* o grupo do chat é um campo com dois controles: fonte e altura da linha */
 .pref-group-title {
