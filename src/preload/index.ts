@@ -658,6 +658,10 @@ export interface SynkoraPreferences {
   chatNotifyFinished: boolean
   chatNotifyFailed: boolean
   chatSoundsEnabled: boolean
+  /** COM O SYNKORA ABERTO (2026-09-22): o que vira toast com a janela em foco.
+   *  Espelho de `DesktopNotifyFocusMode` em main/desktopNotificationPolicy.ts;
+   *  ausente = 'off-screen' (avisa tudo que o dono não está vendo). */
+  desktopNotifyWhileFocused?: 'off-screen' | 'always' | 'never'
   /** INTERRUPTOR do `skill_pull` de rede do agente (Skills 3.0 — ADR-0010).
    *  Ausente/true = ligado; o par é `skillsAgentPull` em main/settingsCore.ts. */
   skillsAgentPull?: boolean

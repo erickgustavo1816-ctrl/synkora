@@ -2594,6 +2594,24 @@ test('avisos do chat têm som apenas no host, visibilidade real e ajustes acess�
   }
 })
 
+test('com o Synkora aberto: Ajustes › Avisos escolhe fora da tela, sempre ou nunca', () => {
+  const settings = readFileSync(
+    new URL('../src/renderer/src/components/ChatNoticeSettings.tsx', import.meta.url),
+    'utf8'
+  )
+  const css = readFileSync(new URL('../src/renderer/src/global.css', import.meta.url), 'utf8')
+
+  assert.match(settings, /settings\?\.desktopNotifyWhileFocused \?\? 'off-screen'/u)
+  assert.match(settings, /patchSettings\(\{ desktopNotifyWhileFocused: choice\.value \}\)/u)
+  assert.match(settings, /className="pref-choice"[\s\S]*role="group"/u)
+  assert.match(settings, /aria-pressed=\{choice\.value === focusMode\}/u)
+  for (const label of ['fora da tela', 'sempre', 'nunca']) {
+    assert.match(settings, new RegExp(`label: '${label}'`, 'u'))
+  }
+  // A escolha segmentada é peça compartilhada (Acessibilidade e Avisos).
+  assert.match(css, /\.pref-choice > button\[aria-pressed='true'\]/u)
+})
+
 test('subagentes usam somente linhagem explícita e preservam o transcript cru', () => {
   const parentA = {
     ...tool('parent-a', 'Agent', 'investigue o fluxo A'),

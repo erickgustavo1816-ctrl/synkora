@@ -8,6 +8,7 @@ import {
   desktopConflictBody,
   desktopMergedBody,
   desktopNotifyTitle,
+  isDesktopNotifySourceOnScreen,
   resetNotifyThrottleForTests,
   shouldNotify,
   WINDOWS_APP_USER_MODEL_ID,
@@ -221,18 +222,69 @@ test('fatal seguido de closed produz uma falha; uma nova geração rearma o aler
   assert.equal(alerts.accept({ type: 'closed', code: 0 }, 5), null)
 })
 
-test('toast do chat pode aparecer com a janela em foco sem mudar avisos gerais', () => {
-  assert.equal(canShowDesktopNotification({ supported: false, windowFocused: false }), false)
-  assert.equal(canShowDesktopNotification({ supported: true, windowFocused: false }), true)
-  assert.equal(canShowDesktopNotification({ supported: true, windowFocused: true }), false)
-  assert.equal(
-    canShowDesktopNotification({
-      supported: true,
-      windowFocused: true,
-      showWhenFocused: true
-    }),
-    true
-  )
+// ————— COM O SYNKORA ABERTO (ordem do dono, 2026-09-22) —————
+// "Se termina outro projeto o qual não estou com a tela nele, eu queria ser
+// notificado." Com a janela em foco, o toast só cala o que já está na tela.
+
+test('com o Synkora em foco, o toast só cala o que já está na tela do dono', () => {
+  const show = (windowFocused, focusMode, sourceOnScreen, supported = true) =>
+    canShowDesktopNotification({ supported, windowFocused, focusMode, sourceOnScreen })
+
+  assert.equal(show(false, 'off-screen', false, false), false, 'sem suporte nada sai')
+  for (const mode of ['off-screen', 'always', 'never']) {
+    assert.equal(show(false, mode, true), true, `janela fora de foco avisa tudo (${mode})`)
+  }
+
+  assert.equal(show(true, 'off-screen', false), true, 'outro projeto ou missão avisa com o app aberto')
+  assert.equal(show(true, 'off-screen', true), false, 'o chat na frente do dono não vira toast')
+  assert.equal(show(true, 'always', true), true, '"sempre" avisa até o que está na tela')
+  assert.equal(show(true, 'never', false), false, '"nunca" cala tudo com o app em foco')
+})
+
+test('"na tela" é o chat exato do aviso, ou um chat da missão dona dele', () => {
+  const active = new Set(['gui-dev-aaaaaaaa'])
+  const presence = {
+    isPaneActive: (paneId) => active.has(paneId),
+    missionPaneIds: (missionId) => [
+      `gui-dev-${missionId.slice(0, 8)}`,
+      `gui-reviewer-${missionId.slice(0, 8)}`
+    ]
+  }
+  const onScreen = (source) => isDesktopNotifySourceOnScreen(source, presence)
+
+  assert.equal(onScreen(undefined), false, 'origem desconhecida nunca cala o aviso')
+  assert.equal(onScreen({ paneId: 'gui-dev-aaaaaaaa' }), true)
+  assert.equal(onScreen({ paneId: 'gui-dev-bbbbbbbb' }), false, 'o chat de outra missão não está na tela')
+  assert.equal(onScreen({ missionId: 'aaaaaaaa-1111' }), true, 'o chat da missão está aberto')
+  assert.equal(onScreen({ missionId: 'bbbbbbbb-2222' }), false)
+
+  active.clear()
+  active.add('gui-reviewer-bbbbbbbb')
+  assert.equal(onScreen({ missionId: 'bbbbbbbb-2222' }), true, 'o revisor da missão também conta')
+  assert.equal(onScreen({ paneId: 'gui-dev-bbbbbbbb' }), false, 'aviso de chat olha só o chat exato')
+})
+
+test('cada aviso diz de onde fala e a presença vem do registro de visibilidade', async () => {
+  const gui = await source('src/main/ipc/gui.ts')
+  const chatAt = gui.indexOf('kind: `chat-${kind}`')
+  assert.match(gui.slice(chatAt, chatAt + 900), /source: \{ paneId \}/u)
+  assert.doesNotMatch(gui, /showWhenFocused/u)
+  assert.match(gui, /setDesktopNotifyPresence\(\{/u)
+  assert.match(gui, /ctx\.settings\.view\(\)\.desktopNotifyWhileFocused/u)
+  assert.match(gui, /isPaneActive: \(paneId\) => visibility\.isActive\(paneId\)/u)
+
+  const engine = await source('src/main/missionEngine.ts')
+  const conflictAt = engine.indexOf("kind: 'conflict'")
+  assert.match(engine.slice(conflictAt, conflictAt + 800), /source: \{ missionId: mission\.id \}/u)
+  const mergedAt = engine.indexOf("kind: 'merged'")
+  assert.match(engine.slice(mergedAt, mergedAt + 800), /source: \{ missionId \}/u)
+
+  const notifier = await source('src/main/desktopNotifications.ts')
+  assert.doesNotMatch(notifier, /showWhenFocused/u)
+  assert.match(notifier, /presence\.isOnScreen\(input\.source\)/u)
+  assert.match(notifier, /const focusMode = presence\.focusMode\(\)/u)
+  // Toda decisão fica na caixa-preta: "por que não avisou?" tem resposta.
+  assert.match(notifier, /event: 'desktop-notify'/u)
 })
 
 test('Windows registra identidade e atalho coerentes no pacote e no desenvolvimento', () => {
@@ -391,7 +443,10 @@ test('notifyDesktop segura a instância até fechar e navega pelo alvo no clique
   assert.match(src, /notification\.on\('close', release\)/u)
   assert.match(src, /if \(input\.target\) navigate\(input\.target\)/u)
   const index = await source('src/main/index.ts')
-  assert.match(index, /initDesktopNotifications\(\(\) => mainWindow, deliverProgressOpenTarget\)/u)
+  assert.match(
+    index,
+    /initDesktopNotifications\(\(\) => mainWindow, deliverProgressOpenTarget, \(entry\) => blackbox\.record\(entry\)\)/u
+  )
 })
 
 test('cada aviso viaja com o alvo do clique: chat abre o pane, conflito abre a missão, merge abre só o projeto', async () => {
