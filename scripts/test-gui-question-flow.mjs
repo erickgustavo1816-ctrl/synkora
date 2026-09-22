@@ -11,10 +11,17 @@ const compiled = buildSync({ stdin: { contents: `
   export { guiThinkingPresentation } from './src/renderer/src/guiThinkingPresentation';
   export { default as Card } from './src/renderer/src/components/GuiQuestionCard';
 `, resolveDir: process.cwd(), loader: 'ts' }, bundle: true, platform: 'node',
-  format: 'cjs', jsx: 'automatic', write: false, external: ['react', 'react/jsx-runtime', 'zustand'] })
+  // O cartão de plano puxa o GuiMarkdown, que precisa de um DOM real (DOMPurify,
+  // <template>) — fora do alcance deste DOM sintético. Ele fica EXTERNO ao
+  // bundle e o `require` abaixo entrega um dublê que só ecoa o texto; o
+  // markdown de verdade tem suíte própria num browser real.
+  format: 'cjs', jsx: 'automatic', write: false, external: ['react', 'react/jsx-runtime', 'zustand', '*/GuiMarkdown'] })
 const loaded = { exports: {} }
+const realRequire = createRequire(import.meta.url)
+const markdownStub = { __esModule: true, default: ({ text }) => React.createElement('div', { 'data-markdown-stub': 'true' }, text) }
+const requireWithStubs = (id) => /GuiMarkdown$/u.test(id) ? markdownStub : realRequire(id)
 new Function('require', 'module', 'exports', 'document', 'window', 'HTMLInputElement', compiled.outputFiles[0].text)(
-  createRequire(import.meta.url), loaded, loaded.exports,
+  requireWithStubs, loaded, loaded.exports,
   { documentElement: { style: { setProperty() {} } } }, { setTimeout }, class {}
 )
 const { EMPTY_GUI_PANE, applyGuiEvent, guiThinkingPresentation, Card } = loaded.exports
@@ -147,6 +154,38 @@ test('Enter sem seleção não responde nem aceita; pular continua explícito', 
     await act(async () => button(card, 'pular').props.onClick())
     assert.equal(skipped, 1)
   } finally { await act(async () => card.unmount()) }
+})
+
+test('o cartão de plano do Synkora mostra o plano DENTRO do cartão, na variante rápida e no questionário', async () => {
+  // 2026-09-22: o plano que o Claude escrevia antes do AskUserQuestion caía no
+  // canal de raciocínio e o dono via "aprova o plano?" sem plano. Aqui o plano
+  // é parte do pedido e o cartão o renderiza acima da pergunta.
+  const plan = 'SYNTHETIC_PLAN_LINE_ONE\n\nSYNTHETIC_PLAN_LINE_TWO'
+  const approval = { id: 'plan', header: 'Plano', question: 'Aprova este plano?',
+    options: [{ label: 'Aprovar' }, { label: 'Não aprovar' }], allowCustom: true }
+  const answers = []
+  for (const questions of [[approval], [approval, question]]) {
+    let card
+    await act(async () => { card = create(React.createElement(Card, { paneId: 'pane-plan', plan, questions,
+      onAnswer: answer => { answers.push({ ...answer }) }, onSkip() {} })) })
+    try {
+      const body = card.root.findByProps({ 'data-question-plan': 'true' })
+      assert.ok(body, 'o corpo do plano existe no cartão')
+      const text = JSON.stringify(card.toJSON())
+      assert.match(text, /SYNTHETIC_PLAN_LINE_ONE/u)
+      assert.match(text, /SYNTHETIC_PLAN_LINE_TWO/u)
+      assert.match(text, /Aprova este plano\?/u)
+      const plans = card.root.findAllByProps({ 'data-question-plan': 'true' })
+      assert.equal(plans.length, 1, 'um corpo de plano por cartão')
+    } finally { await act(async () => card.unmount()) }
+  }
+  // Pergunta comum (sem `plan`) continua sem corpo de plano.
+  let plain
+  await act(async () => { plain = create(React.createElement(Card, { paneId: 'pane-plan', questions: [question],
+    onAnswer() {}, onSkip() {} })) })
+  try {
+    assert.equal(plain.root.findAllByProps({ 'data-question-plan': 'true' }).length, 0)
+  } finally { await act(async () => plain.unmount()) }
 })
 
 test('cartão async sobrevive ao fim do turno e resume; resposta normal não duplica o recibo', () => {

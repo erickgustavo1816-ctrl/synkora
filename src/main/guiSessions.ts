@@ -33,6 +33,10 @@ import { MaestroSession, type SessionEvent } from './maestroSession'
 import { GUI_SKILL_RELOAD_TTL_MS } from './guiClaudeSkillReload'
 import { CLAUDE_PUBLIC_PROGRESS_STYLE } from './guiClaudePublicProgress'
 import { guiPublicCommentaryText, type GuiCommentaryIdentity, type GuiCommentaryDelivery } from './guiPublicCommentary'
+import {
+  GUI_PLAN_APPROVAL_TOOL, GUI_PLAN_APPROVAL_REQUEST_PREFIX, GUI_PLAN_APPROVAL_PLAN_MAX_CHARS,
+  guiPlanApprovalCard, isGuiPlanApprovalRequestId, type GuiPlanApprovalDelivery
+} from './guiPlanApproval'
 import { canSteerGuiQueuedMessage } from './guiQueuedTurnDelivery'
 import { GuiProgressTracker, type GuiProgressInput, type GuiProgressHelpers } from './guiProgress'
 import { loadJsonStore, persistJsonStore } from './jsonStore'
@@ -681,7 +685,9 @@ export function isGuiPersistedEvent(value: unknown): value is SessionEvent {
       return guiRequestId(event['requestId']) && guiPersistedQuestions(event['questions']) &&
         (event['blocking'] === undefined || typeof event['blocking'] === 'boolean') &&
         (event['asynchronous'] === undefined || typeof event['asynchronous'] === 'boolean') &&
-        (event['asynchronous'] !== true || event['blocking'] === false)
+        (event['asynchronous'] !== true || event['blocking'] === false) &&
+        (event['plan'] === undefined ||
+          (typeof event['plan'] === 'string' && event['plan'].length <= GUI_PLAN_APPROVAL_PLAN_MAX_CHARS))
     case 'plan-review':
       return (
         guiRequestId(event['requestId']) &&
@@ -3286,6 +3292,51 @@ export class GuiSessionRegistry {
   }
 
   /**
+   * O CARTÃO DE PLANO DO SYNKORA (2026-09-22). O mini-plano chega como
+   * ARGUMENTO da tool `plan_approval` e vira uma pergunta ASSÍNCRONA com o
+   * plano no corpo — a mesma família do request_user_input_async do Codex: a
+   * tool devolve na hora, o agente encerra o turno, o cartão sobrevive ao
+   * `result` e o clique do dono volta como mensagem nova (answerQuestion).
+   *
+   * Por que existe: o modelo do Claude gravou o plano no canal de RACIOCÍNIO
+   * (que o chat esconde por decisão do dono) e chamou AskUserQuestion — o dono
+   * viu "aprova o plano?" sem plano. Com o plano DENTRO do pedido, nada depende
+   * de fala solta antes do cartão, em nenhum CLI.
+   *
+   * UM cartão de plano pendente por conversa: o novo supera o antigo com eco
+   * factual, como a proposta de plano do planejador.
+   */
+  planApproval(identity: GuiCommentaryIdentity, value: unknown): GuiPlanApprovalDelivery {
+    const entry = this.panes.get(identity.paneId)
+    if (!entry || entry.spawn.projectId !== identity.projectId || !entry.session.alive)
+      return { ok: false, error: 'esta conversa não está aberta; escreva o plano como texto normal no chat e peça a aprovação com o cartão de pergunta' }
+    const card = guiPlanApprovalCard(value)
+    if ('error' in card) return { ok: false, error: card.error }
+    for (const stale of entry.ring.pendingIdsOfType('question')) {
+      if (!isGuiPlanApprovalRequestId(stale)) continue
+      entry.sink({ type: 'interaction-resolved', requestId: stale, resolution: { kind: 'stale' } })
+    }
+    const requestId = `${GUI_PLAN_APPROVAL_REQUEST_PREFIX}${randomUUID()}`
+    entry.sink({
+      type: 'question',
+      requestId,
+      questions: card.questions,
+      plan: card.plan,
+      blocking: false,
+      asynchronous: true
+    })
+    // A conversa parou esperando o dono: a notificação de desktop o acorda,
+    // como na pergunta estruturada e na proposta de plano.
+    this.deps.onPermissionPending?.({
+      paneId: identity.paneId,
+      projectId: entry.spawn.projectId,
+      toolName: GUI_PLAN_APPROVAL_TOOL,
+      kind: 'question'
+    })
+    return { ok: true, requestId }
+  }
+
+  /**
    * Entrega transacional da unica mensagem em fila. A fotografia de permissao,
    * modelo e effort e aplicada no main antes do envio; o mesmo id atravessa
    * retries e o transcript persistido, portanto uma resposta IPC perdida nao
@@ -3589,8 +3640,15 @@ export class GuiSessionRegistry {
     if (!entry) return { ok: false, error: 'este pane não tem sessão aberta' }
     const pendingEvent = entry.ring.pending(requestId)
     const pending = guiEventRecord(pendingEvent)
-    if (requestId.startsWith('codex-async-') || pending?.['asynchronous'] === true) {
-      if (entry.spawn.cli !== 'codex' || !isGuiPersistedEvent(pendingEvent) ||
+    // Pergunta ASSÍNCRONA: a tool já devolveu ao CLI, então a resposta é uma
+    // MENSAGEM NOVA do dono. Nasce no Codex (request_user_input_async) ou no
+    // harness (o cartão de plano do Synkora, `plan_approval`) — este último em
+    // QUALQUER CLI. O PREFIXO decide o caminho mesmo depois de o cartão sair do
+    // anel: um cartão já respondido responde "não está mais pendente", nunca
+    // bate no RPC da pergunta bloqueante.
+    const planCard = isGuiPlanApprovalRequestId(requestId)
+    if (requestId.startsWith('codex-async-') || planCard || pending?.['asynchronous'] === true) {
+      if ((entry.spawn.cli !== 'codex' && !planCard) || !isGuiPersistedEvent(pendingEvent) ||
         pendingEvent.type !== 'question' || pendingEvent.asynchronous !== true) {
         return { ok: false, error: 'esta pergunta não está mais pendente' }
       }

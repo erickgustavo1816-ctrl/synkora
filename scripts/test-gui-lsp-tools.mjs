@@ -607,7 +607,7 @@ test('o AJUDANTE recebe o kit de código E SÓ ELE — frota não abre frota, me
   // famílias é autoridade sobre nada. A cerca que este teste existe para
   // provar segue intacta logo abaixo: NADA de delegate/integração/release.
   assert.deepEqual(tools, [...LSP_TOOLS, ...BROWSER_TOOLS, ...MOBILE_TOOLS, ...SKILL_TOOLS, ...CONTEXT_READ].sort())
-  for (const forbidden of [...DELEGATOR_TOOLS, ...INTEGRATION_TOOLS, ...RELEASE_TOOLS, ...PLANNER_TOOLS, 'mission_summary', 'commentary']) {
+  for (const forbidden of [...DELEGATOR_TOOLS, ...INTEGRATION_TOOLS, ...RELEASE_TOOLS, ...PLANNER_TOOLS, 'mission_summary', 'commentary', 'plan_approval']) {
     assert.equal(tools.includes(forbidden), false, `o ajudante enxergou ${forbidden}`)
   }
   const receipt = served.find((entry) => entry.paneId === 'gui-helper-abcd1234-2')
@@ -650,11 +650,11 @@ test('os TRÊS chats ganham o kit de código sem perder o que já tinham', async
     await toolNames(url, 'token-planner', 'kit-planner'),
     // 2026-08-30: o planejador delega — o kit de ajudantes entrou no catálogo
     // dele (a lista canônica por papel é do `test:gui-delegate-mcp`).
-    sorted(['commentary'], PLANNER_TOOLS, DELEGATOR_TOOLS, LSP_TOOLS, SKILL_TOOLS, CONTEXT_WRITE)
+    sorted(['commentary', 'plan_approval'], PLANNER_TOOLS, DELEGATOR_TOOLS, LSP_TOOLS, SKILL_TOOLS, CONTEXT_WRITE)
   )
   assert.deepEqual(
     await toolNames(url, 'token-dev', 'kit-dev'),
-    sorted(['commentary'], DELEGATOR_TOOLS, INTEGRATION_TOOLS, LSP_TOOLS, BROWSER_TOOLS, MOBILE_TOOLS, SKILL_TOOLS, CONTEXT_WRITE, ['mission_summary'])
+    sorted(['commentary', 'plan_approval'], DELEGATOR_TOOLS, INTEGRATION_TOOLS, LSP_TOOLS, BROWSER_TOOLS, MOBILE_TOOLS, SKILL_TOOLS, CONTEXT_WRITE, ['mission_summary'])
   )
   // A cerca do integrador (R9) continua sendo o PAPEL DO ENDEREÇO: o kit de
   // código não pode ter carregado nada mais junto. E desde o browser
@@ -662,11 +662,11 @@ test('os TRÊS chats ganham o kit de código sem perder o que já tinham', async
   // não roda o produto — nenhuma `browser_*` no catálogo dele.
   assert.deepEqual(
     await toolNames(url, 'token-reviewer', 'kit-rev'),
-    sorted(['commentary'], DELEGATOR_TOOLS, LSP_TOOLS, CONTEXT_READ)
+    sorted(['commentary', 'plan_approval'], DELEGATOR_TOOLS, LSP_TOOLS, CONTEXT_READ)
   )
   assert.deepEqual(
     await toolNames(url, 'token-release', 'kit-release'),
-    sorted(['commentary', 'release_missions', 'release_mission_update', 'release_mission_remove'], RELEASE_TOOLS,
+    sorted(['commentary', 'plan_approval', 'release_missions', 'release_mission_update', 'release_mission_remove'], RELEASE_TOOLS,
       PLANNER_TOOLS, DELEGATOR_TOOLS, LSP_TOOLS, CONTEXT_WRITE, BROWSER_TOOLS, MOBILE_TOOLS, SKILL_TOOLS)
   )
 })

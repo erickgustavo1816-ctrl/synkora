@@ -4382,6 +4382,8 @@ app.whenReady().then(async () => {
     missionSummary: (id, summary) => missionSummaries.save(id, summary).text,
     commentary: (id, message) => guiSessions?.commentary(id, message) ??
       { ok: false, error: 'conversa indisponível; escreva a atualização como texto normal no chat' },
+    planApproval: (id, input) => guiSessions?.planApproval(id, input) ??
+      { ok: false, error: 'conversa indisponível; escreva o plano como texto normal no chat e peça a aprovação com o cartão de pergunta' },
     integrationRun: async (id, summary) => {
       const receipt = missionSummaries.prepareIntegration(id, summary)
       if (!receipt.ok) return receipt.text

@@ -35,6 +35,13 @@ import { guiMissionRoleOf } from './guiMissionContracts'
 import { MISSION_SUMMARY_MAX } from './missionSummary'
 import { GUI_COMMENTARY_TOOL, GUI_COMMENTARY_MAX_CHARS, GUI_COMMENTARY_DESCRIPTION,
   type GuiCommentaryDelivery } from './guiPublicCommentary'
+import {
+  GUI_PLAN_APPROVAL_TOOL, GUI_PLAN_APPROVAL_DESCRIPTION, GUI_PLAN_APPROVAL_RECEIPT,
+  GUI_PLAN_APPROVAL_UNAVAILABLE, GUI_PLAN_APPROVAL_PLAN_MAX_CHARS, GUI_PLAN_APPROVAL_QUESTION_MAX_CHARS,
+  GUI_PLAN_APPROVAL_HEADER_MAX_CHARS, GUI_PLAN_APPROVAL_OPTION_MAX_COUNT,
+  GUI_PLAN_APPROVAL_OPTION_LABEL_MAX_CHARS, GUI_PLAN_APPROVAL_OPTION_DESCRIPTION_MAX_CHARS,
+  type GuiPlanApprovalDelivery
+} from './guiPlanApproval'
 // R14 — o kit de CÓDIGO (design DESIGN_COPIA_E_LSP_R14, seção L2). Mesma
 // doutrina do bloco acima: os TETOS que a descrição ensina ao agente saem do
 // módulo que os aplica, nunca de uma cópia à mão.
@@ -131,6 +138,9 @@ export interface McpApi {
   /** Plain-language result authored by this mission's dev, before completion. */
   missionSummary?: (id: PaneIdentity, summary: string) => string
   commentary?: (id: PaneIdentity, message: string) => GuiCommentaryDelivery
+  /** O cartão de plano do Synkora (2026-09-22): o mini-plano viaja DENTRO do
+   *  pedido e o harness publica o cartão de aprovação no chat do chamador. */
+  planApproval?: (id: PaneIdentity, input: unknown) => GuiPlanApprovalDelivery
 
   // ——— kit do RELEASE (R10, 2026-08-19 — role 'gui-release') ———
   // O botão "subir pra main" da versão abre a conversa; estas cascas finas
@@ -528,6 +538,30 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
       return {
         ...text(delivered?.ok ? 'Atualização entregue ao dono. Continue a tarefa.' :
           delivered?.error ?? 'Canal indisponível. Escreva a atualização como texto normal no chat e continue.'),
+        ...(!delivered?.ok ? { isError: true } : {})
+      }
+    })
+    // O CARTÃO DE PLANO (2026-09-22): a mesma faixa de papéis que fala com o
+    // dono pode lhe pedir aval de um plano — e o plano vai DENTRO do cartão.
+    server.registerTool(GUI_PLAN_APPROVAL_TOOL, {
+      description: GUI_PLAN_APPROVAL_DESCRIPTION,
+      inputSchema: {
+        plan: z.string().trim().min(1).max(GUI_PLAN_APPROVAL_PLAN_MAX_CHARS)
+          .describe('o mini-plano em markdown (até 5 linhas): é o que o dono lê no cartão'),
+        question: z.string().trim().min(1).max(GUI_PLAN_APPROVAL_QUESTION_MAX_CHARS).optional()
+          .describe('pergunta curta em PT-BR; padrão "Aprova este plano?"'),
+        header: z.string().trim().min(1).max(GUI_PLAN_APPROVAL_HEADER_MAX_CHARS).optional()
+          .describe('rótulo do cartão; padrão "Plano"'),
+        options: z.array(z.object({
+          label: z.string().trim().min(1).max(GUI_PLAN_APPROVAL_OPTION_LABEL_MAX_CHARS),
+          description: z.string().max(GUI_PLAN_APPROVAL_OPTION_DESCRIPTION_MAX_CHARS).optional()
+        })).min(2).max(GUI_PLAN_APPROVAL_OPTION_MAX_COUNT).optional()
+          .describe('alternativas próprias; padrão Aprovar / Não aprovar')
+      }
+    }, (input) => {
+      const delivered = api.planApproval?.(identity, input)
+      return {
+        ...text(delivered?.ok ? GUI_PLAN_APPROVAL_RECEIPT : delivered?.error ?? GUI_PLAN_APPROVAL_UNAVAILABLE),
         ...(!delivered?.ok ? { isError: true } : {})
       }
     })

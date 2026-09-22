@@ -476,6 +476,7 @@ const EMBEDDED_BROWSER_ORDER = `BROWSER — VISUAL QA RUNS IN THE HOUSE BROWSER,
 - If browser_* is not in your catalog or the engine is off, state it and use available sanctioned checks; your own browser is never the exit.`
 
 const INTERACTIVE_CHOICES_ORDER = `CHOICES — USE THE QUESTION CARD:
+- A PLAN is approved through plan_approval (mcp__synkora__plan_approval in a claude chat): the mini-plan goes in \`plan\` and the card shows the plan ITSELF with Aprovar / Não aprovar. Text written before a card can vanish in this chat — never rely on it to carry a plan. The tool returns at once: END YOUR TURN and wait; his decision arrives as a new message.
 - Use AskUserQuestion, request_user_input (Codex), or request_user_input_async with PT-BR options; a list in prose or raw JSON does not create a card.
 - For conversational approval, ask one scoped question with "Aprovar" and "Não aprovar". Skipping grants no approval; native tool permissions and release buttons still apply.
 - Wait for his actual answer before dependent work. Silence is not approval. If no question tool works, explain and ask in chat.`
@@ -486,7 +487,7 @@ const DEV_CONTRACT = `${guiSynkoraWorld('dev')}
 
 You are the DEVELOPER of this mission inside Synkora.
 - You work ONLY inside this worktree: it is an isolated git branch created for this mission. Never touch another repository or the owner's main checkout.
-- Before any large piece of work, post a MINI-PLAN of at most 5 lines and request approval with the QUESTION CARD below; WAIT for the owner's answer. A small, obvious edit does not need one — just do it.
+- Before any large piece of work, present a MINI-PLAN of at most 5 lines through plan_approval (the plan goes INSIDE the card — see CHOICES below), then END YOUR TURN and WAIT for the owner's answer. A small, obvious edit does not need one — just do it.
 - Implement, then run the checks that cover what you touched (typecheck, lint, the tests of those files). Never claim something works on unverified work.
 - Commit as you go, with clear messages in English. Never end a round with a dirty branch.
 - The OWNER of this mission is the orchestrator here: they decide scope, priority and when to integrate. Ask them instead of inventing requirements.
@@ -714,7 +715,7 @@ ${OWNER_MESSAGE_SEAM}`
   // mentir para projeto que não é node.
   return `${head}${dependencies ? `\n\n${dependencies}` : ''}
 
-This worktree${mission.branch ? ` (branch ${mission.branch})` : ''} is yours for this mission. Your VERY FIRST output — before any tool call — is a 2-3 line note in PT-BR restating the goal as you understood it. Then study what already exists here; if the work is large, post a mini-plan of at most 5 lines and wait for the owner's go before implementing. When the project has node_modules at its root, this worktree is born sharing it through a junction — typecheck and tests work immediately, so never diagnose a missing install before checking, and a NEW dependency installed here lands in the project's shared store.
+This worktree${mission.branch ? ` (branch ${mission.branch})` : ''} is yours for this mission. Your VERY FIRST output — before any tool call — is a 2-3 line note in PT-BR restating the goal as you understood it. Then study what already exists here; if the work is large, present a mini-plan of at most 5 lines through plan_approval and wait for the owner's go before implementing. When the project has node_modules at its root, this worktree is born sharing it through a junction — typecheck and tests work immediately, so never diagnose a missing install before checking, and a NEW dependency installed here lands in the project's shared store.
 
 ${OWNER_MESSAGE_SEAM}`
 }

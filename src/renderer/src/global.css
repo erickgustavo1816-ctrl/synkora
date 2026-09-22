@@ -17359,6 +17359,41 @@ details.gui-error-line {
   user-select: text;
 }
 
+/* O CARTÃO DE PLANO DO SYNKORA (plan_approval): o mini-plano mora DENTRO do
+   cartão, acima da pergunta — papel sobre papel, com o fio do acento que o
+   plano do modo plano já usa (.gui-plan). */
+.gui-question-plan {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 9px 11px;
+  border: 1px solid var(--gui-line-strong);
+  border-left: 3px solid var(--accent);
+  border-radius: 8px;
+  background: var(--card);
+}
+
+.gui-question-plan-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--ink-3);
+}
+
+.gui-question-plan-body {
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--ink);
+  user-select: text;
+  max-height: 360px;
+  overflow-y: auto;
+  /* O overflow também corta em x, e o marcador "1." de um <ol> (fora da caixa,
+     18px de recuo no .gui-md-content) perdia um pixel à esquerda — medido no
+     mockup de 2026-09-22. Quatro pixels devolvem o marcador inteiro. */
+  padding-inline-start: 4px;
+}
+
 .gui-question-options {
   display: flex;
   flex-direction: column;

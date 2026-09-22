@@ -522,7 +522,8 @@ export type GuiPendingInteraction =
       requestId: string
       blocking?: boolean
       asynchronous?: boolean
-      question: { requestId: string; questions: GuiQuestion[]; blocking?: boolean }
+      /** `plan`: o mini-plano que o cartão mostra acima da pergunta. */
+      question: { requestId: string; questions: GuiQuestion[]; blocking?: boolean; plan?: string }
     }
   | {
       kind: 'plan'
@@ -561,8 +562,9 @@ export interface GuiPaneState {
    *  enquanto isso — o transplante mataria a operação em voo */
   composerBusy: boolean
   perm: GuiPendingPerm | null
-  /** pergunta com opções esperando o dono (AskUserQuestion) */
-  question: { requestId: string; questions: GuiQuestion[]; blocking?: boolean } | null
+  /** pergunta com opções esperando o dono (AskUserQuestion, request_user_input
+   *  ou o cartão de plano do Synkora — `plan` é o mini-plano deste último) */
+  question: { requestId: string; questions: GuiQuestion[]; blocking?: boolean; plan?: string } | null
   /** plano esperando veredito (ExitPlanMode): construir × revisar */
   planReview: { requestId: string; plan: string } | null
   /** proposta de plano esperando o dono (propose_plan): criar × ajustar */
@@ -1299,7 +1301,12 @@ function reduceGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState
     case 'question': {
       const blocking = evt.blocking !== false
       const base = blocking ? finalizeGuiStream(state) : state
-      const question = { requestId: evt.requestId, questions: evt.questions, blocking }
+      const question = {
+        requestId: evt.requestId,
+        questions: evt.questions,
+        blocking,
+        ...(evt.plan ? { plan: evt.plan } : {})
+      }
       return {
         ...base,
         ...enqueueGuiInteraction(base, {

@@ -2243,6 +2243,8 @@ export default function GuiPane({
             {!inert && gui.question && !writerBusy && (
               <GuiQuestionCard
                 key={gui.question.requestId}
+                paneId={paneId}
+                plan={gui.question.plan}
                 questions={gui.question.questions}
                 disabled={Boolean(gui.interactionSubmitting)}
                 onAnswer={(answers) => void answerGuiQuestion(projectId, paneId, answers)}

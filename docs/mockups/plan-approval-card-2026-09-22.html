@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<title>mockup · o cartão de plano do Synkora (plan_approval)</title>
+<!-- O CSS REAL do renderer: as classes abaixo são as que GuiQuestionCard,
+     GuiQuickQuestionCard e GuiQuestionPlan emitem. Sirva a raiz do repo
+     (ex.: node scripts estático na porta 8791) e abra este arquivo. -->
+<link rel="stylesheet" href="/src/renderer/src/global.css" />
+<style>
+  body { margin: 0; padding: 28px 16px 48px; background: var(--paper); color: var(--ink);
+    font-family: 'Cascadia Code', 'Cascadia Mono', Consolas, monospace; }
+  .mock-thread { display: flex; flex-direction: column; gap: 22px; max-width: 820px; margin: 0 auto; }
+  .mock-caption { font-size: 10.5px; letter-spacing: 0.07em; text-transform: uppercase; color: var(--ink-3); }
+  .mock-assistant { font-size: 13px; line-height: 1.55; color: var(--ink); max-width: var(--gui-column); margin: 0 auto; width: 100%; }
+</style>
+</head>
+<body>
+<div class="gui-pane">
+  <div class="mock-thread">
+    <div class="mock-caption">1 · o dev chamou mcp__synkora__plan_approval — o plano viaja DENTRO do pedido e o cartão o mostra antes dos botões</div>
+
+    <div class="mock-assistant">Vi o print: o cartão de pergunta aparece, mas o texto do plano some. Vou propor a correção no cartão abaixo.</div>
+
+    <div class="gui-question" data-quick-question="true" tabindex="-1" role="group" aria-label="Pergunta do agente">
+      <div class="gui-question-head">
+        <span class="gui-question-title">Plano</span>
+      </div>
+      <div class="gui-question-plan" data-question-plan="true">
+        <div class="gui-question-plan-label">o plano</div>
+        <div class="gui-question-plan-body">
+          <div class="gui-md"><div class="gui-md-content">
+            <ol>
+              <li><strong>Causa provada:</strong> o modelo gravou o plano no canal de raciocínio, que o chat esconde (P13).</li>
+              <li>Tool <code>plan_approval</code> no MCP do Synkora: o mini-plano vai dentro do pedido; o cartão mostra o plano com Aprovar / Não aprovar.</li>
+              <li>O cartão sobrevive ao fim do turno; o clique vira mensagem nova para o agente, no Claude e no Codex.</li>
+              <li>Persona do dev passa a exigir a tool para o mini-plano.</li>
+              <li>Harness: sem skill de design; TDD; gate raiz e conferência no browser da casa.</li>
+            </ol>
+          </div></div>
+        </div>
+      </div>
+      <div class="gui-question-text">Aprova este plano?</div>
+      <div class="gq-quick-options">
+        <button type="button" class="gq-option gq-quick-option" aria-label="Aprovar">
+          <span class="gq-body"><b>Aprovar</b><span class="gq-desc">Pode seguir exatamente assim.</span></span>
+        </button>
+        <button type="button" class="gq-option gq-quick-option" aria-label="Não aprovar">
+          <span class="gq-body"><b>Não aprovar</b><span class="gq-desc">Quero mudar algo; descrevo em "outra resposta".</span></span>
+        </button>
+      </div>
+      <div class="gq-quick-footer">
+        <span class="gq-hint">Um clique envia sua resposta.</span>
+        <button class="gui-btn" type="button" aria-expanded="false">outra resposta…</button>
+        <button class="gui-btn" type="button">pular</button>
+      </div>
+    </div>
+
+    <div class="mock-caption">2 · com opções próprias (3 alternativas) o mesmo plano abre o questionário</div>
+
+    <div class="gui-question" tabindex="-1" role="group" aria-label="Pergunta do agente">
+      <div class="gui-question-head">
+        <span class="gui-question-icon" aria-hidden="true">❓</span>
+        <span class="gui-question-title">Correção</span>
+      </div>
+      <div class="gui-question-plan" data-question-plan="true">
+        <div class="gui-question-plan-label">o plano</div>
+        <div class="gui-question-plan-body">
+          <div class="gui-md"><div class="gui-md-content">
+            <p>Na sessão do print, antes do cartão só existe um bloco de <em>raciocínio</em> com o plano e a chamada da pergunta — nenhum bloco de texto.</p>
+            <ul>
+              <li><strong>A</strong> — mostrar o pensamento acima do cartão (exceção pontual à P13).</li>
+              <li><strong>B</strong> — devolver a pergunta ao agente com a receita.</li>
+              <li><strong>C</strong> — plano dentro de um cartão do Synkora, para os dois CLIs.</li>
+            </ul>
+          </div></div>
+        </div>
+      </div>
+      <div class="gui-question-text">Como corrigir o plano invisível antes do cartão de pergunta?</div>
+      <div class="gui-question-options" role="radiogroup" aria-label="Como corrigir?">
+        <button type="button" role="radio" aria-checked="false" class="gq-option">
+          <kbd class="gq-key">1</kbd><span class="gq-body"><b>Mostrar o pensamento</b><span class="gq-desc">Sem volta extra; revela raciocínio.</span></span>
+        </button>
+        <button type="button" role="radio" aria-checked="true" class="gq-option active">
+          <kbd class="gq-key">2</kbd><span class="gq-body"><b>Cartão de plano do Synkora (Recomendado)</b><span class="gq-desc">O plano viaja dentro do pedido, nos dois CLIs.</span></span>
+          <span class="gq-check" aria-hidden="true">✓</span>
+        </button>
+        <button type="button" role="radio" aria-checked="false" class="gq-option">
+          <kbd class="gq-key">3</kbd><span class="gq-body"><b>Devolver a pergunta ao agente</b><span class="gq-desc">P13 intacta; custa uma volta a mais.</span></span>
+        </button>
+        <button type="button" class="gq-option other">
+          <kbd class="gq-key">0</kbd><span class="gq-body"><b>outra resposta…</b></span>
+        </button>
+      </div>
+      <div class="gui-question-actions">
+        <span class="gq-hint">teclas 1-9 · enter segue · esc pula</span>
+        <button class="gui-btn">pular</button>
+        <button class="gui-btn primary">responder</button>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>
