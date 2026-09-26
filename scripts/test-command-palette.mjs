@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { appendFile, mkdtemp, mkdir, readFile, rm, utimes, writeFile } from 'node:fs/promises'
+import { appendFile, mkdtemp, mkdir, readFile, rm, symlink, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -227,6 +227,54 @@ test('R24.2 — localizador por sessão: claude direto, codex pelo nome, prefixo
     undefined,
     'id fora da forma conhecida nunca vira caminho'
   )
+})
+
+test('missão concluída abre o histórico sem conhecer o worktree original', async () => {
+  const data = await fixture()
+  for (const cwds of [undefined, [join(data.root, 'project-root')]]) {
+    const session = await locateHistorySessionFile({
+      provider: 'claude',
+      sessionId: data.claudeSessionId,
+      configDirs: [data.claudeConfig],
+      cwds
+    })
+    assert.equal(session?.file, data.claudeFile)
+    assert.equal(await localHistoryLocatorIsSafe(session), true)
+    const page = await loadLocalHistorySessionPage(session)
+    assert.equal(page.ok, true)
+    assert.equal(page.messages[0].text, 'Procure a constelação violeta no mapa.')
+  }
+})
+
+test('histórico sem worktree escolhe a cópia mais recente entre contas cadastradas', async () => {
+  const data = await fixture()
+  const secondConfig = join(data.root, 'second-seat')
+  const secondDir = join(secondConfig, 'projects', 'old-worktree')
+  await mkdir(secondDir, { recursive: true })
+  const secondFile = join(secondDir, `${data.claudeSessionId}.jsonl`)
+  await writeFile(secondFile, await readFile(data.claudeFile))
+  await utimes(data.claudeFile, new Date('2026-01-01'), new Date('2026-01-01'))
+  await utimes(secondFile, new Date('2026-02-01'), new Date('2026-02-01'))
+  const session = await locateHistorySessionFile({
+    provider: 'claude', sessionId: data.claudeSessionId,
+    configDirs: [data.claudeConfig, secondConfig]
+  })
+  assert.equal(session?.file, secondFile)
+})
+
+test('histórico sem worktree respeita cancelamento e não segue diretório vinculado', async () => {
+  const data = await fixture()
+  const linkedConfig = join(data.root, 'linked-seat')
+  await mkdir(join(linkedConfig, 'projects'), { recursive: true })
+  await symlink(join(data.claudeConfig, 'projects', claudeSlug(data.cwd)),
+    join(linkedConfig, 'projects', 'external-worktree'), process.platform === 'win32' ? 'junction' : 'dir')
+  assert.equal(await locateHistorySessionFile({
+    provider: 'claude', sessionId: data.claudeSessionId, configDirs: [linkedConfig]
+  }), undefined)
+  assert.equal(await locateHistorySessionFile({
+    provider: 'claude', sessionId: data.claudeSessionId, configDirs: [data.claudeConfig],
+    signal: AbortSignal.abort()
+  }), undefined)
 })
 
 test('R24.3 — a conversa completa abre no COMEÇO e pagina por faixa de bytes', async () => {
