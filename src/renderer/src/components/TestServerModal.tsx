@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useStore } from '../store'
+import { InlineNotice } from './NoticeStack'
 
 /**
  * Modal do "▶ testar" (decisão do usuário, 2026-08-06): sobe o dev server do
@@ -99,7 +100,7 @@ export function TestServerModal({
             />
           </label>
         </div>
-        {err && <div className="mission-msg">{err}</div>}
+        {err && <InlineNotice tone="error">{err}</InlineNotice>}
         <div className="task-modal-actions">
           <button className="btn ghost" onClick={onClose}>
             cancelar

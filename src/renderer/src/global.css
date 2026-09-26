@@ -4793,26 +4793,6 @@ body.pane-docking .pane-bar.draggable {
   border-color: var(--ok);
 }
 
-.mission-msg {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.mission-msg-close {
-  margin-left: auto;
-  background: none;
-  border: none;
-  color: var(--ink-3);
-  font-size: 14px;
-  cursor: pointer;
-  padding: 0 4px;
-}
-
-.mission-msg-close:hover {
-  color: var(--err);
-}
-
 /* chip da versão do app no titlebar: SEM glifo (o ◈ caía em fonte de símbolo
    com métrica torta e desalinhava) — só o nome, em destaque */
 .version-chip {
@@ -7578,16 +7558,6 @@ body.pane-docking .pane-bar.draggable {
 .btn.danger-solid:hover {
   background: #a83a30;
   color: #fff;
-}
-
-.mission-msg {
-  font-size: 12px;
-  color: var(--accent-deep);
-  border: 1.5px dashed var(--accent);
-  border-radius: 6px;
-  padding: 6px 10px;
-  margin-bottom: 10px;
-  background: rgba(217, 108, 63, 0.08);
 }
 
 /* Slots do PM/orquestradores permanecem com a caixa real mesmo ocultos. Isso

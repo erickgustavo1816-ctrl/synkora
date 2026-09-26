@@ -671,6 +671,11 @@ export interface SynkoraPreferences {
   chatWritingWordsPerSecond?: number
   chatWritingMaxLagMs?: number
   chatWritingFade?: boolean
+  /** OS AVISOS DO BOARD (2026-09-26) — espelho de main/settingsCore.ts; quem
+   *  consome é renderer/noticeStack.ts (`noticePrefsOf`). Ausentes = padrão
+   *  (nunca fecha sozinho, canto inferior). */
+  noticeAutoCloseSeconds?: 0 | 6 | 10 | 20
+  noticeCorner?: 'bottom' | 'top'
 }
 
 /** Snapshot seguro do main. Nenhum segredo bruto cruza esta fronteira. */

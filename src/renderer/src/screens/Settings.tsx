@@ -2,6 +2,7 @@ import { useStore, type SettingsSection } from '../store'
 import AccessibilitySettings from '../components/AccessibilitySettings'
 import ChatNoticeSettings from '../components/ChatNoticeSettings'
 import ChatWritingSettings from '../components/ChatWritingSettings'
+import NoticeSettings from '../components/NoticeSettings'
 import SeatDeck from '../components/SeatDeck'
 import SkillsSettings from '../components/SkillsSettings'
 import SynVoiceMicrophoneSettings from '../components/SynVoiceMicrophoneSettings'
@@ -124,6 +125,12 @@ export default function Settings(): React.JSX.Element {
                       label="os avisos do chat"
                     >
                       <ChatNoticeSettings />
+                    </GuiPanelErrorBoundary>
+                    <GuiPanelErrorBoundary
+                      paneId="settings:board-notices"
+                      label="os avisos do Board"
+                    >
+                      <NoticeSettings />
                     </GuiPanelErrorBoundary>
                   </>
                 )}
