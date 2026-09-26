@@ -2,6 +2,7 @@ import type { WorkspacePanelId } from '../workspacePanels'
 
 export default function WorkspaceIcon({ name }: {
   name: WorkspacePanelId | 'menu' | 'sidebar' | 'expand' | 'restore' | 'close' | 'upload' | 'terminal' | 'review' | 'archive' | 'check' | 'discard'
+    | 'play' | 'plus' | 'branch' | 'chevron' | 'arrow' | 'ask' | 'queue' | 'plan'
 }): React.JSX.Element {
   const paths: Record<typeof name, React.ReactNode> = {
     browser: <><circle cx="10" cy="10" r="7" /><ellipse cx="10" cy="10" rx="3" ry="7" /><path d="M3 10h14" /></>,
@@ -20,7 +21,15 @@ export default function WorkspaceIcon({ name }: {
     sidebar: <><rect x="2.5" y="3" width="15" height="14" rx="2" /><path d="M7.5 3v14" /></>,
     expand: <path d="M12 3h5v5M17 3l-5 5M8 17H3v-5M3 17l5-5" />,
     restore: <path d="M17 8h-5V3M12 8l5-5M3 12h5v5M8 12l-5 5" />,
-    close: <path d="m5 5 10 10M5 15l10-10" />
+    close: <path d="m5 5 10 10M5 15l10-10" />,
+    play: <path d="M6.5 4.5v11l9-5.5z" />,
+    plus: <path d="M10 4v12M4 10h12" />,
+    branch: <><circle cx="5.5" cy="15" r="2" /><circle cx="14.5" cy="5.5" r="2" /><path d="M5.5 3v10m9-5.5a7 7 0 0 1-7 7" /></>,
+    chevron: <path d="m5.5 8 4.5 4.5L14.5 8" />,
+    arrow: <path d="M4 10h12m-4.5-4.5L16 10l-4.5 4.5" />,
+    ask: <><circle cx="10" cy="10" r="7" /><path d="M7.9 7.9a2.2 2.2 0 1 1 3 2c-.6.3-.9.7-.9 1.3v.4M10 14.2v.1" /></>,
+    queue: <><circle cx="10" cy="10" r="7" /><path d="M10 6v4l2.6 1.6" /></>,
+    plan: <><path d="M5 3.5h7l3 3v10H5z" /><path d="M8 10h5M8 13h3" /></>
   }
   return <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>
 }
