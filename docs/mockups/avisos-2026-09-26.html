@@ -125,7 +125,7 @@
   .notice:hover .notice-timer, .notice:focus-within .notice-timer { animation-play-state: paused; }
   @keyframes notice-timer { to { transform: scaleX(0); } }
 
-  /* a PILHA: canto inferior direito do Board, perto do ⇪ do trilho de entrega.
+  /* a PILHA: canto inferior direito do Board, longe do ⇪ do cabeçalho do chat.
      O mais novo nasce colado no canto; os anteriores sobem. */
   .notice-stack {
     position: absolute; right: 16px; bottom: 16px; z-index: 5;
@@ -234,7 +234,7 @@
   <header>
     <h1>Avisos do Synkora — a faixa tracejada vira um aviso flutuante</h1>
     <p class="lede">Mockup para aprovação. O aviso deixa de empurrar o Board para baixo e passa a nascer no canto inferior direito,
-      perto do ⇪ que o disparou. Ele não bloqueia nada: o chat continua visível e clicável atrás dele. Os controles abaixo são só do mockup.</p>
+      longe do cabeçalho do chat, onde fica o ⇪. Ele não bloqueia nada: o chat continua visível e clicável atrás dele. Os controles abaixo são só do mockup.</p>
   </header>
 
   <section>
@@ -250,7 +250,7 @@
 
   <section>
     <h2>Depois, no Board</h2>
-    <p class="section-note">Clique em <b>⇪ Integrar</b> no trilho da direita (ou em “reproduzir”) para ver o aviso entrar. Esc fecha o mais novo.</p>
+    <p class="section-note">Clique em <b>⇪ Integrar</b> no trilho da direita (ou em “reproduzir”) para ver o aviso entrar. Esc fecha o aviso em foco.</p>
     <div class="controls">
       <button class="btn" type="button" data-act="replay">▶ reproduzir</button>
       <button class="btn ghost" type="button" data-act="push-warn">+ recusa</button>
@@ -338,7 +338,7 @@
             <button type="button" aria-pressed="false">superior</button>
           </span>
         </div>
-        <p class="set-help">Inferior fica perto do ⇪ e longe do topo do Board.</p>
+        <p class="set-help">Inferior fica longe do cabeçalho do chat, onde mora o ⇪.</p>
       </div>
     </div>
   </section>
@@ -351,7 +351,7 @@
       <li><b>Empilha até 3.</b> O mais novo nasce colado no canto; acima disso aparece “+N avisos”. O mesmo aviso repetido substitui o anterior em vez de duplicar.</li>
       <li><b>Mesma regra de quando aparecer:</b> o ⇪ só mostra aviso quando a fila não mudou (recusa ou clique repetido). Ticket novo continua sendo contado pelo trilho e pelo card.</li>
       <li><b>Textos mais curtos.</b> A frase do motor para a fila vira título + posição + uma frase; nada de caixa alta gritando.</li>
-      <li><b>Acessível.</b> Informação e fila são anunciadas com educação ao leitor de tela; recusa e erro, na hora. Esc fecha o mais novo sem roubar o foco do chat.</li>
+      <li><b>Acessível.</b> Informação e fila são anunciadas com educação ao leitor de tela; recusa e erro, na hora. Esc fecha o aviso em foco; no chat, o Esc continua sendo do chat.</li>
       <li><b>O Backlog usa o mesmo aviso</b> para as mensagens de release.</li>
     </ul>
   </section>

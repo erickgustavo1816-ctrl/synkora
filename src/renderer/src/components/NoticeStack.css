@@ -1,0 +1,373 @@
+/* ————— OS AVISOS DO BOARD (2026-09-26) —————
+   Mockup aprovado: docs/mockups/avisos-2026-09-26.html. Substitui a faixa
+   tracejada `.mission-msg`. A pilha é `absolute` e ancora no bloco de
+   contenção mais próximo: o `.board` (o `container-type` dele já o torna um)
+   ou o `.workspace-stage` no Backlog. Fica ACIMA do palco e ABAIXO dos modais
+   (`.overlay` = 40) — nunca é uma janela na frente do chat. */
+
+.notice-stack {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+  max-width: calc(100% - 32px);
+  pointer-events: none;
+}
+
+.notice-stack > * {
+  pointer-events: auto;
+}
+
+/* canto superior (Ajustes): abaixo do cabeçalho do palco, onde mora o ⇪;
+   o mais novo fica colado no topo */
+.notice-stack.at-top {
+  top: 64px;
+  bottom: auto;
+  flex-direction: column-reverse;
+}
+
+.notice-more {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  background: var(--card);
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  padding: 3px 10px;
+}
+
+.notice {
+  --tone: var(--ink);
+  position: relative;
+  box-sizing: border-box;
+  width: 372px;
+  max-width: 100%;
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) 24px;
+  column-gap: 12px;
+  row-gap: 6px;
+  padding: 13px 10px 12px 13px;
+  background: var(--card);
+  color: var(--ink);
+  border: 1.5px solid var(--ink);
+  border-radius: 8px;
+  box-shadow:
+    0 1px 2px rgba(38, 32, 25, 0.08),
+    0 22px 44px -22px rgba(21, 20, 15, 0.45);
+  font-family: var(--mono);
+}
+
+.notice[data-tone='queued'] {
+  --tone: var(--accent-deep);
+}
+
+.notice[data-tone='warn'] {
+  --tone: var(--warn);
+}
+
+.notice[data-tone='error'] {
+  --tone: var(--err);
+}
+
+/* O SELO diz o tom pela FORMA antes da cor: quadrado = andamento (fila),
+   losango = recusa, octógono = erro, círculo = informação. */
+.notice-stamp {
+  grid-row: 1 / span 3;
+  position: relative;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.notice-stamp::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--tone);
+}
+
+.notice-stamp > span {
+  position: relative;
+}
+
+.notice[data-tone='queued'] .notice-stamp {
+  color: #fff8ef;
+}
+
+.notice[data-tone='queued'] .notice-stamp::before {
+  border-radius: 6px;
+}
+
+.notice[data-tone='warn'] .notice-stamp {
+  color: var(--ink);
+}
+
+.notice[data-tone='warn'] .notice-stamp::before {
+  inset: 4px;
+  border-radius: 3px;
+  transform: rotate(45deg);
+}
+
+.notice[data-tone='error'] .notice-stamp {
+  color: #fff;
+  font-size: 12px;
+}
+
+.notice[data-tone='error'] .notice-stamp::before {
+  clip-path: polygon(30% 0, 70% 0, 100% 30%, 100% 70%, 70% 100%, 30% 100%, 0 70%, 0 30%);
+}
+
+.notice[data-tone='info'] .notice-stamp {
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.notice[data-tone='info'] .notice-stamp::before {
+  background: transparent;
+  border: 1.5px solid var(--ink);
+  border-radius: 50%;
+}
+
+.notice-head {
+  grid-column: 2;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  min-height: 24px;
+}
+
+.notice-title {
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  text-wrap: balance;
+}
+
+.notice-chip {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: var(--ink-2);
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+
+.notice-close {
+  grid-column: 3;
+  grid-row: 1;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    color 120ms ease,
+    border-color 120ms ease,
+    background 120ms ease;
+}
+
+.notice-close:hover {
+  color: var(--ink);
+  border-color: var(--line-strong);
+  background: var(--paper-2);
+}
+
+.notice-close:focus-visible,
+.notice-action:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.notice-body {
+  grid-column: 2 / span 2;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--ink-2);
+  max-width: 46ch;
+  overflow-wrap: anywhere;
+}
+
+.notice-foot {
+  grid-column: 2 / span 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 4px;
+  padding-top: 9px;
+  border-top: 1px solid var(--line);
+}
+
+.notice-context {
+  font-size: 10.5px;
+  color: var(--ink-2);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.notice-context b {
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.notice-action.btn {
+  flex: none;
+  padding: 4px 10px;
+  font-size: 10px;
+}
+
+/* fechar sozinho (Ajustes): a régua encolhe e pausa sob o mouse ou o foco;
+   o fim da animação é o que fecha — janela oculta não conta o tempo */
+.notice-timer {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: -1.5px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--tone);
+  transform-origin: left;
+  animation: notice-timer var(--notice-ttl, 8s) linear forwards;
+}
+
+.notice[data-tone='info'] .notice-timer {
+  background: var(--ink-2);
+}
+
+.notice:hover .notice-timer,
+.notice:focus-within .notice-timer {
+  animation-play-state: paused;
+}
+
+@keyframes notice-timer {
+  to {
+    transform: scaleX(0);
+  }
+}
+
+/* movimento: UM momento — o cartão assenta e o selo carimba logo depois */
+.notice-stack .notice {
+  animation: notice-in 320ms var(--ease-out) both;
+}
+
+.notice-stack .notice .notice-stamp {
+  animation: notice-stamp 380ms var(--ease-pop) 110ms both;
+}
+
+.notice-stack.at-top .notice {
+  animation-name: notice-in-top;
+}
+
+.notice-stack .notice.is-leaving {
+  animation: notice-out 190ms ease-in forwards;
+}
+
+@keyframes notice-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.97);
+    filter: blur(2px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+    filter: none;
+  }
+}
+
+@keyframes notice-in-top {
+  from {
+    opacity: 0;
+    transform: translateY(-14px) scale(0.97);
+    filter: blur(2px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+    filter: none;
+  }
+}
+
+@keyframes notice-stamp {
+  from {
+    opacity: 0;
+    transform: scale(0.45) rotate(-10deg);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes notice-out {
+  to {
+    opacity: 0;
+    transform: translateX(18px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .notice-stack .notice,
+  .notice-stack .notice .notice-stamp,
+  .notice-stack .notice.is-leaving {
+    animation-duration: 1ms;
+    animation-delay: 0ms;
+  }
+}
+
+/* DENTRO de janelas (erro de formulário): no lugar, sem flutuar, sem sombra */
+.notice.is-inline {
+  width: auto;
+  padding: 9px 10px;
+  grid-template-columns: 20px minmax(0, 1fr);
+  column-gap: 10px;
+  row-gap: 2px;
+  border-width: 1px;
+  border-color: color-mix(in srgb, var(--tone) 55%, transparent);
+  background: color-mix(in srgb, var(--tone) 7%, var(--card));
+  box-shadow: none;
+}
+
+.notice.is-inline .notice-stamp {
+  grid-row: 1 / span 2;
+  width: 20px;
+  height: 20px;
+  font-size: 11px;
+}
+
+.notice.is-inline[data-tone='error'] .notice-stamp {
+  font-size: 9px;
+}
+
+.notice.is-inline .notice-title {
+  font-size: 12px;
+}
+
+.notice.is-inline .notice-body {
+  grid-column: 2;
+  color: var(--ink);
+  max-width: none;
+}

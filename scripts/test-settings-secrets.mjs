@@ -160,6 +160,44 @@ test('o aviso com o Synkora aberto nasce em "fora da tela", persiste a escolha e
   assert.equal(store.view().desktopNotifyWhileFocused, 'off-screen')
 })
 
+test('os avisos do Board nascem sem fechar sozinhos e no canto inferior, persistem a escolha e recusam valor torto', (t) => {
+  // 2026-09-26: "fechar sozinho" e "canto" dos avisos flutuantes do Board são
+  // do dono (Ajustes › Aparência › Avisos do Board); só a lista fechada passa.
+  const root = tempStore(t)
+  const store = new SettingsStoreCore({ userDataPath: root })
+  assert.deepEqual(
+    { seconds: store.view().noticeAutoCloseSeconds, corner: store.view().noticeCorner },
+    { seconds: 0, corner: 'bottom' }
+  )
+
+  for (const seconds of [6, 10, 20, 0]) {
+    store.update({ noticeAutoCloseSeconds: seconds })
+    assert.equal(new SettingsStoreCore({ userDataPath: root }).view().noticeAutoCloseSeconds, seconds)
+  }
+  store.update({ noticeCorner: 'top' })
+  assert.equal(new SettingsStoreCore({ userDataPath: root }).view().noticeCorner, 'top')
+
+  for (const junk of [7, '10', -6, null]) {
+    store.update({ noticeAutoCloseSeconds: 20 })
+    store.update({ noticeAutoCloseSeconds: junk })
+    assert.equal(store.view().noticeAutoCloseSeconds, 0, `${JSON.stringify(junk)} não é um tempo da lista`)
+  }
+  for (const junk of ['left', null]) {
+    store.update({ noticeCorner: 'top' })
+    store.update({ noticeCorner: junk })
+    assert.equal(store.view().noticeCorner, 'bottom', `${JSON.stringify(junk)} não é um canto`)
+  }
+
+  const torto = tempStore(t)
+  writeFileSync(
+    join(torto, 'settings.json'),
+    JSON.stringify({ noticeAutoCloseSeconds: '10', noticeCorner: 'left' })
+  )
+  const view = new SettingsStoreCore({ userDataPath: torto }).view()
+  assert.equal(view.noticeAutoCloseSeconds, 0)
+  assert.equal(view.noticeCorner, 'bottom')
+})
+
 test('a escrita do chat nasce no padrão, persiste a escolha e prende às faixas', (t) => {
   // 2026-09-21: velocidade/atraso/fade são do dono (Ajustes › Aparência ›
   // Escrita do chat); campo torto ou fora da faixa nunca chega ao renderer.

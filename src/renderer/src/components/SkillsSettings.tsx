@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useStore } from '../store'
+import { InlineNotice } from './NoticeStack'
 import {
   chatActiveCount,
   chatSlotCount,
@@ -418,7 +419,7 @@ function PruneOverlay({
           {doomed.length > 12 && <li className="skill-prune-more">+ {doomed.length - 12} …</li>}
         </ul>
 
-        {error && <div className="mission-msg">{error}</div>}
+        {error && <InlineNotice tone="error">{error}</InlineNotice>}
 
         <div className="task-modal-actions">
           <button type="button" className="btn ghost" ref={cancelRef} disabled={busy} onClick={onCancel}>
