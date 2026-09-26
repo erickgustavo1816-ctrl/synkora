@@ -12,9 +12,10 @@ import DOMPurify from 'dompurify'
  * lugar em que um markdown abrir. Um segundo conversor desencontraria os dois.
  */
 export default function FileMarkdownContent({ content }: { content: string }): React.JSX.Element {
-  const html = useMemo(() => {
+  const markup = useMemo(() => {
     const raw = marked.parse(content, { async: false, gfm: true, breaks: false })
-    return DOMPurify.sanitize(String(raw), { USE_PROFILES: { html: true } })
+    // React compares this prop by identity before replacing the reader DOM.
+    return { __html: DOMPurify.sanitize(String(raw), { USE_PROFILES: { html: true } }) }
   }, [content])
-  return <article className="md-view file-markdown" dangerouslySetInnerHTML={{ __html: html }} />
+  return <article className="md-view file-markdown" dangerouslySetInnerHTML={markup} />
 }

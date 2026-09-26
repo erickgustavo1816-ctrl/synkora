@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useStore } from '../store'
+import { InlineNotice } from './NoticeStack'
 
 // NOVO UNIVERSO (Synkora 2.0, onda D) — o "+" da Home e do rail passam por
 // aqui porque o nascimento do projeto ganhou uma decisão nova: o LINK DO
@@ -68,7 +69,7 @@ export default function NewUniverseModal({
             <p className="confirm-text">
               O universo foi criado — mas o GitHub não fechou o ciclo:
             </p>
-            <div className="mission-msg">{warning}</div>
+            <InlineNotice tone="warn">{warning}</InlineNotice>
             <p className="confirm-sub">
               Nada se perdeu: o projeto está aqui e a pasta é sua. Ajuste o remoto quando
               quiser.
@@ -117,7 +118,7 @@ export default function NewUniverseModal({
                 />
               </label>
             </div>
-            {error && <div className="mission-msg">{error}</div>}
+            {error && <InlineNotice tone="error">{error}</InlineNotice>}
             <div className="task-modal-actions">
               <button className="btn ghost" onClick={onClose}>
                 cancelar

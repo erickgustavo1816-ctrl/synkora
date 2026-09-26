@@ -15,6 +15,8 @@ import './BacklogView.css'
 import NewMissionModal from './NewMissionModal'
 import Select from './Select'
 import { TestServerModal } from './TestServerModal'
+import { NoticeStack, useNoticeStack } from './NoticeStack'
+import { noticePrefsOf, noticeSentence, type NoticeSpec } from '../noticeStack'
 import { MISSION_CARD_TIP, isReleaseMissionRecord, missionCardAccess } from '../missionCardAccess'
 import { allowsOwnVersionNumber, manifestVersionNote, versionSuggestions } from '../versionChoice'
 
@@ -327,7 +329,19 @@ export default function BacklogView({ projectId }: Props): React.JSX.Element {
   // confirmação NOSSA para excluir itens selecionados (clique sem querer)
   const [confirmRemoveItems, setConfirmRemoveItems] = useState<BacklogItem[] | null>(null)
   const [confirmRelease, setConfirmRelease] = useState<Version | null>(null)
-  const [releaseMsg, setReleaseMsg] = useState<string | null>(null)
+  // Avisos do ⇪ de release e da exclusão de versão: a mesma pilha flutuante do
+  // board (NoticeStack). O tom sai do RAMO que chamou, nunca da frase.
+  const notices = useNoticeStack()
+  const noticePrefs = noticePrefsOf(useStore((s) => s.settings))
+  const releaseNotice = (v: Version, tone: NoticeSpec['tone'], message: string): void =>
+    notices.push({
+      key: `release-chat:${v.id}`,
+      tone,
+      title: 'Chat de release não abriu',
+      body: noticeSentence(message),
+      context: v.name,
+      contextKind: 'versão'
+    })
   // NÚMERO DIGITADO PELO DONO (ordem de 2026-08-17) + a recusa do main quando
   // ele não serve. As duas coisas andam juntas: sem a recusa na tela, o campo
   // seria um botão que às vezes não faz nada.
@@ -347,8 +361,10 @@ export default function BacklogView({ projectId }: Props): React.JSX.Element {
 
   const bridgeOk = Boolean(window.synkora.backlog)
 
-  const refresh = useCallback(async () => {
-    if (!window.synkora.backlog) return
+  /** Relê versões e itens; devolve as versões lidas (quem precisa confirmar
+   *  um efeito — a exclusão de versão — olha a lista, nunca a frase). */
+  const refresh = useCallback(async (): Promise<Version[] | undefined> => {
+    if (!window.synkora.backlog) return undefined
     const [v, i, manifest] = await Promise.all([
       window.synkora.backlog.listVersions(projectId),
       window.synkora.backlog.listItems(projectId),
@@ -371,6 +387,7 @@ export default function BacklogView({ projectId }: Props): React.JSX.Element {
         .sort((a, b) => (b.releasedAt ?? '').localeCompare(a.releasedAt ?? ''))
       return released[0]?.id ?? null
     })
+    return v
   }, [projectId])
 
   useEffect(() => {
@@ -504,14 +521,14 @@ export default function BacklogView({ projectId }: Props): React.JSX.Element {
   async function releaseVersion(v: Version): Promise<void> {
     if (!window.synkora.backlog?.releaseChat) {
       // Beco sem saída é bug: ponte sem a rota fala a receita, nunca some.
-      setReleaseMsg('reinicie o Synkora (npm run dev) para abrir o chat de release')
+      releaseNotice(v, 'warn', 'reinicie o Synkora (npm run dev) para abrir o chat de release')
       return
     }
     try {
       const result = await window.synkora.backlog.releaseChat(v.id)
       if (!result.ok) {
         // aviso fica até o × (decisão do usuário)
-        setReleaseMsg(result.error)
+        releaseNotice(v, 'warn', result.error)
         return
       }
       // A missão de release acabou de NASCER no main. Sem recarregar a lista,
@@ -524,7 +541,7 @@ export default function BacklogView({ projectId }: Props): React.JSX.Element {
       setMissionTab(projectId, result.missionId)
       setUniverseTab(projectId, 'board')
     } catch {
-      setReleaseMsg('não consegui abrir o chat de release agora — tente de novo')
+      releaseNotice(v, 'error', 'não consegui abrir o chat de release agora — tente de novo')
     }
   }
 
@@ -664,14 +681,12 @@ export default function BacklogView({ projectId }: Props): React.JSX.Element {
         </div>
       )}
 
-      {releaseMsg && (
-        <div className="mission-msg">
-          ⇪ {releaseMsg}
-          <button className="mission-msg-close" data-tip="Fechar aviso" onClick={() => setReleaseMsg(null)}>
-            ×
-          </button>
-        </div>
-      )}
+      <NoticeStack
+        notices={notices.notices}
+        onDismiss={notices.dismiss}
+        corner={noticePrefs.corner}
+        autoCloseSeconds={noticePrefs.autoCloseSeconds}
+      />
 
       <div className="vs-body">
       <aside className="bl-versions">
@@ -1205,8 +1220,17 @@ export default function BacklogView({ projectId }: Props): React.JSX.Element {
                   setConfirmRemove(null)
                   setSelVersion(null)
                   void window.synkora.backlog.removeVersion(projectId, v.id).then(async (message) => {
-                    setReleaseMsg(message)
-                    await refresh()
+                    // A MESMA frase carrega o sucesso e as recusas: quem diz o
+                    // tom é a lista depois do refresh — a versão sumiu ou não.
+                    const gone = !(await refresh())?.some((x) => x.id === v.id)
+                    notices.push({
+                      key: `remove-version:${v.id}`,
+                      tone: gone ? 'info' : 'warn',
+                      title: gone ? 'Versão excluída' : 'Versão não excluída',
+                      body: noticeSentence(message),
+                      context: v.name,
+                      contextKind: 'versão'
+                    })
                   })
                 }}
               >

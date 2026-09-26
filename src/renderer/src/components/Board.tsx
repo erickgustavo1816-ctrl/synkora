@@ -21,6 +21,7 @@ import MissionStageHead, { type StagePill } from './MissionStageHead'
 import StageRoundStatus from './StageRoundStatus'
 import StageSeatChip from './StageSeatChip'
 import { TestServerModal } from './TestServerModal'
+import { NoticeStack, useNoticeStack } from './NoticeStack'
 import { ModelSelect } from './ModelSelect'
 import Select from './Select'
 import {
@@ -44,6 +45,7 @@ import { isReleaseMissionRecord } from '../missionCardAccess'
 import { canSendGuiMessage } from '../guiTransport'
 import { guiItemId } from '../guiItemIdentity'
 import { REVIEW_NUDGE_TEXT } from '../missionReviewNudge'
+import { integrationNotice, noticePrefsOf, type NoticeSpec } from '../noticeStack'
 import {
   integrationQueueNote,
   integrationQueueRows
@@ -189,7 +191,12 @@ export default function Board({ projectId }: Props): React.JSX.Element {
   const [missionPrefill, setMissionPrefill] = useState<{ title: string; goal: string } | null>(
     null
   )
-  const [missionMsg, setMissionMsg] = useState<string | null>(null)
+  // Os AVISOS do board (2026-09-26): a pilha flutuante que substituiu a faixa
+  // tracejada. Quem chama diz o tom; eles ficam até o × (ou até o tempo que o
+  // dono escolheu em Ajustes, só para informação e fila).
+  const notices = useNoticeStack()
+  const pushNotice = notices.push
+  const noticePrefs = noticePrefsOf(settings)
   /** o deck do workspace está por cima do chat: o palco fica inerte */
   const [chatCovered, setChatCovered] = useState(false)
   const boardRef = useRef<HTMLDivElement>(null)
@@ -206,12 +213,16 @@ export default function Board({ projectId }: Props): React.JSX.Element {
       setMissionTerm((prev) => ({ ...prev, [missionId]: null }))
       if (paneId) setMissionGuiActive((prev) => ({ ...prev, [missionId]: paneId }))
     }
-    setMissionMsg(target.unavailable
-      ? 'Esta conversa não está mais aberta neste painel. O resumo do projeto continua disponível.'
-      : null)
+    if (target.unavailable)
+      pushNotice({
+        key: 'progress-unavailable',
+        tone: 'info',
+        title: 'Conversa fechada',
+        body: 'Esta conversa não está mais aberta neste painel. O resumo do projeto continua disponível.'
+      })
     setProgressDeliveryMission(target.delivery ? target.missionId : null)
     setProgressTarget(null)
-  }, [isActive, progressTarget, missions, missionGuiSlots, projectId, setMissionTab])
+  }, [isActive, progressTarget, missions, missionGuiSlots, projectId, setMissionTab, pushNotice])
   useEffect(() => {
     if (!isActive || !progressDeliveryMission || missionTab !== progressDeliveryMission || !boardRef.current) return
     return focusProgressDelivery(boardRef.current, () => setProgressDeliveryMission(null))
@@ -745,16 +756,28 @@ export default function Board({ projectId }: Props): React.JSX.Element {
     if (m && m.status !== 'ativa' && m.status !== 'integrando') setMissionTab(projectId, null)
   }, [isActive, missionTab, missions, projectId, setMissionTab])
 
+  /** "Abrir chat" de um aviso: o aviso fica até o × e pode sobreviver à troca
+   *  de aba — o botão leva de volta à missão e tira o terminal da frente. */
+  function openChatAction(missionId: string): NonNullable<NoticeSpec['action']> {
+    return {
+      label: 'Abrir chat',
+      run: () => {
+        setMissionTab(projectId, missionId)
+        setMissionTerm((prev) => ({ ...prev, [missionId]: null }))
+      }
+    }
+  }
+
   // ⇪ — O CLIQUE NÃO INTERROMPE (rodada 9, ordem do dono: "NÃO pode aparecer
   // modal 'essa missão tá sendo integrada': eu preciso VER o que ele tá fazendo
   // no chat"). O gesto avisa o AGENTE, e o que ele produz vira ESTADO: a
   // posição/estado no trilho e no card da coluna, e o trabalho dele no fio.
   //
-  // A frase que o motor devolve só sobe para a faixa quando a FOTOGRAFIA da
-  // fila NÃO mudou — aí ela é uma RECUSA (planejamento, missão arquivada,
-  // árvore suja, fila pausada, sync pendente) e o dono precisa lê-la. Ticket
-  // novo ou re-armado já está escrito na tela: repetir seria eco.
-  // Avisos ficam até o usuário fechar no × (decisão do usuário).
+  // A frase que o motor devolve só vira AVISO quando a FOTOGRAFIA da fila NÃO
+  // mudou — aí ela é uma RECUSA (planejamento, missão arquivada, árvore suja,
+  // fila pausada, sync pendente) ou o clique repetido, e o dono precisa lê-la.
+  // Ticket novo ou re-armado já está escrito na tela: repetir seria eco.
+  // O TOM sai do ticket (`integrationNotice`), nunca da frase.
   async function onIntegrate(): Promise<void> {
     if (!selMission) return
     const missionId = selMission.id
@@ -763,8 +786,17 @@ export default function Board({ projectId }: Props): React.JSX.Element {
     // A missão FRESCA: o `integrateMission` do store recarrega a lista antes de
     // devolver, então a fotografia de agora já está no store — a do closure é a
     // de antes do clique, e é justamente ela que serve de comparação.
-    const after = ticketMark(useStore.getState().missions.find((m) => m.id === missionId))
-    setMissionMsg(after && after !== before ? null : msg)
+    const fresh = useStore.getState().missions.find((m) => m.id === missionId)
+    const after = ticketMark(fresh)
+    if (!after || after === before) {
+      const notice = integrationNotice({
+        missionId,
+        missionTitle: selMission.title,
+        ticket: fresh?.integration,
+        message: msg
+      })
+      pushNotice(notice.tone === 'queued' ? { ...notice, action: openChatAction(missionId) } : notice)
+    }
     // o ⇪ mexe na branch: o diffstat do trilho re-mede sozinho (onda D)
     setRailReload((n) => n + 1)
   }
@@ -820,9 +852,14 @@ export default function Board({ projectId }: Props): React.JSX.Element {
       // vira duas bolhas no fio.
       const ok = await sendGuiMessage(paneId, REVIEW_NUDGE_TEXT, guiItemId())
       if (!ok)
-        setMissionMsg(
-          'não deu para entregar o pedido de revisão no chat do agente — abra a conversa e tente de novo'
-        )
+        pushNotice({
+          key: `review-nudge:${mission.id}`,
+          tone: 'error',
+          title: 'Pedido de revisão não entregue',
+          body: 'Não deu para entregar o pedido de revisão no chat do agente. Abra a conversa e tente de novo.',
+          context: mission.title,
+          action: openChatAction(mission.id)
+        })
     } finally {
       reviewNudgeInFlight.current = false
     }
@@ -1034,14 +1071,12 @@ export default function Board({ projectId }: Props): React.JSX.Element {
 
   return (
     <div className={`board${panelsEnabled ? ' workspace-board' : ''}`}>
-      {missionMsg && (
-        <div className="mission-msg">
-          {missionMsg}
-          <button className="mission-msg-close" data-tip="Fechar aviso" onClick={() => setMissionMsg(null)}>
-            ×
-          </button>
-        </div>
-      )}
+      <NoticeStack
+        notices={notices.notices}
+        onDismiss={notices.dismiss}
+        corner={noticePrefs.corner}
+        autoCloseSeconds={noticePrefs.autoCloseSeconds}
+      />
 
       {/* Linha principal em row-reverse: o 1º filho renderiza à DIREITA e o
           último à ESQUERDA. Em missão legada segue o desenho de sempre

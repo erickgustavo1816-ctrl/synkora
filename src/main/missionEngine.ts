@@ -1287,8 +1287,10 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     // destino) continuam exatamente onde estavam: o que mudou é só quem aperta
     // o gatilho depois delas.
     if (queued) stimulateMissionIntegrator(mission, 'user-gesture')
+    // A frase vira o CORPO do aviso do board (2026-09-26): título, posição e
+    // missão o aviso já tira do ticket — aqui fica só o que o ticket não diz.
     return queued
-      ? `missão "${mission.title}" na fila de integração: posição #${queued.position} de ${queued.total}. O ⇪ foi ENTREGUE ao agente desta missão, que integra quando chegar a vez dela — acompanhe no chat. O desenvolvimento das outras missões continua em paralelo; os merges acontecem um por vez.`
+      ? 'o ⇪ foi entregue ao agente desta missão: ele integra quando chegar a vez dela na fila de integração. Acompanhe pelo chat; as outras missões seguem em paralelo.'
       : 'missão colocada na fila de integração'
   }
 

@@ -4006,6 +4006,12 @@ export class GuiSessionRegistry {
     const entry = this.panes.get(paneId)
     if (!entry) return { ok: false, error: 'este pane não tem sessão aberta' }
     const kind = entry.alerts.presented(terminalSeq)
+    if (
+      kind === 'finished' &&
+      entry.ring.pendingIdsOfType('question').some(
+        (requestId) => guiEventRecord(entry.ring.pending(requestId))?.['asynchronous'] === true
+      )
+    ) return { ok: true }
     if (kind) {
       try {
         this.deps.onChatAlert?.({ paneId, projectId: entry.spawn.projectId, kind })

@@ -1262,7 +1262,7 @@ test('o ⇪ do dono ENTREGA a subida ao agente — e NADA mescla sozinho', async
   assert.ok(ticket, 'o ⇪ do dono continua sendo quem cria o ticket')
   assert.equal(ticket.state, 'queued')
   assert.equal(ticket.isHead, true)
-  assert.match(msg, /ENTREGUE ao agente/u, 'a resposta do clique nomeia quem vai subir')
+  assert.match(msg, /entregue ao agente/u, 'a resposta do clique nomeia quem vai subir')
 
   // 3. a NOTA que o dono lê no fio
   assert.equal(h.notesOf(pane).length, 1)

@@ -172,7 +172,47 @@ async function inspect() {
     await until(() => media.executeJavaScript('(()=>{const player=document.querySelector("audio,video");return !!player && player.readyState>=1 && player.duration===1})()'), 'native media player did not decode the synthetic WAV')
     assert.equal(prepareGuiFileOpen(resolver.resolve(root, 'manual.pdf').file).action, 'reveal',
       'PDF must retain its established fallback while native viewing in private sessions is unsupported')
+
+    const markdown = '# Stable reader\n\n' + 'Synthetic paragraph for reading.\n\n'.repeat(16) +
+      '![Loaded](data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/Z1sAAAAASUVORK5CYII=)\n\n' +
+      '![Missing](missing-reader-image.png)\n\n## After the images\n\nThe document must stay still.\n'
+    await run(`window.renderReader(${JSON.stringify(markdown)})`)
+    await until(() => run('[...document.querySelectorAll("#reader-root img")].every(image => image.complete)'), 'reader images did not settle')
+    await run(`(() => {
+      const article = document.querySelector('#reader-root article');
+      const scroller = article.parentElement;
+      const paragraph = article.querySelector('p');
+      const range = document.createRange();
+      range.selectNodeContents(paragraph);
+      window.getSelection().removeAllRanges();
+      window.getSelection().addRange(range);
+      scroller.scrollTop = 150;
+      window.savedReader = { article, paragraph, images: [...article.querySelectorAll('img')],
+        scrollTop: scroller.scrollTop, selection: window.getSelection().toString(), mutations: 0 };
+      window.readerObserver = new MutationObserver(records => window.savedReader.mutations += records.length);
+      window.readerObserver.observe(article, { childList: true, subtree: true });
+    })()`)
+    for (let update = 0; update < 20; update++) await run(`window.renderReader(${JSON.stringify(markdown)})`)
+    await pause(50)
+    assert.deepEqual(await run(`(() => {
+      const saved = window.savedReader;
+      const current = document.querySelector('#reader-root article');
+      window.readerObserver.disconnect();
+      return { sameArticle: current === saved.article, paragraphConnected: saved.paragraph.isConnected,
+        imagesConnected: saved.images.every(image => image.isConnected), mutations: saved.mutations,
+        selectionPreserved: window.getSelection().toString() === saved.selection,
+        scrollPreserved: current.parentElement.scrollTop === saved.scrollTop,
+        loadedImage: saved.images[0].naturalWidth > 0, missingImage: saved.images[1].naturalWidth === 0 };
+    })()`), { sameArticle: true, paragraphConnected: true, imagesConnected: true, mutations: 0,
+      selectionPreserved: true, scrollPreserved: true, loadedImage: true, missingImage: true },
+    'unchanged Markdown must preserve reader nodes, images, selection and scroll across parent updates')
+    await run(`window.renderReader('# Updated reader\\n\\nNew content <img src="missing.png" onerror="window.readerUnsafe=true">')`)
+    assert.deepEqual(await run(`({ heading: document.querySelector('#reader-root h1').textContent,
+      stale: document.querySelector('#reader-root').textContent.includes('Synthetic paragraph'),
+      unsafe: !!document.querySelector('#reader-root [onerror]') || window.readerUnsafe === true })`),
+    { heading: 'Updated reader', stale: false, unsafe: false }, 'changed Markdown still updates and stays sanitized')
     console.log('PASS isolated Chromium: default HTML click and visible panel request, explicit browser/code menu, source reader, preserved ambiguous mode, relative CSS/JS/SVG, same-page anchor, native WAV decoding, owner tab, private nonpersistent cookies, popout/dock session continuity and cleanup.')
+    console.log('PASS Markdown reader: unchanged updates preserve loaded/missing images, selection and scroll; changed content updates with sanitization.')
   } finally {
     previews.close(); browser.destroy()
     if (!chat.isDestroyed()) chat.destroy()
@@ -198,19 +238,24 @@ if (process.versions.electron) {
       browser:{popOut:mission=>ipcRenderer.invoke('fixture:popOut',mission)}});`)
   await build({ stdin: { contents: `
     import React from 'react'; import { createRoot } from 'react-dom/client';
+    import { flushSync } from 'react-dom';
     import GuiMarkdown from './src/renderer/src/components/GuiMarkdown';
+    import FileMarkdownContent from './src/renderer/src/components/FileMarkdownContent';
     import { WorkspacePanelContext } from './src/renderer/src/workspace/WorkspacePanelContext';
     window.fixturePanels=[]; window.fixtureState={missionTabByProject:{'synthetic-project':'synthetic-mission'}};
     const context={projectId:'synthetic-project',visible:true,controller:{openPanel:id=>window.fixturePanels.push(id)}};
     createRoot(document.querySelector('#root')).render(<WorkspacePanelContext.Provider value={context}>
       <GuiMarkdown paneId="synthetic-pane" text={'landing.html app.ts duplicate.html'} />
     </WorkspacePanelContext.Provider>);
+    const readerRoot = createRoot(document.querySelector('#reader-root'));
+    window.renderReader = content => flushSync(() => readerRoot.render(
+      <div style={{height:220,overflow:'auto'}}><FileMarkdownContent content={content} /></div>));
   `, resolveDir: process.cwd(), loader: 'tsx' }, bundle: true, platform: 'browser', format: 'iife', jsx: 'automatic',
     define: { 'process.env.NODE_ENV': '"production"' }, outfile: join(directory, 'ui.js'), plugins: [{ name: 'fixture-store', setup(builder) {
       builder.onResolve({ filter: /^(?:\.\.\/|\.\/)store$/ }, () => ({ path: 'fixture-store', namespace: 'fixture-store' }))
       builder.onLoad({ filter: /.*/, namespace: 'fixture-store' }, () => ({ contents: 'export const useStore = Object.assign(selector => selector(window.fixtureState), { getState: () => window.fixtureState });', loader: 'js' }))
     } }] })
-  await writeFile(join(directory, 'index.html'), '<!doctype html><meta charset="utf-8"><div id="root"></div><script src="ui.js"></script>')
+  await writeFile(join(directory, 'index.html'), '<!doctype html><meta charset="utf-8"><div id="root"></div><div id="reader-root"></div><script src="ui.js"></script>')
   const env = { ...process.env }; delete env.ELECTRON_RUN_AS_NODE; delete env.NODE_TEST_CONTEXT
   const child = spawn(createRequire(import.meta.url)('electron'), [fileURLToPath(import.meta.url), directory],
     { env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })

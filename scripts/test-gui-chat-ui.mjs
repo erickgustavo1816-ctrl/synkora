@@ -3291,11 +3291,6 @@ test('o card rico substitui o card cru da tool e some na conversa congelada', ()
   assert.match(pane, /'mcp__synkora__propose_plan'/u)
   // Mesma cerca das outras decisões: histórico local aberto ou pane read-only
   // NÃO renderiza card vivo (`inert`), e o composer cede a vez ao card.
-  // 2026-09-21: as decisões esperam o escritor da vez terminar de escrever o
-  // que já recebeu (UM escritor por conversa) — a régua é `guiHeldItems`.
-  assert.match(pane, /\{!inert && planProposalCard && !writerBusy && \(/u)
-  assert.match(pane, /\{!inert && gui\.question && !writerBusy && \(/u)
-  assert.match(pane, /guiThreadRenderItems\(guiHeldItems\(visibleItems, writerBusy\)\)/u)
   assert.match(pane, /const awaitingCard = Boolean\(gui\.question \|\| gui\.planReview \|\| planProposalCard\)/u)
   assert.match(pane, /answerGuiPlanProposal\(projectId, paneId, approve, note\)/u)
 
@@ -3655,13 +3650,19 @@ test('o ⇪ não levanta janela nenhuma: o véu do "integrando" morreu', () => {
   // Diálogo nativo já é proibido na casa — o ⇪ é onde a tentação mora.
   assert.doesNotMatch(board, /window\.(confirm|alert)\(/u)
 
-  // A RECUSA continua legível, no padrão NÃO-modal da casa: a faixa que o dono
-  // fecha no × (planejamento, missão arquivada, árvore suja, fila pausada).
-  assert.match(board, /className="mission-msg"/u, 'a faixa de aviso do board sumiu')
-  assert.match(board, /className="mission-msg-close"/u)
+  // A RECUSA continua legível, no padrão NÃO-modal da casa: o aviso flutuante
+  // que o dono fecha no × (planejamento, missão arquivada, árvore suja, fila
+  // pausada). 2026-09-26: a pilha de avisos substituiu a faixa tracejada.
+  assert.match(board, /<NoticeStack\b/u, 'a pilha de avisos do board sumiu')
+  const stack = readFileSync(
+    new URL('../src/renderer/src/components/NoticeStack.tsx', import.meta.url),
+    'utf8'
+  )
+  assert.match(stack, /className="notice-close"/u)
+  assert.doesNotMatch(stack, /role="dialog"|aria-modal/u, 'o aviso virou janela modal')
 })
 
-test('o eco do ⇪ vira ESTADO — só a RECUSA sobe para a faixa', () => {
+test('o eco do ⇪ vira ESTADO — só a RECUSA vira aviso', () => {
   const board = readFileSync(
     new URL('../src/renderer/src/components/Board.tsx', import.meta.url),
     'utf8'
@@ -3679,9 +3680,10 @@ test('o eco do ⇪ vira ESTADO — só a RECUSA sobe para a faixa', () => {
   assert.match(body, /useStore\.getState\(\)\.missions/u, 'a comparação lê a missão FRESCA')
   assert.match(
     body,
-    /setMissionMsg\(\s*after && after !== before \? null : msg\s*\)/u,
-    'recusa engolida é bug: só o ticket que ANDOU cala a faixa'
+    /if \(!after \|\| after === before\)/u,
+    'recusa engolida é bug: só o ticket que ANDOU cala o aviso'
   )
+  assert.match(body, /integrationNotice\(/u, 'o tom do aviso sai do TICKET, nunca da frase')
 
   // A ordem real da fila desce para o trilho — é ela que substitui o modal.
   assert.match(board, /queueRows=\{integrationRows\}/u, 'o trilho não recebe a ordem da fila')

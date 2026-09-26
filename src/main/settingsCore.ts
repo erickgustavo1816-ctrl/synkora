@@ -72,6 +72,15 @@ export interface SynkoraPreferences {
   chatWritingWordsPerSecond: number
   chatWritingMaxLagMs: number
   chatWritingFade: boolean
+  /**
+   * OS AVISOS DO BOARD (mockup aprovado pelo dono, 2026-09-26): quantos
+   * segundos um aviso informativo ou de fila fica antes de fechar sozinho
+   * (0 = nunca, o padrão) e em que canto a pilha flutua. Recusa e erro ficam
+   * até o ×, qualquer que seja o ajuste. Quem consome é
+   * `renderer/noticeStack.ts` (`noticePrefsOf`); a lista é a mesma.
+   */
+  noticeAutoCloseSeconds: NoticeAutoCloseSeconds
+  noticeCorner: NoticeCorner
 }
 
 /** Estado completo, restrito ao processo principal. */
@@ -101,7 +110,9 @@ const DEFAULTS: SynkoraPreferences = {
   skillsAgentPull: true,
   chatWritingWordsPerSecond: 20,
   chatWritingMaxLagMs: 1000,
-  chatWritingFade: true
+  chatWritingFade: true,
+  noticeAutoCloseSeconds: 0,
+  noticeCorner: 'bottom'
 }
 
 /** Faixas da acessibilidade — espelho de `UI_SCALE_RANGE`, `CHAT_FONT_SIZE_RANGE`
@@ -113,6 +124,12 @@ export const CHAT_LINE_HEIGHT_RANGE = { min: 1.2, max: 2 } as const
 /** Faixas da escrita do chat — espelho de `GUI_WRITING_*_RANGE` no renderer. */
 export const CHAT_WRITING_WORDS_PER_SECOND_RANGE = { min: 0, max: 60 } as const
 export const CHAT_WRITING_MAX_LAG_RANGE = { min: 300, max: 3000 } as const
+
+/** Tempos do "fechar sozinho" dos avisos — espelho de `NOTICE_AUTO_CLOSE_SECONDS`
+ *  em `renderer/noticeStack.ts`. Lista fechada: nada de faixa nem de string. */
+export const NOTICE_AUTO_CLOSE_SECONDS = [0, 6, 10, 20] as const
+export type NoticeAutoCloseSeconds = (typeof NOTICE_AUTO_CLOSE_SECONDS)[number]
+export type NoticeCorner = 'bottom' | 'top'
 
 function clampInteger(value: unknown, range: { min: number; max: number }, fallback: number): number {
   const parsed = Number(value)
@@ -193,7 +210,15 @@ function sanitizePreferences(value: unknown): SynkoraPreferences {
       CHAT_WRITING_MAX_LAG_RANGE,
       DEFAULTS.chatWritingMaxLagMs
     ),
-    chatWritingFade: source.chatWritingFade !== false
+    chatWritingFade: source.chatWritingFade !== false,
+    // Ausente/torto = nunca fecha sozinho: só o número exato da lista passa
+    // ('10' em string, 7 ou -6 caem no padrão, nunca no tempo mais próximo).
+    noticeAutoCloseSeconds: (NOTICE_AUTO_CLOSE_SECONDS as readonly unknown[]).includes(
+      source.noticeAutoCloseSeconds
+    )
+      ? (source.noticeAutoCloseSeconds as NoticeAutoCloseSeconds)
+      : DEFAULTS.noticeAutoCloseSeconds,
+    noticeCorner: source.noticeCorner === 'top' ? 'top' : DEFAULTS.noticeCorner
   }
 }
 
