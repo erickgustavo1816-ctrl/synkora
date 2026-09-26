@@ -4177,7 +4177,7 @@ test('o restart carimba `resumed`: só a MESMA conversa retomada é quieta', () 
   assert.equal(fresh.at(-1).evt.resumed, false)
 })
 
-test('registro publica alertas somente no sink vivo e nunca durante replay', () => {
+function alertRegistry() {
   const observed = []
   const live = []
   const gui = new GuiSessionRegistry({
@@ -4188,7 +4188,7 @@ test('registro publica alertas somente no sink vivo e nunca durante replay', () 
   let emit
   gui.spawnSession = (_input, sink) => {
     emit = sink
-    return { alive: true, kill: () => undefined }
+    return { alive: true, turnActive: false, send: () => undefined, kill: () => undefined }
   }
   const spawn = {
     paneId: 'p-alerta',
@@ -4198,6 +4198,11 @@ test('registro publica alertas somente no sink vivo e nunca durante replay', () 
     cwd: '/tmp'
   }
   assert.equal(gui.create(spawn).ok, true)
+  return { gui, observed, live, emit, spawn }
+}
+
+test('registro publica alertas somente no sink vivo e nunca durante replay', () => {
+  const { gui, observed, live, emit, spawn } = alertRegistry()
 
   emit({ type: 'plan-review', requestId: 'plan-1', plan: 'Plano' })
   emit({ type: 'result', isError: false, continues: true })
@@ -4218,6 +4223,84 @@ test('registro publica alertas somente no sink vivo e nunca durante replay', () 
   gui.state(spawn.paneId)
   assert.equal(observed.length, 3, 'replay nunca republica alerta')
 })
+
+test('registro consome o ACK de fim enquanto a pergunta assíncrona continua pendente', () => {
+  const { gui, observed, live, emit, spawn } = alertRegistry()
+  emit({ type: 'turn-started' })
+  const question = gui.planApproval(spawn, { plan: 'Plano sintético' })
+  assert.equal(question.ok, true)
+  emit({ type: 'delta', text: 'Aguardando a resposta.' })
+  emit({ type: 'text', text: 'Aguardando a resposta.' })
+  emit({ type: 'result', isError: false })
+  const terminal = live.at(-1)
+  assert.equal(terminal.evt.type, 'result')
+  assert.deepEqual(observed.map((alert) => alert.kind), ['needs-you'])
+
+  assert.equal(gui.presented(spawn.paneId, terminal.seq).ok, true)
+  assert.deepEqual(observed.map((alert) => alert.kind), ['needs-you'],
+    'o fim do turno não anuncia conclusão enquanto a pergunta aguarda resposta')
+  assert.deepEqual(
+    gui.state(spawn.paneId).events.filter(({ evt }) => evt.type === 'question').map(({ evt }) => evt.requestId),
+    [question.requestId],
+    'o ACK não resolve nem remove a pergunta'
+  )
+  assert.equal(gui.presented(spawn.paneId, terminal.seq).ok, true)
+  assert.deepEqual(observed.map((alert) => alert.kind), ['needs-you'])
+
+  assert.equal(gui.answerQuestion(spawn.paneId, question.requestId, { plan: 'Aprovar' }).ok, true)
+  assert.equal(gui.state(spawn.paneId).events.some(({ evt }) => evt.type === 'question'), false)
+  assert.equal(gui.presented(spawn.paneId, terminal.seq).ok, true)
+  assert.deepEqual(observed.map((alert) => alert.kind), ['needs-you'],
+    'o ACK consumido não ressuscita o alerta depois da resposta')
+
+  emit({ type: 'text', text: 'Plano executado.' })
+  emit({ type: 'result', isError: false })
+  assert.deepEqual(observed.map((alert) => alert.kind), ['needs-you'])
+  assert.equal(gui.presented(spawn.paneId, live.at(-1).seq).ok, true)
+  assert.deepEqual(observed.map((alert) => alert.kind), ['needs-you', 'finished'])
+})
+
+test('registro anuncia conclusão se a pergunta assíncrona for resolvida antes do ACK', () => {
+  const { gui, observed, live, emit, spawn } = alertRegistry()
+  emit({ type: 'turn-started' })
+  const question = gui.planApproval(spawn, { plan: 'Plano sintético' })
+  assert.equal(question.ok, true)
+  emit({ type: 'result', isError: false })
+  const terminalSeq = live.at(-1).seq
+
+  assert.equal(gui.answerQuestion(spawn.paneId, question.requestId, { plan: 'Aprovar' }).ok, true)
+  assert.equal(gui.state(spawn.paneId).events.some(({ evt }) => evt.type === 'question'), false)
+  assert.deepEqual(observed.map((alert) => alert.kind), ['needs-you'])
+  assert.equal(gui.presented(spawn.paneId, terminalSeq).ok, true)
+  assert.deepEqual(observed.map((alert) => alert.kind), ['needs-you', 'finished'])
+  assert.equal(gui.presented(spawn.paneId, terminalSeq).ok, true)
+  assert.deepEqual(observed.map((alert) => alert.kind), ['needs-you', 'finished'])
+})
+
+for (const [label, terminal] of [
+  ['result com erro', { type: 'result', isError: true }],
+  ['result com outcome failed', { type: 'result', isError: false, outcome: 'failed' }],
+  ['fatal', { type: 'fatal', text: 'Falha sintética' }]
+]) {
+  test(`registro preserva alerta de ${label} com pergunta assíncrona pendente`, () => {
+    const { gui, observed, live, emit, spawn } = alertRegistry()
+    emit({ type: 'turn-started' })
+    const question = gui.planApproval(spawn, { plan: 'Plano sintético' })
+    assert.equal(question.ok, true)
+    emit(terminal)
+    const terminalSeq = live.at(-1).seq
+
+    assert.deepEqual(observed.map((alert) => alert.kind), ['needs-you'])
+    assert.equal(gui.presented(spawn.paneId, terminalSeq).ok, true)
+    assert.deepEqual(observed.map((alert) => alert.kind), ['needs-you', 'failed'])
+    assert.deepEqual(
+      gui.state(spawn.paneId).events.filter(({ evt }) => evt.type === 'question').map(({ evt }) => evt.requestId),
+      [question.requestId]
+    )
+    assert.equal(gui.presented(spawn.paneId, terminalSeq).ok, true)
+    assert.deepEqual(observed.map((alert) => alert.kind), ['needs-you', 'failed'])
+  })
+}
 
 test('teardown canônico limpa o pane em respawn, kill direto e kill em lote', () => {
   const disposed = []

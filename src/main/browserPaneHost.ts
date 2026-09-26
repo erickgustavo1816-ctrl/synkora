@@ -182,6 +182,8 @@ export function electronBrowserViewHost(window: () => BrowserWindow | null): Bro
           webviewTag: false,
           spellcheck: false,
           devTools: true,
+          // Agent navigation must not interrupt typing elsewhere in the app.
+          focusOnNavigation: false,
           // `alert/confirm/prompt` de uma view ESCONDIDA prenderia a janela do
           // dono num modal invisível — e prenderia a rodada do agente junto.
           // Rota de saída sancionada: `browser_eval` (H2) roda na página e
