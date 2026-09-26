@@ -136,7 +136,7 @@ function Harness(): React.JSX.Element {
     <div className="h-page">
       <div className="h-bar">
         <span className="h-label">largura da folha</span>
-        {[1107, 760].map((w) => (
+        {[1107, 760, 330].map((w) => (
           <button key={w} type="button" aria-pressed={w === width} onClick={() => setWidth(w)}>
             {w} px
           </button>

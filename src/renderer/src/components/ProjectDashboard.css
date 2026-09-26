@@ -175,7 +175,7 @@
   color: var(--err);
   font-weight: 700;
   border-color: color-mix(in srgb, var(--err) 45%, transparent);
-  background: color-mix(in srgb, var(--err) 8%, var(--card));
+  background: color-mix(in srgb, var(--err) 5%, var(--card));
 }
 
 .pd-pill.sm {
@@ -283,16 +283,22 @@
 
 .pd-attn-why {
   display: inline-flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 7px;
   min-width: 0;
   color: var(--pd-warn-ink);
 }
 
+.pd-attn-why svg {
+  margin-top: 1px;
+}
+
+/* a pergunta QUEBRA: reticências cortariam justo o que o dono precisa ler */
 .pd-attn-why > span {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .pd-attn .btn {
@@ -748,7 +754,54 @@
   }
 
   /* quem cede é a data, nunca o nome da missão nem a branch */
-  .pd-row-meta > span:nth-child(3) {
+  .pd-row-day {
+    display: none;
+  }
+}
+
+/* modo palco (~330px): o nome da missão fica com a fileira; o selo desce para
+   baixo dele, o "em andamento" (que o ponto já diz) sai e "Mudanças" vira ícone */
+@container boardcontent (max-width: 480px) {
+  .pd-sub {
+    flex-direction: column;
+  }
+
+  .pd-sub > span + span::before {
+    content: none;
+  }
+
+  .pd-row-open {
+    grid-template-columns: 16px minmax(0, 1fr);
+    row-gap: 6px;
+  }
+
+  .pd-row-open .pd-pill {
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  .pd-row-open .pd-pill.quiet {
+    display: none;
+  }
+
+  .pd-row-done {
+    grid-template-columns: 16px minmax(0, 1fr);
+    row-gap: 2px;
+  }
+
+  .pd-row-done .pd-row-when {
+    grid-column: 2;
+  }
+
+  .pd-row.has-tool {
+    --pd-tool-w: 34px;
+  }
+
+  .pd-row-tool {
+    width: auto;
+  }
+
+  .pd-row-tool-label {
     display: none;
   }
 }

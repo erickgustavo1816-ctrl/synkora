@@ -59,7 +59,7 @@
     "test:notice-stack": "node --experimental-strip-types --test scripts/test-notice-stack.mjs",
     "test:ui-accessibility": "node --experimental-strip-types --test scripts/test-ui-accessibility.mjs",
     "test:plan-board": "node --experimental-strip-types --test scripts/test-plan-board.mjs",
-    "test:project-landing": "node --experimental-strip-types --test scripts/test-project-landing.mjs",
+    "test:project-landing": "node --experimental-strip-types --test scripts/test-project-landing.mjs scripts/test-project-dashboard.mjs",
     "test:project-navigation": "node --test scripts/test-project-navigation.mjs scripts/test-project-mission-activity.mjs",
     "test:workspace-panels": "node --test scripts/test-workspace-panels.mjs scripts/test-workspace-sidebar.mjs scripts/test-workspace-activity.mjs scripts/test-mobile-column.mjs",
     "test:archived-chat": "node --experimental-strip-types --test scripts/test-archived-chat.mjs",

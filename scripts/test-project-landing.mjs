@@ -105,31 +105,30 @@ test('a lista de vivas do painel ordena por nascimento, mais nova primeiro', asy
   )
   // Encerrada e arquivada NÃO entram: a seção é a do trabalho aberto.
   assert.deepEqual(liveMissions([]), [])
-  // A ORDEM POR CARIMBO DE INTEGRAÇÃO (que era da extinta `recentConcluded`)
-  // vive agora no `missionTimeline` — teste próprio, mais abaixo.
 })
 
-test('a data da linha usa o VERBO certo e cala quando não tem fonte', async () => {
-  const { missionDayLabel, formatDay } = await landing()
+test('a data da linha usa o VERBO certo, só diz o ano fora do corrente e cala sem fonte', async () => {
+  const { missionDayLabel, shortDay } = await landing()
+  const now = new Date(2026, 8, 26, 12)
 
+  assert.equal(missionDayLabel(mission({ createdAt: '2026-08-12T13:00:00.000Z' }), now), 'criada em 12/08')
   assert.equal(
-    missionDayLabel(mission({ createdAt: '2026-08-12T13:00:00.000Z' })),
-    'criada em 12/08/2026'
+    missionDayLabel(mission({ status: 'concluida', completedAt: '2026-08-14T13:00:00.000Z' }), now),
+    'integrada em 14/08'
   )
   assert.equal(
-    missionDayLabel(
-      mission({ status: 'concluida', completedAt: '2026-08-14T13:00:00.000Z' })
-    ),
-    'integrada em 14/08/2026'
+    missionDayLabel(mission({ status: 'concluida', completedAt: '2025-08-14T13:00:00.000Z' }), now),
+    'integrada em 14/08/2025'
   )
   // A CERCA: missão antiga sem `completedAt` não pode cair no `updatedAt` e
   // chamá-lo de integração — sem fonte real, a linha não fala de tempo.
   assert.equal(
-    missionDayLabel(mission({ status: 'concluida', updatedAt: '2026-08-30T00:00:00.000Z' })),
+    missionDayLabel(mission({ status: 'concluida', updatedAt: '2026-08-30T00:00:00.000Z' }), now),
     null
   )
-  assert.equal(formatDay(undefined), null)
-  assert.equal(formatDay('não é data'), null)
+  assert.equal(missionDayLabel(mission({ createdAt: 'ontem' }), now), null)
+  assert.equal(shortDay(undefined, now), null)
+  assert.equal(shortDay('não é data', now), null)
 })
 
 test('o contador de cards não existe mais — nem o guarda dele', async () => {
@@ -299,27 +298,21 @@ test('o convite perdeu o rodapé da foto e ganhou o centro', async () => {
   assert.match(css, /\.tb-title-avatar:has\(img\)\s*\{[\s\S]*?background:\s*transparent/u)
 })
 
-test('o painel do projeto é PAPEL, mostra o que os chips não dizem e nunca inventa número', async () => {
+test('o painel do projeto é PAPEL, burro, e a linha diz o que os chips não dizem', async () => {
   const [panel, row, css] = await Promise.all([
     source('src/renderer/src/components/ProjectDashboard.tsx'),
     source('src/renderer/src/components/MissionDashboardRow.tsx'),
-    source('src/renderer/src/global.css')
+    source('src/renderer/src/components/ProjectDashboard.css')
   ])
-  // A LINHA saiu do painel para arquivo próprio quando ganhou a GAVETA do diff
-  // (2026-08-17): ela passou a ter estado de busca, que não é do painel. As
-  // invariantes valem para o PAR — "o painel", aqui, são os dois arquivos.
   const dashboard = `${panel}\n${row}`
   const code = withoutComments(dashboard)
 
   // O erro que o mockup nomeia: painel escuro fora de terminal.
   assert.doesNotMatch(code, /term-window/u)
   assert.doesNotMatch(code, /--panel/u)
-  assert.doesNotMatch(css, /\.project-dashboard[^{]*\{[^}]*--panel/u)
-  assert.doesNotMatch(css, /\.pd-[a-z-]+[^{]*\{[^}]*var\(--panel/u)
-  // Componente burro: quem busca é o Board (nada de IPC nem store aqui). A
-  // gaveta da linha lê o diff, mas pelas costuras que o trilho de entrega já
-  // usa (`missionWorkspace`/`missionHistory`) — `window.synkora` direto
-  // continua proibido, e o `useStore` também.
+  assert.doesNotMatch(withoutComments(css), /term-window|--panel/u)
+  // Componente burro: quem busca é o Board. A gaveta lê o diff pelas costuras
+  // do trilho de entrega (`missionWorkspace`/`missionHistory`), nunca direto.
   assert.doesNotMatch(code, /window\.synkora/u)
   assert.doesNotMatch(code, /useStore/u)
   // NENHUM LEQUE: a leitura de Git nasce no CLIQUE do dono, nunca num efeito de
@@ -331,29 +324,15 @@ test('o painel do projeto é PAPEL, mostra o que os chips não dizem e nunca inv
   assert.match(dashboard, /data-tip=/u)
   assert.doesNotMatch(code, /\stitle="/u)
 
-  // Os KPIs reusam o tile que já existe.
-  assert.match(dashboard, /stat-tile/u)
-  assert.match(dashboard, /stat-num/u)
-  assert.match(dashboard, /stat-label/u)
-  for (const label of ['em andamento', 'integradas', 'na fila ⇪', 'arquivadas'])
-    assert.ok(dashboard.includes(label), `KPI ausente: ${label}`)
-
-  // A linha por missão diz o que os chips da barra não conseguem dizer.
-  assert.match(dashboard, /MISSION_STATUS_LABEL\[mission\.status\]/u)
-  assert.match(dashboard, /✎ planejamento/u)
-  assert.match(dashboard, /⎇ \{mission\.branch/u)
-  assert.match(dashboard, /queueLabel/u)
-  // ▣ não existe mais: a missão 2.0 não tem card para contar.
+  assert.match(row, /missionStatePill\(signal\)/u)
+  assert.match(row, /\{mission\.branch/u)
+  assert.match(row, /escreve plano\//u)
+  assert.match(row, /queueLabel/u)
   assert.doesNotMatch(dashboard, /showsTaskCount|pd-count/u)
-  // Arquivada é KPI, não linha: listá-la desfaria o arquivamento na prática.
+  // Arquivada é contagem, não linha: listá-la desfaria o arquivamento na prática.
   assert.doesNotMatch(code, /status === 'arquivada'/u)
-  // O convite nunca some de vez: a landing continua oferecendo missão nova.
-  assert.match(dashboard, /\+ nova missão/u)
 
-  assert.match(css, /\.pd-mission\.waiting\s*\{[\s\S]*?var\(--warn\)/u)
-  assert.match(css, /\.pd-dot\.ask\s*\{[\s\S]*?background:\s*var\(--warn\)/u)
-  // `.pd-count` (o ▣ feitos/total) saiu do CSS junto com o contador na purga
-  // F6 (2026-08-17) — a asserção de tabular-nums perdeu o objeto.
+  assert.match(css, /\.pd-dot\.ask\s*\{[^}]*background:\s*var\(--warn\)/u)
 })
 
 test('o Board escolhe a tela pelo módulo puro e mantém as duas no mesmo limite de erro', async () => {
@@ -637,70 +616,16 @@ test('o chip ◈ do universo e do painel leem NA MAIN, nunca a aberta mais antig
   }
 })
 
-test('a atividade recente só existe onde há CARIMBO — updatedAt nunca vira tempo', async () => {
-  const { missionTimeline, RECENT_ACTIVITY_CAP } = await landing()
-
-  const events = missionTimeline([
-    mission({ id: 'a', title: 'nasceu', createdAt: '2026-08-10T10:00:00.000Z' }),
-    mission({
-      id: 'b',
-      title: 'integrou',
-      status: 'concluida',
-      createdAt: '2026-08-01T10:00:00.000Z',
-      completedAt: '2026-08-12T10:00:00.000Z'
-    }),
-    // A CERCA: concluída SEM `completedAt` e com `updatedAt` recentíssimo. O
-    // `updatedAt` anda em qualquer mutação de store (status, seat, branch) e
-    // não mede atividade nenhuma — a linha "integrada" não pode nascer dele.
-    mission({
-      id: 'c',
-      title: 'sem carimbo',
-      status: 'concluida',
-      createdAt: '2026-08-02T10:00:00.000Z',
-      updatedAt: '2026-08-30T10:00:00.000Z'
-    })
-  ])
-
-  assert.deepEqual(
-    events.map((e) => `${e.kind}:${e.title}`),
-    ['integrada:integrou', 'criada:nasceu', 'criada:sem carimbo', 'criada:integrou']
-  )
-  assert.equal(events[0].day, '12/08/2026')
-  // uma missão pode dar DOIS eventos (nasceu e integrou) sem colidir de chave
-  assert.equal(events.filter((e) => e.missionId === 'b').length, 2)
-
-  const muitas = Array.from({ length: 9 }, (_, i) =>
-    mission({ id: `m${i}`, createdAt: `2026-08-0${i + 1}T00:00:00.000Z` })
-  )
-  assert.equal(missionTimeline(muitas).length, RECENT_ACTIVITY_CAP)
-  assert.equal(missionTimeline(muitas, 2).length, 2)
-  assert.deepEqual(missionTimeline([]), [])
-  // data ilegível não vira evento em vez de virar "Invalid Date" na tela
-  assert.deepEqual(missionTimeline([mission({ createdAt: 'ontem' })]), [])
-})
-
-test('o painel largo mostra plano, espera e cronologia sem inventar conta nova', async () => {
+test('o painel reusa as contas da casa e nunca chama updatedAt de tempo', async () => {
   const dashboard = await source('src/renderer/src/components/ProjectDashboard.tsx')
+  const code = withoutComments(dashboard)
 
   // A FRAÇÃO DO PLANO é a do mapa: duas contas do mesmo plano divergiriam no
   // primeiro item descartado (que sai do denominador só numa delas).
   assert.match(dashboard, /import \{ planProgress \} from '\.\.\/planBoardPresentation'/u)
-  assert.doesNotMatch(
-    withoutComments(dashboard),
-    /Math\.round\(\((done|progress\.done)/u,
-    'a porcentagem do plano se calcula no módulo compartilhado, não aqui'
-  )
-  // Plano ARQUIVADO não é retrato do projeto — ele foi engavetado de propósito.
-  assert.match(dashboard, /plan\.status !== 'arquivado'/u)
-
-  // O QUE ESPERA VOCÊ sobe para uma faixa própria: dentro da linha da missão,
-  // uma pergunta na quinta posição de uma lista longa fica abaixo da dobra.
-  assert.match(dashboard, /pd-alert/u)
-  assert.match(dashboard, /pendingIntegrationApproval \|\| entryOf\.get\(m\.id\)\?\.pulse/u)
-
-  // A cronologia vem do módulo puro, com as duas datas que existem de verdade.
-  assert.match(dashboard, /missionTimeline\(missions\)/u)
-  assert.doesNotMatch(withoutComments(dashboard), /updatedAt/u)
+  assert.doesNotMatch(code, /Math\.round\(/u, 'porcentagem se calcula nos módulos compartilhados, não aqui')
+  assert.match(code, /waitingOnOwner\(/u, 'quem espera o dono é a MESMA régua da coluna')
+  assert.doesNotMatch(code, /updatedAt/u)
 })
 
 // O PLANEJAMENTO tem DOIS desfechos (ordem do dono, 2026-08-17): CONCLUIR é o
@@ -718,14 +643,18 @@ test('o trilho do planejamento oferece concluir E arquivar, com portas distintas
   const board = await source('src/renderer/src/components/Board.tsx')
   assert.match(board, /onConclude=\{\(\) => void concludePlanningMission\(selMission\.id\)\}/u)
 
-  const ipc = await source('src/main/ipc/missions.ts')
+  const [ipc, lifecycle] = await Promise.all([
+    source('src/main/ipc/missions.ts'),
+    source('src/main/missionLifecycle.ts')
+  ])
+  assert.match(ipc, /'missions:update'[^\n]*lifecycle\.update\(/u, 'o update do renderer passa pelo ciclo de vida')
   assert.match(
-    ipc,
+    lifecycle,
     /patch\.status === 'concluida' && missionTypeOf\(mission\) !== 'planejamento'/u,
     'a porta do concluir-por-clique é EXCLUSIVA do planejamento — dev conclui pela integração'
   )
   assert.match(
-    ipc,
+    lifecycle,
     /patch\.status === 'arquivada' \|\| patch\.status === 'concluida'/u,
     'concluir encerra os chats da missão como o arquivar (conversa fica gravada)'
   )
@@ -784,62 +713,6 @@ test('o MARCO: sem trabalho vivo e com a linha COMPLETA, o palco é da versão',
   )
 })
 
-test('a obra vem AGRUPADA POR DIA, na ordem dos carimbos reais', async () => {
-  const { missionWorkDays, missionTimeline } = await landing()
-
-  const events = missionTimeline([
-    mission({
-      id: 'a',
-      title: 'Modificar o app',
-      status: 'concluida',
-      createdAt: '2026-08-23T09:00:00.000Z',
-      completedAt: '2026-08-24T10:00:00.000Z'
-    }),
-    mission({
-      id: 'b',
-      title: 'Reforma das telas',
-      status: 'concluida',
-      createdAt: '2026-08-23T08:00:00.000Z',
-      completedAt: '2026-08-23T19:00:00.000Z'
-    })
-  ])
-
-  const days = missionWorkDays(events, '24/08/2026')
-  assert.deepEqual(
-    days.map((d) => d.day),
-    ['24/08/2026', '23/08/2026'],
-    'um grupo por dia, do mais recente para o mais antigo'
-  )
-  // O DIA CORRENTE se anuncia: "24/08/2026" e "hoje" são a mesma data, e sem o
-  // sufixo o dono precisa fazer a conta de cabeça para saber se é de agora.
-  assert.equal(days[0].label, '24/08/2026 — hoje')
-  assert.equal(days[1].label, '23/08/2026')
-  assert.deepEqual(
-    days[0].events.map((e) => `${e.kind}:${e.title}`),
-    ['integrada:Modificar o app']
-  )
-  assert.equal(days[1].events.length, 3, 'o dia 23 tem as duas criações e uma integração')
-  assert.deepEqual(missionWorkDays([], '24/08/2026'), [])
-})
-
-test('o ledger conta em UMA linha e nunca anuncia zero', async () => {
-  const { ledgerTail } = await landing()
-
-  // O ESTADO DA REPROVAÇÃO: três tiles com zero não são informação.
-  assert.equal(
-    ledgerTail({ emAndamento: 0, integradas: 10, naFila: 0, arquivadas: 0 }),
-    'nenhuma em andamento, na fila ou arquivada'
-  )
-  assert.equal(
-    ledgerTail({ emAndamento: 2, integradas: 1, naFila: 1, arquivadas: 3 }),
-    '2 em andamento · 1 na fila ⇪ · 3 arquivadas'
-  )
-  assert.equal(
-    ledgerTail({ emAndamento: 0, integradas: 4, naFila: 0, arquivadas: 1 }),
-    '1 arquivada'
-  )
-})
-
 test('a barra de versão mede a fração real e cala quando não há denominador', async () => {
   const { versionPercent } = await landing()
 
@@ -849,69 +722,6 @@ test('a barra de versão mede a fração real e cala quando não há denominador
   // sem missão nenhuma não há barra a preencher — 0/0 não é 100%
   assert.equal(versionPercent(0, 0), 0)
   assert.equal(versionPercent(3, 0), 0)
-})
-
-test('as DUAS listas repetidas viraram UMA: a obra por dia', async () => {
-  const mod = await landing()
-  const panel = await source('src/renderer/src/components/ProjectDashboard.tsx')
-  const code = withoutComments(panel)
-
-  // "integradas" e "atividade recente" eram a MESMA lista duas vezes.
-  assert.equal('recentConcluded' in mod, false, 'a lista de integradas saiu do módulo')
-  assert.equal('RECENT_CONCLUDED_CAP' in mod, false)
-  assert.doesNotMatch(code, /recentConcluded/u)
-  assert.doesNotMatch(code, /atividade recente/u)
-
-  // A que ficou é a cronologia por carimbo, agrupada por dia.
-  assert.match(code, /missionWorkDays\(missionTimeline\(missions\)\)/u)
-  assert.match(code, /pd-work-day/u)
-  assert.match(code, /a obra/u)
-})
-
-test('o palco do MARCO tem as três ações do instante e apaga os tiles zerados', async () => {
-  const panel = await source('src/renderer/src/components/ProjectDashboard.tsx')
-  const code = withoutComments(panel)
-
-  assert.match(code, /landingMilestone\(missions, versoes\)/u)
-  assert.match(code, /pd-milestone/u)
-  assert.match(code, /pronta — aguardando lançamento/u)
-  assert.match(code, /⇪ lançar na main/u)
-  assert.match(code, /▶ testar a versão/u)
-  assert.match(code, /aba versões →/u)
-  assert.match(code, /onOpenVersions/u)
-  assert.match(code, /onTestVersion/u)
-
-  // OS TILES MORREM NESTE ESTADO: três zeros grandes não são informação. A
-  // contagem vira a linha de texto do ledger — e os tiles voltam no retrato.
-  assert.match(
-    code,
-    /\{!marco && \([\s\S]{0,400}pd-kpis/u,
-    'a faixa de KPIs só nasce quando NÃO há palco'
-  )
-  assert.match(code, /pd-ledger/u)
-  assert.match(code, /ledgerTail\(kpis\)/u)
-})
-
-test('plano CUMPRIDO é selo, não instrumento com barra pendente', async () => {
-  const panel = await source('src/renderer/src/components/ProjectDashboard.tsx')
-  const code = withoutComments(panel)
-
-  assert.match(
-    code,
-    /progress\.total > 0 && progress\.done === progress\.total/u,
-    'o selo nasce da fração CHEIA, não do status'
-  )
-  assert.match(code, /pd-plan-frac/u)
-  assert.match(code, /cumprido/u)
-})
-
-test('a linha de versão virou RÉGUA: os mesmos dados, com a fração desenhada', async () => {
-  const panel = await source('src/renderer/src/components/ProjectDashboard.tsx')
-  const code = withoutComments(panel)
-
-  assert.match(code, /pd-version-bar/u)
-  assert.match(code, /versionPercent\(v\.missoesFeitas, v\.missoesTotal\)/u)
-  assert.match(code, /em construção/u)
 })
 
 test('o Board leva o palco à aba Versões e sobe o teste NO worktree da versão', async () => {
@@ -929,8 +739,7 @@ test('a linha do painel não finge mais ser uma missão encerrada', async () => 
   const row = await source('src/renderer/src/components/MissionDashboardRow.tsx')
   const code = withoutComments(row)
 
-  // Com a lista de "integradas" fundida na obra, a linha só recebe missão VIVA:
-  // o modo `done` (linha de leitura, sem clique) ficou sem chamador.
+  // a integrada é leitura sem clique, desenhada pelo próprio painel
   assert.doesNotMatch(code, /done = false/u)
   assert.doesNotMatch(code, /done\?:/u)
   assert.match(code, /onOpen: \(missionId: string\) => void/u, 'abrir deixou de ser opcional')

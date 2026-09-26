@@ -22,7 +22,7 @@ import WorkspaceIcon from '../workspace/WorkspaceIcon'
 const DRAWER_COMMIT_CAP = 3
 
 // o selo só ganha cor quando é notícia para o dono; no resto quem colore é o ponto
-const PILL_CLASS: Record<MissionTone, string> = { ask: ' ask', err: ' err', busy: '', ok: '' }
+const PILL_CLASS: Record<MissionTone, string> = { ask: ' ask', err: ' err', busy: '', ok: ' quiet' }
 
 interface DrawerState {
   status: 'loading' | 'ready' | 'error'
@@ -122,7 +122,7 @@ export default function MissionDashboardRow({
                 </span>
               )}
               {seat && <span>{seat}</span>}
-              {day && <span>{day}</span>}
+              {day && <span className="pd-row-day">{day}</span>}
             </span>
           </span>
           <span className={`pd-pill${PILL_CLASS[pill.tone]}`}>
@@ -135,10 +135,11 @@ export default function MissionDashboardRow({
             type="button"
             className="pd-row-tool"
             aria-expanded={open}
+            aria-label="Mudanças"
             data-tip="Lê o diff desta branch contra a base — só quando você pede"
             onClick={() => void toggle()}
           >
-            Mudanças
+            <span className="pd-row-tool-label">Mudanças</span>
             <WorkspaceIcon name="chevron" />
           </button>
         )}
