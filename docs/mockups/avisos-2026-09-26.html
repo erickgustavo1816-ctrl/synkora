@@ -1,0 +1,492 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<title>mockup · avisos do Synkora (substitui a faixa tracejada)</title>
+<!-- AUTOCONTIDO: abre direto do disco. O primeiro bloco copia do
+     src/renderer/src/global.css os tokens, o .btn e a .mission-msg de hoje
+     (para o "antes"); o segundo é a PROPOSTA, que vira um módulo de CSS
+     próprio na implementação. -->
+<style>
+  :root {
+    --paper: #efe9dc; --paper-2: #e8e1d0; --card: #f6f1e6;
+    --ink: #262019; --ink-2: #5f574a; --ink-3: #948b78;
+    --line: #d9d1bd; --line-strong: #b8ae95;
+    --accent: #d96c3f; --accent-deep: #c05a2e; --ok: #3e9b5f; --err: #b54036; --warn: #d9a23f;
+    --panel: #26241f; --panel-ink: #efe8d6;
+    --mono: 'Cascadia Code', Consolas, 'Courier New', monospace;
+    --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+    --ease-pop: cubic-bezier(0.2, 0.9, 0.3, 1.15);
+    --shadow-md: 0 26px 54px -26px rgba(21, 20, 15, 0.4);
+  }
+  .btn { display: inline-flex; align-items: center; gap: 7px; background: transparent; color: var(--ink);
+    border: 1.5px solid var(--ink); border-radius: 6px; padding: 6px 13px; font-family: var(--mono); font-size: 11px;
+    font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; cursor: pointer;
+    transition: background 120ms ease, color 120ms ease, transform 120ms ease; }
+  .btn:hover { background: var(--ink); color: var(--paper); }
+  .btn.accent { background: var(--accent); border-color: var(--accent-deep); color: #fff; }
+  .btn.accent:hover { background: var(--accent-deep); color: #fff; }
+  .btn.ghost { border-color: var(--line-strong); color: var(--ink-2); }
+  .btn.ghost:hover { background: transparent; border-color: var(--ink); color: var(--ink); }
+  .mission-msg { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--accent-deep);
+    border: 1.5px dashed var(--accent); border-radius: 6px; padding: 6px 10px; margin-bottom: 10px;
+    background: rgba(217, 108, 63, 0.08); }
+  .mission-msg-close { margin-left: auto; background: none; border: none; color: var(--ink-3); font-size: 14px; cursor: pointer; padding: 0 4px; }
+</style>
+<style>
+  body { margin: 0; padding: 32px 24px 64px; background: var(--paper); color: var(--ink);
+    font-family: var(--mono); }
+  .page { max-width: 1180px; margin: 0 auto; display: flex; flex-direction: column; gap: 40px; }
+  .page h1 { font-size: 18px; margin: 0 0 6px; letter-spacing: 0.01em; }
+  .page h2 { font-size: 13px; margin: 0 0 4px; letter-spacing: 0.04em; text-transform: uppercase; }
+  .lede { font-size: 12.5px; line-height: 1.6; color: var(--ink-2); margin: 0; max-width: 78ch; }
+  .section-note { font-size: 12px; line-height: 1.55; color: var(--ink-2); margin: 0 0 14px; max-width: 78ch; }
+
+  /* ———————————————————— A PROPOSTA: o aviso ———————————————————— */
+  .notice {
+    --tone: var(--ink);
+    position: relative;
+    box-sizing: border-box;
+    width: 372px;
+    max-width: calc(100vw - 32px);
+    display: grid;
+    grid-template-columns: 28px minmax(0, 1fr) 24px;
+    column-gap: 12px;
+    row-gap: 6px;
+    padding: 13px 10px 12px 13px;
+    background: var(--card);
+    color: var(--ink);
+    border: 1.5px solid var(--ink);
+    border-radius: 8px;
+    box-shadow: 0 1px 2px rgba(38, 32, 25, 0.08), 0 22px 44px -22px rgba(21, 20, 15, 0.45);
+    font-family: var(--mono);
+  }
+  .notice[data-tone='queued'] { --tone: var(--accent-deep); }
+  .notice[data-tone='warn'] { --tone: var(--warn); }
+  .notice[data-tone='error'] { --tone: var(--err); }
+
+  /* O SELO diz o tom pela FORMA antes da cor:
+     quadrado = andamento (fila) · losango = recusa · octógono = erro · círculo = informação */
+  .notice-stamp {
+    grid-row: 1 / span 3;
+    position: relative;
+    width: 28px; height: 28px;
+    display: grid; place-items: center;
+    font-size: 14px; font-weight: 700; line-height: 1;
+  }
+  .notice-stamp::before { content: ''; position: absolute; inset: 0; background: var(--tone); }
+  .notice-stamp > span { position: relative; }
+  .notice[data-tone='queued'] .notice-stamp { color: #fff8ef; }
+  .notice[data-tone='queued'] .notice-stamp::before { border-radius: 6px; }
+  .notice[data-tone='warn'] .notice-stamp { color: var(--ink); }
+  .notice[data-tone='warn'] .notice-stamp::before { inset: 4px; border-radius: 3px; transform: rotate(45deg); }
+  .notice[data-tone='error'] .notice-stamp { color: #fff; font-size: 12px; }
+  .notice[data-tone='error'] .notice-stamp::before {
+    clip-path: polygon(30% 0, 70% 0, 100% 30%, 100% 70%, 70% 100%, 30% 100%, 0 70%, 0 30%);
+  }
+  .notice[data-tone='info'] .notice-stamp { color: var(--ink); font-size: 13px; }
+  .notice[data-tone='info'] .notice-stamp::before {
+    background: transparent; border: 1.5px solid var(--ink); border-radius: 50%;
+  }
+
+  .notice-head { grid-column: 2; display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; min-height: 24px; }
+  .notice-title { font-size: 12.5px; font-weight: 700; letter-spacing: 0.01em; text-wrap: balance; }
+  .notice-chip {
+    font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; white-space: nowrap;
+    color: var(--ink-2); border: 1px solid var(--line-strong); border-radius: 999px; padding: 1px 7px;
+  }
+  .notice-close {
+    grid-column: 3; grid-row: 1;
+    width: 24px; height: 24px; display: grid; place-items: center;
+    background: none; border: 1px solid transparent; border-radius: 5px;
+    color: var(--ink-2); font: inherit; font-size: 15px; line-height: 1; cursor: pointer;
+    transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
+  }
+  .notice-close:hover { color: var(--ink); border-color: var(--line-strong); background: var(--paper-2); }
+  .notice-close:focus-visible, .notice-action:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .notice-body { grid-column: 2 / span 2; margin: 0; font-size: 12px; line-height: 1.55; color: var(--ink-2); max-width: 46ch; }
+  .notice-foot {
+    grid-column: 2 / span 2;
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    margin-top: 4px; padding-top: 9px; border-top: 1px solid var(--line);
+  }
+  .notice-context { font-size: 10.5px; color: var(--ink-2); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .notice-context b { color: var(--ink); font-weight: 700; }
+  .notice-action.btn { padding: 4px 10px; font-size: 10px; flex: none; }
+  .notice-action.btn:hover { background: var(--ink); color: var(--paper); }
+
+  /* fechar sozinho (OPCIONAL, ajuste em Ajustes): a régua encolhe e pausa no hover */
+  .notice-timer {
+    position: absolute; left: 12px; right: 12px; bottom: -1.5px; height: 2px;
+    background: var(--tone); transform-origin: left; border-radius: 2px;
+    animation: notice-timer var(--notice-ttl, 8s) linear forwards;
+  }
+  .notice[data-tone='info'] .notice-timer { background: var(--ink-2); }
+  .notice:hover .notice-timer, .notice:focus-within .notice-timer { animation-play-state: paused; }
+  @keyframes notice-timer { to { transform: scaleX(0); } }
+
+  /* a PILHA: canto inferior direito do Board, perto do ⇪ do trilho de entrega.
+     O mais novo nasce colado no canto; os anteriores sobem. */
+  .notice-stack {
+    position: absolute; right: 16px; bottom: 16px; z-index: 5;
+    display: flex; flex-direction: column; align-items: flex-end; gap: 10px;
+    pointer-events: none;
+  }
+  .notice-stack > * { pointer-events: auto; }
+  .notice-stack.at-top { bottom: auto; top: 52px; flex-direction: column-reverse; }
+  .notice-more {
+    font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-2);
+    background: var(--card); border: 1px solid var(--line-strong); border-radius: 999px; padding: 3px 10px;
+  }
+
+  /* movimento: UM momento — o cartão assenta e o selo carimba logo depois */
+  .notice.is-entering { animation: notice-in 320ms var(--ease-out) both; }
+  .notice.is-entering .notice-stamp { animation: notice-stamp 380ms var(--ease-pop) 110ms both; }
+  .notice.is-leaving { animation: notice-out 190ms ease-in forwards; }
+  @keyframes notice-in {
+    from { opacity: 0; transform: translateY(14px) scale(0.97); filter: blur(2px); }
+    to { opacity: 1; transform: none; filter: none; }
+  }
+  @keyframes notice-stamp { from { opacity: 0; transform: scale(0.45) rotate(-10deg); } to { opacity: 1; transform: none; } }
+  @keyframes notice-out { to { opacity: 0; transform: translateX(18px); } }
+  .notice-stack.at-top .notice.is-entering { animation-name: notice-in-top; }
+  @keyframes notice-in-top {
+    from { opacity: 0; transform: translateY(-14px) scale(0.97); filter: blur(2px); }
+    to { opacity: 1; transform: none; filter: none; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .notice.is-entering, .notice.is-entering .notice-stamp, .notice.is-leaving { animation-duration: 1ms; }
+  }
+
+  /* dentro de JANELAS (erro de formulário): no lugar, sem sombra, mesma anatomia */
+  .notice.is-inline {
+    width: auto; box-shadow: none; padding: 9px 10px;
+    grid-template-columns: 20px minmax(0, 1fr); column-gap: 10px; row-gap: 2px;
+    border-width: 1px;
+    border-color: color-mix(in srgb, var(--tone) 55%, transparent);
+    background: color-mix(in srgb, var(--tone) 7%, var(--card));
+  }
+  .notice.is-inline .notice-stamp { width: 20px; height: 20px; font-size: 11px; grid-row: 1 / span 2; }
+  .notice.is-inline[data-tone='error'] .notice-stamp { font-size: 9px; }
+  .notice.is-inline .notice-title { font-size: 12px; }
+  .notice.is-inline .notice-body { grid-column: 2; color: var(--ink); }
+
+  /* ———————————————————— o cenário (só do mockup) ———————————————————— */
+  .controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
+  .controls .sep { width: 1px; height: 22px; background: var(--line-strong); margin: 0 4px; }
+  .seg { display: inline-flex; border: 1.5px solid var(--ink); border-radius: 6px; overflow: hidden; }
+  .seg button { font: inherit; font-size: 10.5px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+    background: transparent; color: var(--ink); border: 0; padding: 6px 11px; cursor: pointer; }
+  .seg button + button { border-left: 1.5px solid var(--ink); }
+  .seg button[aria-pressed='true'] { background: var(--ink); color: var(--paper); }
+  .seg-label { font-size: 10.5px; color: var(--ink-2); letter-spacing: 0.06em; text-transform: uppercase; }
+
+  .scene {
+    position: relative; height: 560px; overflow: hidden;
+    border: 1.5px solid var(--ink); border-radius: 10px; background: var(--paper);
+    display: grid; grid-template-rows: 40px minmax(0, 1fr);
+  }
+  .scene-bar { display: flex; align-items: center; gap: 10px; padding: 0 14px; border-bottom: 1px solid var(--line); background: var(--paper-2); font-size: 11px; color: var(--ink-2); }
+  .scene-bar .tab { border: 1.5px solid var(--ink); border-radius: 6px; padding: 3px 10px; color: var(--ink); font-weight: 700; background: var(--card); }
+  .scene-bar .tab.dim { border-color: var(--line-strong); color: var(--ink-2); background: transparent; font-weight: 400; }
+  .scene-bar .version { margin-left: auto; color: var(--ok); font-weight: 700; }
+  .scene-body { display: grid; grid-template-columns: 210px minmax(0, 1fr) 250px; gap: 14px; padding: 14px; min-height: 0; }
+  .col-missions { display: flex; flex-direction: column; gap: 8px; font-size: 11.5px; }
+  .pill-geral { background: var(--panel); color: var(--panel-ink); border-radius: 7px; padding: 8px 12px; font-weight: 700; letter-spacing: 0.06em; }
+  .m-item { border: 1px solid var(--line-strong); border-radius: 7px; padding: 8px 10px; background: var(--card); display: flex; flex-direction: column; gap: 4px; }
+  .m-item.active { border: 1.5px solid var(--ink); }
+  .m-item small { font-size: 10px; color: var(--ink-2); letter-spacing: 0.06em; text-transform: uppercase; }
+  .m-item .q { color: var(--accent-deep); font-weight: 700; }
+  .stage { border: 1.5px solid var(--ink); border-radius: 10px; background: var(--card); padding: 18px 22px; display: flex; flex-direction: column; gap: 14px; font-size: 12.5px; line-height: 1.6; min-height: 0; overflow: hidden; }
+  .stage .you { align-self: flex-end; max-width: 70%; background: var(--paper-2); border-radius: 10px; padding: 8px 12px; }
+  .stage .agent { max-width: 86%; color: var(--ink); }
+  .stage .composer { margin-top: auto; border: 1.5px solid var(--ink); border-radius: 8px; padding: 10px 12px; color: var(--ink-2); font-size: 12px; }
+  .rail { border: 1px solid var(--line-strong); border-radius: 10px; background: var(--card); padding: 12px; display: flex; flex-direction: column; gap: 10px; font-size: 11px; }
+  .rail h3 { margin: 0; font-size: 10.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-2); }
+  .rail .row { display: flex; justify-content: space-between; color: var(--ink-2); }
+  .rail .row b { color: var(--ink); }
+  .rail .plus { color: var(--ok); } .rail .minus { color: var(--err); }
+
+  .old-frame { border: 1.5px solid var(--ink); border-radius: 10px; background: var(--paper); padding: 14px 16px 4px; }
+
+  .gallery { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px 28px; }
+  .gallery figure { margin: 0; display: flex; flex-direction: column; gap: 10px; }
+  .gallery figcaption { font-size: 11.5px; line-height: 1.5; color: var(--ink-2); max-width: 54ch; }
+  .gallery figcaption b { color: var(--ink); }
+
+  .two-up { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 28px; align-items: start; }
+  .modal-mock { border: 1.5px solid var(--ink); border-radius: 10px; background: var(--card); padding: 16px 18px; display: flex; flex-direction: column; gap: 12px; box-shadow: var(--shadow-md); }
+  .modal-mock h4 { margin: 0; font-size: 13px; }
+  .modal-mock label { font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-2); display: flex; flex-direction: column; gap: 5px; }
+  .modal-mock .field { border: 1.5px solid var(--ink); border-radius: 6px; padding: 7px 10px; font-size: 12px; color: var(--ink); text-transform: none; letter-spacing: 0; background: var(--paper); }
+  .modal-mock .actions { display: flex; justify-content: flex-end; gap: 8px; }
+  .settings-mock { border: 1.5px solid var(--ink); border-radius: 10px; background: var(--card); padding: 16px 18px; display: flex; flex-direction: column; gap: 10px; }
+  .settings-mock .set-row { display: flex; justify-content: space-between; align-items: center; gap: 14px; }
+  .settings-mock .set-name { font-size: 12px; font-weight: 700; }
+  .settings-mock .set-help { font-size: 11px; line-height: 1.5; color: var(--ink-2); margin: 0; max-width: 60ch; }
+
+  .rules { margin: 0; padding-left: 18px; font-size: 12px; line-height: 1.7; color: var(--ink-2); max-width: 88ch; }
+  .rules b { color: var(--ink); }
+</style>
+</head>
+<body>
+<main class="page">
+  <header>
+    <h1>Avisos do Synkora — a faixa tracejada vira um aviso flutuante</h1>
+    <p class="lede">Mockup para aprovação. O aviso deixa de empurrar o Board para baixo e passa a nascer no canto inferior direito,
+      perto do ⇪ que o disparou. Ele não bloqueia nada: o chat continua visível e clicável atrás dele. Os controles abaixo são só do mockup.</p>
+  </header>
+
+  <section>
+    <h2>Antes</h2>
+    <p class="section-note">O que aparece hoje: uma faixa que ocupa a largura toda, empurra o Board, gasta três linhas numa frase só e grita em caixa alta.</p>
+    <div class="old-frame">
+      <div class="mission-msg">
+        missão "Bug de missões antigas" na fila de integração: posição #1 de 1. O ⇪ foi ENTREGUE ao agente desta missão, que integra quando chegar a vez dela — acompanhe no chat. O desenvolvimento das outras missões continua em paralelo; os merges acontecem um por vez.
+        <button class="mission-msg-close" type="button">×</button>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Depois, no Board</h2>
+    <p class="section-note">Clique em <b>⇪ Integrar</b> no trilho da direita (ou em “reproduzir”) para ver o aviso entrar. Esc fecha o mais novo.</p>
+    <div class="controls">
+      <button class="btn" type="button" data-act="replay">▶ reproduzir</button>
+      <button class="btn ghost" type="button" data-act="push-warn">+ recusa</button>
+      <button class="btn ghost" type="button" data-act="push-error">+ erro</button>
+      <button class="btn ghost" type="button" data-act="push-info">+ informação</button>
+      <span class="sep" aria-hidden="true"></span>
+      <span class="seg-label">canto</span>
+      <span class="seg" role="group" aria-label="Canto do aviso">
+        <button type="button" data-pos="bottom" aria-pressed="true">inferior</button>
+        <button type="button" data-pos="top" aria-pressed="false">superior</button>
+      </span>
+      <span class="seg-label">fecha sozinho</span>
+      <span class="seg" role="group" aria-label="Fechar sozinho">
+        <button type="button" data-ttl="0" aria-pressed="true">nunca</button>
+        <button type="button" data-ttl="8" aria-pressed="false">8 s</button>
+      </span>
+    </div>
+
+    <div class="scene" id="scene">
+      <div class="scene-bar">
+        <span class="tab">Synkora</span><span class="tab dim">synkora-releases</span>
+        <span class="version">◆ V0.1.3 <span style="color: var(--ink-2); font-weight: 400;">na main</span></span>
+      </div>
+      <div class="scene-body">
+        <aside class="col-missions">
+          <div class="pill-geral">✦ GERAL</div>
+          <div class="m-item active"><span>Arrumar UI</span><small>ativa · dev</small></div>
+          <div class="m-item"><span>Bug de missões antigas</span><small><span class="q">⇪ fila #1</span> · integrando</small></div>
+          <div class="m-item"><span>Protótipo antigo</span><small>arquivada</small></div>
+        </aside>
+        <section class="stage" aria-label="Conversa da missão">
+          <div class="you">Pode integrar quando estiver pronto.</div>
+          <div class="agent">Tudo commitado e o gate raiz passou. A branch está pronta: quando você apertar ⇪, eu entro na fila e integro na minha vez.</div>
+          <div class="agent">Enquanto isso, sigo acompanhando a fila e aviso aqui no chat quando o merge sair.</div>
+          <div class="composer">Escreva para o agente…</div>
+        </section>
+        <aside class="rail">
+          <h3>Entrega</h3>
+          <div class="row"><span>branch</span><b>mission/72dafdc7</b></div>
+          <div class="row"><span>mudanças</span><b><span class="plus">+214</span> <span class="minus">−61</span></b></div>
+          <div class="row"><span>árvore</span><b>limpa</b></div>
+          <button class="btn accent" type="button" data-act="integrate" style="justify-content: center;">⇪ Integrar</button>
+        </aside>
+      </div>
+      <div class="notice-stack" id="stack" aria-live="polite"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Os quatro tons</h2>
+    <p class="section-note">O selo diz o tom pela forma antes da cor. O título vem de onde o aviso nasceu (quem chamou sabe o que aconteceu), nunca de adivinhar pelo texto.</p>
+    <div class="gallery" id="gallery"></div>
+  </section>
+
+  <section>
+    <h2>Dentro de janelas e o ajuste opcional</h2>
+    <p class="section-note">Erros de formulário dentro de uma janela (novo universo, servidor de teste, skills) ficam no lugar, sem flutuar, mas com a mesma cara.
+      À direita, um ajuste opcional em Ajustes, caso você queira que os avisos informativos se fechem sozinhos.</p>
+    <div class="two-up">
+      <div class="modal-mock" role="group" aria-label="Janela de exemplo">
+        <h4>Novo universo</h4>
+        <label>pasta do projeto<span class="field">C:\Users\Erick\Desktop\Synkora</span></label>
+        <div class="notice is-inline" data-tone="error" role="alert">
+          <span class="notice-stamp" aria-hidden="true"><span>✕</span></span>
+          <div class="notice-head"><span class="notice-title">Pasta já usada</span></div>
+          <p class="notice-body">Já existe um universo apontando para esta pasta. Escolha outra ou abra o universo existente.</p>
+        </div>
+        <div class="actions"><button class="btn ghost" type="button">Cancelar</button><button class="btn accent" type="button">Criar</button></div>
+      </div>
+      <div class="settings-mock">
+        <div class="set-row">
+          <span class="set-name">Avisos que fecham sozinhos</span>
+          <span class="seg" role="group" aria-label="Tempo">
+            <button type="button" aria-pressed="true">nunca</button>
+            <button type="button" aria-pressed="false">6 s</button>
+            <button type="button" aria-pressed="false">10 s</button>
+            <button type="button" aria-pressed="false">20 s</button>
+          </span>
+        </div>
+        <p class="set-help">Vale só para avisos informativos e de fila. Recusas e erros ficam até você fechar no ×. Passar o mouse pausa a contagem.</p>
+        <div class="set-row">
+          <span class="set-name">Canto dos avisos</span>
+          <span class="seg" role="group" aria-label="Canto">
+            <button type="button" aria-pressed="true">inferior</button>
+            <button type="button" aria-pressed="false">superior</button>
+          </span>
+        </div>
+        <p class="set-help">Inferior fica perto do ⇪ e longe do topo do Board.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Como se comporta</h2>
+    <ul class="rules">
+      <li><b>Não bloqueia.</b> Não é modal: o chat continua visível e clicável, como você pediu para o ⇪ (“preciso VER o que ele tá fazendo no chat”).</li>
+      <li><b>Fica até você fechar no ×</b>, como hoje. O fechamento automático só existe se você ligar em Ajustes, e só para informação e fila.</li>
+      <li><b>Empilha até 3.</b> O mais novo nasce colado no canto; acima disso aparece “+N avisos”. O mesmo aviso repetido substitui o anterior em vez de duplicar.</li>
+      <li><b>Mesma regra de quando aparecer:</b> o ⇪ só mostra aviso quando a fila não mudou (recusa ou clique repetido). Ticket novo continua sendo contado pelo trilho e pelo card.</li>
+      <li><b>Textos mais curtos.</b> A frase do motor para a fila vira título + posição + uma frase; nada de caixa alta gritando.</li>
+      <li><b>Acessível.</b> Informação e fila são anunciadas com educação ao leitor de tela; recusa e erro, na hora. Esc fecha o mais novo sem roubar o foco do chat.</li>
+      <li><b>O Backlog usa o mesmo aviso</b> para as mensagens de release.</li>
+    </ul>
+  </section>
+</main>
+
+<script>
+  const NOTICES = {
+    queued: { tone: 'queued', glyph: '⇪', title: 'Na fila de integração', chip: 'posição 1 de 1',
+      body: 'O agente desta missão integra quando chegar a vez dela. As outras missões seguem em paralelo; os merges saem um por vez.',
+      context: 'Bug de missões antigas', action: 'Abrir chat',
+      caption: '<b>Fila.</b> Quando o ⇪ é repetido numa missão que já está na fila. Título, posição e uma frase; o resto o trilho já mostra.' },
+    warn: { tone: 'warn', glyph: '!', title: 'Integração não iniciada',
+      body: 'A missão está arquivada. Reative-a antes de pedir a integração.',
+      context: 'Protótipo antigo',
+      caption: '<b>Recusa.</b> O ⇪ não criou ticket. O texto é o motivo que o motor já devolve, com a primeira letra em maiúscula.' },
+    error: { tone: 'error', glyph: '✕', title: 'Pedido de revisão não entregue',
+      body: 'Não deu para entregar o pedido de revisão no chat do agente. Abra a conversa e tente de novo.',
+      context: 'Arrumar UI', action: 'Abrir chat',
+      caption: '<b>Erro.</b> Algo que você pediu falhou. Quando existe um próximo passo óbvio, ele vira botão.' },
+    info: { tone: 'info', glyph: 'i', title: 'Conversa fechada',
+      body: 'Esta conversa não está mais aberta neste painel. O resumo do projeto continua disponível.',
+      caption: '<b>Informação.</b> Nada deu errado; só um fato que você precisa saber. É o único tom, junto da fila, que pode fechar sozinho.' }
+  }
+
+  function el(tag, cls, text) {
+    const n = document.createElement(tag)
+    if (cls) n.className = cls
+    if (text != null) n.textContent = text
+    return n
+  }
+
+  function buildNotice(key, opts = {}) {
+    const d = NOTICES[key]
+    const n = el('div', 'notice')
+    n.dataset.tone = d.tone
+    n.dataset.key = key
+    n.setAttribute('role', d.tone === 'warn' || d.tone === 'error' ? 'alert' : 'status')
+    const stamp = el('span', 'notice-stamp')
+    stamp.setAttribute('aria-hidden', 'true')
+    stamp.appendChild(el('span', null, d.glyph))
+    const head = el('div', 'notice-head')
+    head.appendChild(el('span', 'notice-title', d.title))
+    if (d.chip) head.appendChild(el('span', 'notice-chip', d.chip))
+    const close = el('button', 'notice-close', '×')
+    close.type = 'button'
+    close.setAttribute('aria-label', 'Fechar aviso')
+    close.dataset.tip = 'Fechar aviso'
+    close.addEventListener('click', () => dismiss(n))
+    n.append(stamp, head, close, el('p', 'notice-body', d.body))
+    if (d.context || d.action) {
+      const foot = el('div', 'notice-foot')
+      const ctx = el('span', 'notice-context')
+      if (d.context) { ctx.append('missão · '); ctx.appendChild(el('b', null, d.context)) }
+      foot.appendChild(ctx)
+      if (d.action) {
+        const a = el('button', 'btn notice-action', d.action)
+        a.type = 'button'
+        foot.appendChild(a)
+      }
+      n.appendChild(foot)
+    }
+    if (opts.ttl && (d.tone === 'info' || d.tone === 'queued')) {
+      n.style.setProperty('--notice-ttl', opts.ttl + 's')
+      const t = el('span', 'notice-timer')
+      t.addEventListener('animationend', () => dismiss(n))
+      n.appendChild(t)
+    }
+    return n
+  }
+
+  const stack = document.getElementById('stack')
+  let ttl = 0
+  const MAX = 3
+
+  function dismiss(n) {
+    if (n.classList.contains('is-leaving')) return
+    n.classList.remove('is-entering')
+    n.classList.add('is-leaving')
+    n.addEventListener('animationend', () => { n.remove(); syncMore() }, { once: true })
+  }
+
+  function syncMore() {
+    const live = [...stack.querySelectorAll('.notice:not(.is-leaving)')]
+    live.forEach((n, i) => { n.hidden = i < live.length - MAX })
+    let more = stack.querySelector('.notice-more')
+    const hiddenCount = Math.max(0, live.length - MAX)
+    if (hiddenCount && !more) { more = el('span', 'notice-more'); stack.prepend(more) }
+    if (more) hiddenCount ? (more.textContent = `+${hiddenCount} aviso${hiddenCount > 1 ? 's' : ''}`) : more.remove()
+  }
+
+  function push(key) {
+    stack.querySelectorAll(`.notice[data-key="${key}"]`).forEach((old) => old.remove())
+    const n = buildNotice(key, { ttl })
+    n.classList.add('is-entering')
+    n.addEventListener('animationend', (e) => { if (e.target === n) n.classList.remove('is-entering') })
+    stack.appendChild(n)
+    syncMore()
+  }
+
+  document.addEventListener('click', (e) => {
+    const b = e.target.closest('button')
+    if (!b) return
+    const act = b.dataset.act
+    if (act === 'replay') { stack.replaceChildren(); setTimeout(() => push('queued'), 60) }
+    if (act === 'integrate') push('queued')
+    if (act === 'push-warn') push('warn')
+    if (act === 'push-error') push('error')
+    if (act === 'push-info') push('info')
+    if (b.dataset.pos) {
+      b.parentElement.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)))
+      stack.classList.toggle('at-top', b.dataset.pos === 'top')
+    }
+    if (b.dataset.ttl) {
+      b.parentElement.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)))
+      ttl = Number(b.dataset.ttl)
+    }
+  })
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return
+    const live = stack.querySelectorAll('.notice:not(.is-leaving)')
+    if (live.length) dismiss(live[live.length - 1])
+  })
+
+  const gallery = document.getElementById('gallery')
+  for (const key of ['queued', 'warn', 'error', 'info']) {
+    const fig = el('figure')
+    fig.appendChild(buildNotice(key))
+    const cap = el('figcaption')
+    cap.innerHTML = NOTICES[key].caption
+    fig.appendChild(cap)
+    gallery.appendChild(fig)
+  }
+
+  push('queued')
+  setTimeout(() => push('warn'), 420)
+</script>
+</body>
+</html>
