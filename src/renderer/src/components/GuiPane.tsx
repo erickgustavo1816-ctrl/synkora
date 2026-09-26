@@ -123,7 +123,7 @@ import {
 } from '../guiComposerAttachments'
 import { shouldBlurGuiComposerOnOutsidePointerDown } from '../guiComposerFocus'
 import { guiAwaitingGoDecision } from '../guiAskForGo'
-import { guiHeldItems, guiWritingPaceOf, type GuiWritingPace } from '../guiStreamReveal'
+import { guiHeldItems, guiWriterIndex, guiWritingPaceOf, type GuiWritingPace } from '../guiStreamReveal'
 import { guiComposerClearPlan } from '../guiComposerDelivery'
 import { forceOneGuiQueuedMessage } from '../guiQueuedDelivery'
 import { parseGuiJsonCard } from '../guiJsonCard'
@@ -878,7 +878,10 @@ export default function GuiPane({
   const composerSurfaceRef = useRef<HTMLDivElement>(null)
   // These cards and the history reader remove the composer without unmounting
   // GuiPane. Reattach its observers when the editable surface comes back.
-  const planProposalCard = isGuiTurnActive(gui.status, gui.stream) ? null : gui.planProposal
+  const [presentedCardId, setPresentedCardId] = useState<string | null>(null)
+  const activeCardId = gui.question?.requestId ?? gui.planReview?.requestId ?? gui.planProposal?.requestId ?? null
+  const cardPresented = activeCardId !== null && presentedCardId === activeCardId
+  const planProposalCard = cardPresented || !isGuiTurnActive(gui.status, gui.stream) ? gui.planProposal : null
   const awaitingCard = Boolean(gui.question || gui.planReview || planProposalCard)
   const composerVisible = !readOnly && !historyTarget && !awaitingCard
   const composerFit = useGuiComposerFit(composerSurfaceRef, composerVisible)
@@ -1816,9 +1819,16 @@ export default function GuiPane({
     setWriterBusyId((current) => (busy ? itemId : current === itemId ? null : current))
   }, [])
   const writerBusy = writerBusyId !== null
+  const writerItem = visibleItems[guiWriterIndex(visibleItems)]
+  const [observedWriter, setObservedWriter] = useState<GuiItem | undefined>()
+  // onBusy arrives after commit. A new text snapshot must wait for that effect
+  // before it can release a request, including text + card in the same render.
+  useEffect(() => setObservedWriter(writerItem), [writerItem])
+  const writerPending = writerBusy || (writerItem?.kind === 'assistant' &&
+    writerItem.animateFrom < writerItem.text.length && writerItem !== observedWriter)
   const renderItems = useMemo(
-    () => guiThreadRenderItems(guiHeldItems(visibleItems, writerBusy)),
-    [visibleItems, writerBusy]
+    () => guiThreadRenderItems(guiHeldItems(visibleItems, writerPending)),
+    [visibleItems, writerPending]
   )
   const copyableAssistantId = useMemo(
     () =>
@@ -1997,6 +2007,10 @@ export default function GuiPane({
    *  seguir"): `settleGuiReplay` não limpa `perm`/`question`/`planReview`, então
    *  um transcript que morreu no meio de uma decisão renderiza o card vivo. */
   const inert = Boolean(historyTarget) || readOnly
+  const showCard = !inert && awaitingCard && (cardPresented || !writerPending)
+  useLayoutEffect(() => {
+    setPresentedCardId(showCard ? activeCardId : null)
+  }, [activeCardId, showCard])
 
   // A ZONA DE SOLTAR (2026-09-04): o PANE INTEIRO aceita o arrasto de arquivos
   // e pastas enquanto o composer pode receber anexo — a mesma régua do botão +.
@@ -2221,8 +2235,9 @@ export default function GuiPane({
               </div>
             )}
 
-            {!inert && gui.planReview && !writerBusy && (
+            {showCard && gui.planReview && (
               <GuiPlanCard
+                key={gui.planReview.requestId}
                 paneId={paneId}
                 plan={gui.planReview.plan}
                 disabled={Boolean(gui.interactionSubmitting)}
@@ -2230,8 +2245,9 @@ export default function GuiPane({
               />
             )}
 
-            {!inert && planProposalCard && !writerBusy && (
+            {showCard && planProposalCard && (
               <GuiPlanProposalCard
+                key={planProposalCard.requestId}
                 draft={planProposalCard.draft}
                 disabled={Boolean(gui.interactionSubmitting)}
                 onDecide={(approve, note) =>
@@ -2240,7 +2256,7 @@ export default function GuiPane({
               />
             )}
 
-            {!inert && gui.question && !writerBusy && (
+            {showCard && gui.question && (
               <GuiQuestionCard
                 key={gui.question.requestId}
                 paneId={paneId}

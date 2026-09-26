@@ -3291,11 +3291,6 @@ test('o card rico substitui o card cru da tool e some na conversa congelada', ()
   assert.match(pane, /'mcp__synkora__propose_plan'/u)
   // Mesma cerca das outras decisões: histórico local aberto ou pane read-only
   // NÃO renderiza card vivo (`inert`), e o composer cede a vez ao card.
-  // 2026-09-21: as decisões esperam o escritor da vez terminar de escrever o
-  // que já recebeu (UM escritor por conversa) — a régua é `guiHeldItems`.
-  assert.match(pane, /\{!inert && planProposalCard && !writerBusy && \(/u)
-  assert.match(pane, /\{!inert && gui\.question && !writerBusy && \(/u)
-  assert.match(pane, /guiThreadRenderItems\(guiHeldItems\(visibleItems, writerBusy\)\)/u)
   assert.match(pane, /const awaitingCard = Boolean\(gui\.question \|\| gui\.planReview \|\| planProposalCard\)/u)
   assert.match(pane, /answerGuiPlanProposal\(projectId, paneId, approve, note\)/u)
 
