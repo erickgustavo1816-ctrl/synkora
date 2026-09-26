@@ -7,8 +7,8 @@
  * no disco e devolve uma PÁGINA de falas por faixa de bytes.
  *
  * Duas propriedades tornam isso barato e sem índice em background:
- * - claude: o caminho é determinístico
- *   (`<configDir>/projects/<slug(cwd)>/<sessionId>.jsonl`) — nenhuma varredura.
+ * - claude: tenta `<configDir>/projects/<slug(cwd)>/<sessionId>.jsonl`;
+ *   sem o cwd antigo, procura o mesmo id nas pastas de projetos da conta.
  * - o `cursor` de cada fala É O OFFSET DE BYTE da linha no arquivo, então
  *   "carregar mais antigas" é ler a faixa que TERMINA no menor cursor já
  *   carregado, e "mais novas" a que COMEÇA no maior.
@@ -106,6 +106,15 @@ export async function locateHistorySessionFile(
   const budget = readerBudget(limits, input.signal)
   const found: { session: HistorySessionFile; mtime: number }[] = []
   const seen = new Set<string>()
+  const considerFile = async (file: string, configDir: string): Promise<void> => {
+    const stat = await safeRegularFile(file)
+    if (stat) {
+      found.push({
+        session: { file, configDir, provider: input.provider, sessionId },
+        mtime: stat.mtime
+      })
+    }
+  }
 
   for (const configDir of input.configDirs) {
     if (!configDir || seen.has(configDir)) continue
@@ -116,13 +125,7 @@ export async function locateHistorySessionFile(
       for (const cwd of input.cwds ?? []) {
         if (!cwd) continue
         const file = join(configDir, 'projects', claudeSlug(cwd), `${sessionId}.jsonl`)
-        const stat = await safeRegularFile(file)
-        if (stat) {
-          found.push({
-            session: { file, configDir, provider: 'claude', sessionId },
-            mtime: stat.mtime
-          })
-        }
+        await considerFile(file, configDir)
       }
       continue
     }
@@ -136,13 +139,19 @@ export async function locateHistorySessionFile(
         if (sessionIdFromCodexFilename(entry.name)?.toLowerCase() !== sessionId.toLowerCase())
           continue
         const file = join(dir, entry.name)
-        const stat = await safeRegularFile(file)
-        if (stat) {
-          found.push({
-            session: { file, configDir, provider: 'codex', sessionId },
-            mtime: stat.mtime
-          })
-        }
+        await considerFile(file, configDir)
+      }
+    }
+  }
+
+  // A integração apaga mission.worktree, mas preserva o transcript no seat.
+  if (input.provider === 'claude' && found.length === 0) {
+    for (const configDir of seen) {
+      const projects = join(configDir, 'projects')
+      for (const entry of await safeDirectoryEntries(projects, budget)) {
+        if (input.signal?.aborted || Date.now() >= budget.deadline) break
+        if (!entry.isDirectory() || entry.isSymbolicLink()) continue
+        await considerFile(join(projects, entry.name, `${sessionId}.jsonl`), configDir)
       }
     }
   }
