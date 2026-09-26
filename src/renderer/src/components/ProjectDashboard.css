@@ -1,0 +1,754 @@
+/* Contrato visual: docs/mockups/painel-projeto-2026-09-26.html (aprovado pelo
+   dono). PAPEL de ponta a ponta — `--panel`/`.term-window` são de terminal. */
+
+.project-dashboard {
+  /* --ok e --warn medem ~2,8:1 como texto sobre papel: ficam para ponto e
+     barra, e o texto de estado usa estes dois (AA sobre os fundos claros) */
+  --pd-ok-ink: #2d6f45;
+  --pd-warn-ink: #7f5410;
+  padding: 28px 32px 40px;
+}
+
+.project-dashboard svg {
+  flex: none;
+}
+
+/* ---------- cabeçalho ---------- */
+
+.pd-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px 32px;
+  padding-bottom: 22px;
+  border-bottom: 1px solid var(--line);
+}
+
+.pd-title {
+  margin: 0;
+  font-size: 22px;
+  line-height: 28px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  text-wrap: balance;
+}
+
+.pd-sub {
+  margin: 6px 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+
+.pd-sub b {
+  color: var(--ink);
+}
+
+.pd-sub > span + span::before {
+  content: '·';
+  margin-right: 10px;
+  color: var(--ink-3);
+}
+
+.pd-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.project-dashboard .btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* ---------- corpo ---------- */
+
+.pd-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 248px;
+  gap: 0 32px;
+  margin-top: 24px;
+}
+
+.pd-main {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  min-width: 0;
+}
+
+.pd-side {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  padding-left: 24px;
+  border-left: 1px solid var(--line);
+}
+
+.pd-block {
+  display: flex;
+  flex-direction: column;
+}
+
+.pd-section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.pd-section-title {
+  margin: 0 0 10px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+
+.pd-section-head .pd-section-title {
+  margin-bottom: 0;
+}
+
+.pd-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  font-size: 12px;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+
+.pd-link svg {
+  width: 14px;
+  height: 14px;
+}
+
+.pd-link:hover {
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* ---------- selo, ponto e barra ---------- */
+
+.pd-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  font-size: 11.5px;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+
+.pd-pill svg {
+  width: 13px;
+  height: 13px;
+}
+
+.pd-pill.ok {
+  color: var(--pd-ok-ink);
+  border-color: color-mix(in srgb, var(--ok) 40%, transparent);
+  background: color-mix(in srgb, var(--ok) 11%, var(--card));
+}
+
+.pd-pill.ask {
+  color: var(--pd-warn-ink);
+  font-weight: 700;
+  border-color: color-mix(in srgb, var(--warn) 60%, transparent);
+  background: color-mix(in srgb, var(--warn) 16%, var(--card));
+}
+
+.pd-pill.err {
+  color: var(--err);
+  font-weight: 700;
+  border-color: color-mix(in srgb, var(--err) 45%, transparent);
+  background: color-mix(in srgb, var(--err) 8%, var(--card));
+}
+
+.pd-pill.sm {
+  height: 20px;
+  padding: 0 7px;
+  font-size: 11px;
+}
+
+.pd-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--line-strong);
+  flex: none;
+}
+
+.pd-dot.ok {
+  background: var(--ok);
+}
+
+.pd-dot.busy {
+  background: var(--accent);
+}
+
+.pd-dot.err {
+  background: var(--err);
+}
+
+.pd-dot.ask {
+  background: var(--warn);
+  animation: pd-ask 1.8s ease-in-out infinite;
+}
+
+@keyframes pd-ask {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--warn) 45%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 5px color-mix(in srgb, var(--warn) 0%, transparent);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pd-dot.ask {
+    animation: none;
+  }
+}
+
+.pd-bar {
+  display: inline-block;
+  width: 112px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--line);
+  overflow: hidden;
+}
+
+.pd-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--ok);
+}
+
+/* ---------- esperando você ---------- */
+
+.pd-attn {
+  border: 1px solid color-mix(in srgb, var(--warn) 60%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--warn) 12%, var(--card));
+}
+
+.pd-attn-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0;
+  padding: 11px 16px 2px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--pd-warn-ink);
+}
+
+.pd-attn-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 200px) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  padding: 9px 16px 11px;
+}
+
+.pd-attn-row + .pd-attn-row {
+  border-top: 1px solid color-mix(in srgb, var(--warn) 30%, transparent);
+}
+
+.pd-attn-title {
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pd-attn-why {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  color: var(--pd-warn-ink);
+}
+
+.pd-attn-why > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pd-attn .btn {
+  border-color: var(--pd-warn-ink);
+  color: var(--pd-warn-ink);
+}
+
+.pd-attn .btn:hover {
+  background: var(--pd-warn-ink);
+  color: #fff;
+}
+
+.pd-attn .btn svg {
+  width: 13px;
+  height: 13px;
+}
+
+/* ---------- versão e linhas de missão ---------- */
+
+.pd-card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.pd-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 13px 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.pd-version-name {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.pd-card-progress {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+.pd-empty {
+  margin: 0;
+  padding: 12px 18px;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+.pd-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.pd-row + .pd-row {
+  border-top: 1px solid var(--line);
+}
+
+.pd-row-line {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+/* botão dentro de botão é HTML inválido: "Mudanças" é IRMÃO da linha e se
+   sobrepõe na última coluna, que a linha reserva no padding direito */
+.pd-row-open {
+  grid-column: 1 / -1;
+  grid-row: 1;
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 12px;
+  width: 100%;
+  padding: 11px calc(18px + var(--pd-tool-w, 0px)) 11px 18px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.pd-row-open:hover {
+  background: color-mix(in srgb, var(--ink) 4%, transparent);
+}
+
+.pd-row:last-child .pd-row-open {
+  border-radius: 0 0 9px 9px;
+}
+
+.pd-row-open:focus-visible,
+.pd-row-tool:focus-visible,
+.pd-link:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: -2px;
+}
+
+.pd-row-open .pd-dot {
+  justify-self: center;
+}
+
+.pd-row-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.pd-row-title {
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pd-row-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1px 12px;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+.pd-row-meta > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.pd-row-meta svg {
+  width: 13px;
+  height: 13px;
+}
+
+.pd-row.has-tool {
+  --pd-tool-w: 108px;
+}
+
+.pd-row-tool {
+  grid-column: 2;
+  grid-row: 1;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  width: 94px;
+  margin-right: 14px;
+  padding: 4px 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: none;
+  font-size: 11.5px;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+
+.pd-row-tool svg {
+  width: 13px;
+  height: 13px;
+  transition: transform 160ms ease;
+}
+
+.pd-row-tool:hover {
+  border-color: var(--line-strong);
+  color: var(--ink);
+}
+
+.pd-row.open .pd-row-tool {
+  border-color: var(--line-strong);
+  background: var(--paper);
+  color: var(--ink);
+}
+
+.pd-row.open .pd-row-tool svg {
+  transform: rotate(180deg);
+}
+
+.pd-drawer {
+  display: flex;
+  flex-direction: column;
+  margin: 0 18px 14px 46px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--paper);
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+.pd-drawer-note.err {
+  color: var(--err);
+}
+
+.pd-drawer-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  color: var(--ink);
+}
+
+.pd-ins {
+  color: var(--pd-ok-ink);
+  font-weight: 700;
+}
+
+.pd-del {
+  color: var(--err);
+  font-weight: 700;
+}
+
+.pd-commits {
+  display: grid;
+  gap: 5px;
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 8px 0 0;
+  border-top: 1px dashed var(--line);
+}
+
+.pd-commit {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+}
+
+.pd-commit-subject {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink);
+}
+
+.pd-row-done {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 12px;
+  padding: 9px 18px;
+}
+
+.pd-row-done svg {
+  justify-self: center;
+  width: 15px;
+  height: 15px;
+  color: var(--pd-ok-ink);
+}
+
+.pd-row-done .pd-row-title {
+  font-weight: 400;
+  color: var(--ink-2);
+}
+
+.pd-row-when {
+  font-size: 12px;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+
+/* ---------- lançadas ---------- */
+
+.pd-released {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.pd-released-row {
+  display: grid;
+  grid-template-columns: 70px 78px 84px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding: 10px 18px;
+  font-size: 12.5px;
+}
+
+.pd-released-row + .pd-released-row {
+  border-top: 1px solid var(--line);
+}
+
+.pd-released-row .pd-version-name {
+  font-size: 12.5px;
+}
+
+.pd-released-count,
+.pd-released-titles {
+  color: var(--ink-2);
+}
+
+.pd-released-titles {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------- lateral ---------- */
+
+.pd-summary {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  margin: 0;
+  font-size: 12.5px;
+}
+
+.pd-summary dt,
+.pd-summary dd {
+  padding: 6px 0;
+}
+
+.pd-summary dt {
+  color: var(--ink-2);
+}
+
+.pd-summary dd {
+  margin: 0;
+  text-align: right;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.pd-summary dd.zero {
+  font-weight: 400;
+  color: var(--ink-2);
+}
+
+.pd-summary .total {
+  margin-top: 4px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.pd-plans {
+  display: flex;
+  flex-direction: column;
+}
+
+.pd-plan {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 11px 0;
+}
+
+.pd-plan:first-child {
+  padding-top: 2px;
+}
+
+.pd-plan + .pd-plan {
+  border-top: 1px solid var(--line);
+}
+
+.pd-plan-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.pd-plan-title {
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pd-tag {
+  flex: none;
+  padding: 1px 5px;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+
+.pd-plan-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+.pd-plan-foot .pd-bar {
+  flex: 1;
+  width: auto;
+}
+
+.pd-plan.done .pd-plan-foot {
+  color: var(--pd-ok-ink);
+}
+
+.pd-plan-foot svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* ---------- folha estreita ---------- */
+
+@container boardcontent (max-width: 900px) {
+  .pd-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .pd-side {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 24px 32px;
+    margin-top: 28px;
+    padding: 22px 0 0;
+    border-left: 0;
+    border-top: 1px solid var(--line);
+  }
+}
+
+@container boardcontent (max-width: 640px) {
+  .project-dashboard {
+    padding: 22px 20px 32px;
+  }
+
+  .pd-attn-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .pd-attn-why {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
+  .pd-released-row {
+    grid-template-columns: 64px auto minmax(0, 1fr);
+  }
+
+  .pd-released-titles {
+    grid-column: 1 / -1;
+  }
+
+  .pd-card-progress {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  /* quem cede é a data, nunca o nome da missão nem a branch */
+  .pd-row-meta > span:nth-child(3) {
+    display: none;
+  }
+}

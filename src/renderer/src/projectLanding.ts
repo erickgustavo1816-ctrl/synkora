@@ -8,11 +8,9 @@ import type { Mission, VersionStats } from './store'
 // testável — no componente ficaria escondido atrás de JSX.
 //
 // REGRA DE HONESTIDADE (a que mais custou): número só entra na tela com fonte
-// real. Missão 2.0 não cria card nenhum, então `▣ 0/0` seria uma mentira dita
-// com confiança — por isso `showsTaskCount`. E `updatedAt` NUNCA é "última
-// atividade": ele só se move em mutação de store (status, seat, branch), nunca
-// numa mensagem do chat ou num commit. O que dá para dizer com verdade é
-// quando a missão nasceu e quando ela integrou.
+// real. `updatedAt` NUNCA é "última atividade": ele só se move em mutação de
+// store (status, seat, branch), nunca numa mensagem do chat ou num commit. O
+// que dá para dizer com verdade é quando a missão nasceu e quando ela integrou.
 
 /** Qual das duas telas o ✦ geral mostra. */
 export type ProjectLanding = 'invite' | 'dashboard'
@@ -25,6 +23,15 @@ export type ProjectLanding = 'invite' | 'dashboard'
  */
 export function projectLanding(missions: readonly Mission[]): ProjectLanding {
   return missions.length === 0 ? 'invite' : 'dashboard'
+}
+
+const isLive = (mission: Mission): boolean =>
+  mission.status === 'ativa' || mission.status === 'integrando'
+const isPlanning = (mission: Mission): boolean => mission.missionType === 'planejamento'
+
+/** "1 missão", "3 missões". */
+export function missionCount(count: number): string {
+  return `${count} ${count === 1 ? 'missão' : 'missões'}`
 }
 
 export interface ProjectKpis {
@@ -43,7 +50,7 @@ export interface ProjectKpis {
  * porteira é mecânica — pedido de agente nunca mergeia sozinho).
  */
 export function projectKpis(missions: readonly Mission[]): ProjectKpis {
-  const vivas = missions.filter((m) => m.status === 'ativa' || m.status === 'integrando')
+  const vivas = missions.filter(isLive)
   return {
     emAndamento: vivas.length,
     integradas: missions.filter((m) => m.status === 'concluida').length,
@@ -56,16 +63,8 @@ export function projectKpis(missions: readonly Mission[]): ProjectKpis {
 
 /** Missões vivas, mais recente primeiro — as linhas do topo do painel. */
 export function liveMissions(missions: readonly Mission[]): Mission[] {
-  return missions
-    .filter((m) => m.status === 'ativa' || m.status === 'integrando')
-    .sort((a, b) => timeOf(b.createdAt) - timeOf(a.createdAt))
+  return missions.filter(isLive).sort((a, b) => timeOf(b.createdAt) - timeOf(a.createdAt))
 }
-
-// `recentConcluded`/`RECENT_CONCLUDED_CAP` viviam aqui: a lista "integradas"
-// do painel. Ela MORREU na R38 (2026-08-24) porque era a mesma lista que a
-// "atividade recente" logo abaixo dela — as duas seções repetiam as mesmas
-// cinco missões com palavras diferentes. O que ficou é a CRONOLOGIA
-// (`missionTimeline` + `missionWorkDays`), que diz o mesmo agrupado por dia.
 
 function timeOf(iso?: string): number {
   if (!iso) return 0
@@ -73,12 +72,14 @@ function timeOf(iso?: string): number {
   return Number.isFinite(at) ? at : 0
 }
 
-/** dd/mm/aaaa, ou null quando a data não existe/não é legível. */
-export function formatDay(iso?: string): string | null {
+/** `dd/mm` no ano corrente, `dd/mm/aaaa` fora dele; null sem data legível. */
+export function shortDay(iso: string | undefined, now: Date = new Date()): string | null {
   if (!iso) return null
   const at = new Date(iso)
   if (!Number.isFinite(at.getTime())) return null
-  return at.toLocaleDateString('pt-BR')
+  return at.getFullYear() === now.getFullYear()
+    ? at.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
+    : at.toLocaleDateString('pt-BR')
 }
 
 /**
@@ -86,112 +87,13 @@ export function formatDay(iso?: string): string | null {
  * quando o carimbo existe); qualquer outra mostra quando nasceu. Sem data
  * legível a linha simplesmente não fala de tempo.
  */
-export function missionDayLabel(mission: Mission): string | null {
+export function missionDayLabel(mission: Mission, now: Date = new Date()): string | null {
   if (mission.status === 'concluida') {
-    const done = formatDay(mission.completedAt)
+    const done = shortDay(mission.completedAt, now)
     return done ? `integrada em ${done}` : null
   }
-  const born = formatDay(mission.createdAt)
+  const born = shortDay(mission.createdAt, now)
   return born ? `criada em ${born}` : null
-}
-
-// `showsTaskCount` vivia aqui: guardava o `▣ feitas/total` para ele nunca
-// aparecer como 0/0. Os CARDS morreram na purga F6 (2026-08-17) — o contador
-// saiu inteiro, e um guarda de algo que não existe mais é debt, não proteção.
-
-/* ---------- ATIVIDADE RECENTE (2026-08-17) ----------
-
-   A cronologia do universo, montada SÓ com os dois carimbos que existem de
-   verdade: `createdAt` (a missão nasceu) e `completedAt` (ela integrou). Não
-   há evento de "arquivada" nem de "última atividade" porque não há carimbo
-   para eles — `updatedAt` se move em qualquer mutação de store e chamá-lo de
-   atividade seria a mentira que este módulo existe para não contar. */
-
-export type MissionEventKind = 'criada' | 'integrada'
-
-export interface MissionEvent {
-  missionId: string
-  title: string
-  kind: MissionEventKind
-  /** ISO do carimbo real do evento */
-  at: string
-  /** dd/mm/aaaa já formatado */
-  day: string
-}
-
-/** Teto da faixa: ela é um relance da cronologia, não o histórico (esse é a
- *  aba Versões). Subiu de 6 para 8 na R38 (2026-08-24): esta lista passou a
- *  ser a ÚNICA — ela absorveu a seção "integradas" que morreu ao lado. */
-export const RECENT_ACTIVITY_CAP = 8
-
-export function missionTimeline(
-  missions: readonly Mission[],
-  cap: number = RECENT_ACTIVITY_CAP
-): MissionEvent[] {
-  const events: MissionEvent[] = []
-  for (const mission of missions) {
-    const born = formatDay(mission.createdAt)
-    if (born && mission.createdAt)
-      events.push({
-        missionId: mission.id,
-        title: mission.title,
-        kind: 'criada',
-        at: mission.createdAt,
-        day: born
-      })
-    if (mission.status !== 'concluida') continue
-    const done = formatDay(mission.completedAt)
-    if (done && mission.completedAt)
-      events.push({
-        missionId: mission.id,
-        title: mission.title,
-        kind: 'integrada',
-        at: mission.completedAt,
-        day: done
-      })
-  }
-  return events.sort((a, b) => timeOf(b.at) - timeOf(a.at)).slice(0, Math.max(0, cap))
-}
-
-/* ---------- A OBRA, POR DIA (R38, 2026-08-24) ----------
-
-   O painel tinha DUAS seções contando a mesma coisa: "integradas" (as cinco
-   últimas missões concluídas) e "atividade recente" (a cronologia, onde as
-   mesmas missões apareciam de novo). Na foto da reprovação eram cinco fichas
-   repetindo cinco linhas. Ficou UMA: a cronologia agrupada pelo DIA do
-   carimbo — o mesmo dado, com a forma que uma obra tem de verdade. */
-
-export interface MissionDayGroup {
-  /** dd/mm/aaaa — a chave do grupo */
-  day: string
-  /** o dia como ele aparece na tela: o dia corrente se anuncia */
-  label: string
-  events: MissionEvent[]
-}
-
-/**
- * Agrupa os eventos JÁ ORDENADOS do `missionTimeline` por dia, preservando a
- * ordem (mais recente primeiro). `today` entra por parâmetro para o teste não
- * depender do relógio da máquina.
- */
-export function missionWorkDays(
-  events: readonly MissionEvent[],
-  today: string | null = formatDay(new Date().toISOString())
-): MissionDayGroup[] {
-  const groups: MissionDayGroup[] = []
-  for (const event of events) {
-    const last = groups[groups.length - 1]
-    if (last && last.day === event.day) {
-      last.events.push(event)
-      continue
-    }
-    groups.push({
-      day: event.day,
-      label: event.day === today ? `${event.day} — hoje` : event.day,
-      events: [event]
-    })
-  }
-  return groups
 }
 
 /* ---------- OS ESTADOS DA LANDING (R38, 2026-08-24) ----------
@@ -235,18 +137,139 @@ export function versionPercent(feitas: number, total: number): number {
   return Math.round((Math.min(Math.max(feitas, 0), total) / total) * 100)
 }
 
-/**
- * A cauda do LEDGER — a linha de texto que substitui os tiles no marco. Ela só
- * fala do que EXISTE: três zeros grandes não são informação, e "0 na fila" é
- * uma frase sobre nada.
- */
-export function ledgerTail(kpis: ProjectKpis): string {
-  const parts: string[] = []
-  if (kpis.emAndamento > 0) parts.push(`${kpis.emAndamento} em andamento`)
-  if (kpis.naFila > 0) parts.push(`${kpis.naFila} na fila ⇪`)
-  if (kpis.arquivadas > 0)
-    parts.push(`${kpis.arquivadas} ${kpis.arquivadas === 1 ? 'arquivada' : 'arquivadas'}`)
-  return parts.length > 0 ? parts.join(' · ') : 'nenhuma em andamento, na fila ou arquivada'
+export interface LandingHeadline {
+  title: string
+  /** ausente no marco: ali o título já nomeia a versão */
+  building?: string
+  progress?: { feitas: number; total: number }
+}
+
+export function landingHeadline(
+  missions: readonly Mission[],
+  versoes?: readonly VersionStats[]
+): LandingHeadline {
+  const marco = landingMilestone(missions, versoes)
+  if (marco)
+    return {
+      title: `${marco.name} pronta para lançar`,
+      progress: { feitas: marco.missoesFeitas, total: marco.missoesTotal }
+    }
+  const vivas = liveMissions(missions).length
+  const title = vivas > 0 ? `${missionCount(vivas)} em andamento` : 'Nenhuma missão em andamento'
+  const corrente = versoes?.find((v) => !v.lancada)
+  if (!corrente) return { title }
+  return {
+    title,
+    building: corrente.name,
+    ...(corrente.missoesTotal > 0
+      ? { progress: { feitas: corrente.missoesFeitas, total: corrente.missoesTotal } }
+      : {})
+  }
+}
+
+export function progressLabel(progress: { feitas: number; total: number }): string {
+  const noun = progress.total === 1 ? 'missão integrada' : 'missões integradas'
+  return `${progress.feitas} de ${progress.total} ${noun}`
+}
+
+export interface VersionLine {
+  version: VersionStats
+  ready: boolean
+  /** quem espera o dono primeiro, depois a mais nova */
+  live: Mission[]
+  /** da integração mais recente para a mais antiga */
+  done: Mission[]
+}
+
+export interface VersionWork {
+  lines: VersionLine[]
+  /** vivas que nenhuma linha aberta recebe: trabalho vivo nunca some do painel */
+  loose: Mission[]
+}
+
+const newestDone = (a: Mission, b: Mission): number =>
+  timeOf(b.completedAt) - timeOf(a.completedAt)
+
+export function versionWork(
+  missions: readonly Mission[],
+  versoes: readonly VersionStats[] | undefined,
+  versionLabelOf: (mission: Mission) => string | undefined,
+  waiting: (mission: Mission) => boolean
+): VersionWork {
+  const lines: VersionLine[] = (versoes ?? [])
+    .filter((v) => !v.lancada)
+    .map((version) => ({
+      version,
+      ready: version.missoesTotal > 0 && version.missoesFeitas === version.missoesTotal,
+      live: [],
+      done: []
+    }))
+  const byName = new Map(lines.map((line) => [line.version.name, line]))
+  const loose: Mission[] = []
+  for (const mission of missions) {
+    if (isPlanning(mission)) continue
+    const label = versionLabelOf(mission)
+    if (isLive(mission)) {
+      // a mesma régua do `versionPortrait`: viva sem carimbo integra na corrente
+      const host = label ? byName.get(label) : lines[0]
+      if (host) host.live.push(mission)
+      else loose.push(mission)
+      continue
+    }
+    const line = label ? byName.get(label) : undefined
+    if (mission.status === 'concluida' && line) line.done.push(mission)
+  }
+  const byUrgency = (a: Mission, b: Mission): number =>
+    Number(waiting(b)) - Number(waiting(a)) || timeOf(b.createdAt) - timeOf(a.createdAt)
+  for (const line of lines) {
+    line.live.sort(byUrgency)
+    line.done.sort(newestDone)
+  }
+  loose.sort(byUrgency)
+  return { lines, loose }
+}
+
+/** Planejamento nunca integra: mora num bloco próprio, fora das linhas de versão. */
+export function livePlanning(missions: readonly Mission[]): Mission[] {
+  return liveMissions(missions).filter(isPlanning)
+}
+
+export interface ReleasedLine {
+  name: string
+  onMain: boolean
+  /** da integração mais recente para a mais antiga */
+  titles: string[]
+}
+
+export const RELEASED_LINES_CAP = 4
+
+export function releasedLines(
+  missions: readonly Mission[],
+  versoes: readonly VersionStats[] | undefined,
+  versionLabelOf: (mission: Mission) => string | undefined,
+  versaoNaMain?: string,
+  cap: number = RELEASED_LINES_CAP
+): ReleasedLine[] {
+  // sem o retrato não dá para saber quais linhas seguem abertas
+  if (!versoes) return []
+  const abertas = new Set(versoes.filter((v) => !v.lancada).map((v) => v.name))
+  const groups = new Map<string, Mission[]>()
+  for (const mission of missions) {
+    if (mission.status !== 'concluida' || isPlanning(mission)) continue
+    // concluída sem carimbo não entra em linha nenhuma: escolher uma seria inventar
+    const name = versionLabelOf(mission)
+    if (!name || abertas.has(name)) continue
+    groups.set(name, [...(groups.get(name) ?? []), mission])
+  }
+  return [...groups.entries()]
+    .map(([name, list]) => ({ name, list: [...list].sort(newestDone) }))
+    .sort((a, b) => newestDone(a.list[0], b.list[0]))
+    .slice(0, Math.max(0, cap))
+    .map(({ name, list }) => ({
+      name,
+      onMain: name === versaoNaMain,
+      titles: list.map((mission) => mission.title)
+    }))
 }
 
 /* ---------- ATRIBUIÇÃO DE VERSÃO (ordem do dono, 2026-08-17) ----------
@@ -317,9 +340,9 @@ export function versionPortrait(
 
     const vivas = missions.filter(
       (m) =>
-        (m.status === 'ativa' || m.status === 'integrando') &&
+        isLive(m) &&
         // planejamento nunca integra em versão: fora da corrente e da conta
-        m.missionType !== 'planejamento' &&
+        !isPlanning(m) &&
         !feitas.has(m.id) &&
         (m.versionId === v.id || (!m.versionId && v.id === corrente))
     ).length
