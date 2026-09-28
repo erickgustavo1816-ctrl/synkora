@@ -11,11 +11,78 @@ import type {
   SynkoraApi,
   SynkoraSettings,
   FilePreviewResult,
-  FileTreeResult
+  FileTreeResult,
+  HistoryPaneConversation,
+  HistoryPaneLoadResult,
+  HistoryTranscriptMessage
 } from '../../preload/index'
 
 // Browser preview: the "Tamanho real" calibration lives only for this page.
 const previewCalibration = new Map<string, number>()
+
+/**
+ * AS CONVERSAS DO CHAT no preview (2026-09-28): três conversas sintéticas — uma
+ * recuperada da pasta da missão, uma deixada para trás pelo /new e a atual —
+ * para o leitor desenhar a navegação "conversa K de N". As falas dizem o que
+ * são: o preview do navegador não tem disco de CLI para ler.
+ */
+const PREVIEW_PANE_CONVERSATIONS: HistoryPaneConversation[] = [
+  {
+    sessionId: 'preview-conversation-1',
+    provider: 'claude',
+    current: false,
+    source: 'recovered',
+    updatedAt: '2026-09-20T15:40:00.000Z'
+  },
+  {
+    sessionId: 'preview-conversation-2',
+    provider: 'claude',
+    current: false,
+    source: 'chat',
+    updatedAt: '2026-09-27T10:05:00.000Z'
+  },
+  { sessionId: 'preview-conversation-3', provider: 'claude', current: true, source: 'chat' }
+]
+
+/** Mesma régua do main: sem id = a atual no começo; id da lista = aquela
+ *  conversa (as anteriores ancoradas no FIM); id fora da lista = recusa com a
+ *  receita. Uma página só — o preview não tem o que paginar. */
+function previewPaneHistory(paneId: string, sessionId?: string): HistoryPaneLoadResult {
+  const conversation =
+    sessionId === undefined
+      ? PREVIEW_PANE_CONVERSATIONS.find((entry) => entry.current)
+      : PREVIEW_PANE_CONVERSATIONS.find((entry) => entry.sessionId === sessionId)
+  if (!conversation) {
+    return { ok: false, paneId, error: 'essa conversa não é deste chat — reabra as conversas deste chat' }
+  }
+  const position = PREVIEW_PANE_CONVERSATIONS.indexOf(conversation) + 1
+  const messages: HistoryTranscriptMessage[] = [
+    {
+      id: `${conversation.sessionId}-user`,
+      cursor: 100,
+      role: 'user',
+      text: `fala sintética do preview — conversa ${position}`
+    },
+    {
+      id: `${conversation.sessionId}-assistant`,
+      cursor: 200,
+      role: 'assistant',
+      text: 'resposta sintética: o preview do navegador não lê históricos locais.'
+    }
+  ]
+  const anchor = conversation.current ? messages[0] : messages[messages.length - 1]
+  return {
+    ok: true,
+    paneId,
+    provider: conversation.provider,
+    sessionId: conversation.sessionId,
+    messages,
+    targetMessageId: anchor.id,
+    targetCursor: anchor.cursor,
+    hasMoreBefore: false,
+    hasMoreAfter: false
+  }
+}
 
 /**
  * Skills no preview de browser: um retrato REPRESENTATIVO do seed v3 (a lei
@@ -799,12 +866,13 @@ export function installDevMock(): void {
         selectionId,
         error: 'o preview do navegador não tem históricos locais'
       }),
-      // R24.2: a recusa nomeia a receita mesmo no mock — o preview não tem
-      // disco de CLI para ler, e dizer isso é melhor que um overlay vazio.
-      loadForPane: async (paneId) => ({
-        ok: false,
+      // R24.2 + 2026-09-28: o preview não tem disco de CLI; as conversas
+      // sintéticas acima deixam o leitor e a navegação desenháveis.
+      loadForPane: async (paneId, _page, sessionId) => previewPaneHistory(paneId, sessionId),
+      paneConversations: async (paneId) => ({
+        ok: true,
         paneId,
-        error: 'o preview do navegador não tem históricos locais — abra a conversa no app'
+        conversations: PREVIEW_PANE_CONVERSATIONS.map((conversation) => ({ ...conversation }))
       })
     },
     // Pane GUI (docs/GUI_PANE_CONTRACT.md): no preview de browser não há CLI —

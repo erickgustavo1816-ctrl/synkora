@@ -687,5 +687,8 @@ test('R24.2 — a rota por pane atravessa main e preload, e o índice normaliza 
   // Carona: o índice de bindings guarda o id CRU, sem o prefixo do codex —
   // sem isto o hit de codex nunca ganha paneId/canMount (bug latente de 2026-08-20).
   assert.match(ipc, /historySessionIdOf\(input\.sessionId\)/u)
-  assert.match(preload, /ipcRenderer\.invoke\('history:loadForPane', paneId, page\)/u)
+  // 2026-09-28: o 3º argumento escolhe UMA das conversas do chat.
+  assert.match(preload, /ipcRenderer\.invoke\('history:loadForPane', paneId, page, sessionId\)/u)
+  assert.match(ipc, /ipcMain\.handle\(\s*'history:paneConversations'/u)
+  assert.match(preload, /ipcRenderer\.invoke\('history:paneConversations', paneId\)/u)
 })

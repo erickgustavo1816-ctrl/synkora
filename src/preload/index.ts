@@ -82,6 +82,8 @@ import type {
 import type {
   HistoryLoadResult,
   HistoryPageRequest,
+  HistoryPaneConversation,
+  HistoryPaneConversationsResult,
   HistoryPaneLoadResult,
   HistorySearchInput,
   HistorySearchHit,
@@ -145,6 +147,8 @@ export type { FileActionResult, FileActionScope, FileActionTreeEntry, FileTreeSn
 export type {
   HistoryLoadResult,
   HistoryPageRequest,
+  HistoryPaneConversation,
+  HistoryPaneConversationsResult,
   HistoryPaneLoadResult,
   HistorySearchInput,
   HistorySearchHit,
@@ -1098,8 +1102,17 @@ const api = {
     /** A CONVERSA COMPLETA DESTE PANE (R24.2): sem busca e sem seleção opaca —
      *  o main resolve o arquivo pelo registro do pane. `page` ausente = a
      *  página do COMEÇO, que é o pedaço que o anel perdeu. */
-    loadForPane: (paneId: string, page?: HistoryPageRequest): Promise<HistoryPaneLoadResult> =>
-      ipcRenderer.invoke('history:loadForPane', paneId, page)
+    loadForPane: (
+      paneId: string,
+      page?: HistoryPageRequest,
+      sessionId?: string
+    ): Promise<HistoryPaneLoadResult> =>
+      ipcRenderer.invoke('history:loadForPane', paneId, page, sessionId),
+    /** As conversas deste chat (2026-09-28): a atual e as que o /new, a troca
+     *  de CLI ou de conta deixaram para trás. `loadForPane` só aceita um
+     *  `sessionId` que esteja nesta lista. */
+    paneConversations: (paneId: string): Promise<HistoryPaneConversationsResult> =>
+      ipcRenderer.invoke('history:paneConversations', paneId)
   },
   /** PANE GUI (Synkora 2.0, onda A — docs/GUI_PANE_CONTRACT.md): o chat que
    *  substitui o xterm. O motor é MaestroSession/CodexSession por pane, no

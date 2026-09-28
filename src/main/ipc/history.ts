@@ -1,15 +1,26 @@
 /** IPC da paleta: pesquisa e montagem segura de históricos locais. */
-import {  ipcMain, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron'
+import { app, ipcMain, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron'
 import { randomUUID } from 'crypto'
-import {  resolve } from 'path'
+import { readFile } from 'fs/promises'
+import { join, resolve } from 'path'
 import type { MainContext } from '../mainContext'
-import type { GuiSessionRegistry } from '../guiSessions'
+import type { GuiSessionRecord, GuiSessionRegistry } from '../guiSessions'
 import {
   guiMissionPaneId,
   guiPlanningPaneId,
   isGuiMissionPaneId,
   isGuiPlanningPaneId
 } from '../guiMissionContracts'
+import {
+  guiPaneConversationFor,
+  guiPaneConversations,
+  guiPastSessionsOf,
+  guiRecoveryWindow,
+  type GuiRecoveredConversation
+} from '../guiPastSessions'
+import { GUI_HELPERS_STORE_FILE } from '../guiDelegationWiring'
+import { isGuiHelperStoreDoc } from '../guiHelperSessions'
+import { missionWorktreeDescriptor } from '../worktree'
 import {
   historySessionIdOf,
   loadLocalHistoryTranscript,
@@ -21,13 +32,18 @@ import {
   type LocalHistoryLocator
 } from '../historySearch'
 import {
+  historyComparablePath,
+  listWorkspaceHistorySessions,
   loadLocalHistorySessionPage,
   locateHistorySessionFile
 } from '../historySessionReader'
 import type {
   HistoryLoadResult,
   HistoryPageRequest,
+  HistoryPaneConversation,
+  HistoryPaneConversationsResult,
   HistoryPaneLoadResult,
+  HistoryProvider,
   HistorySearchInput,
   HistorySearchResult
 } from '../../shared/commandPalette'
@@ -51,6 +67,11 @@ const SEARCH_QUERY_MAX = 240
 const SELECTION_TTL_MS = 10 * 60_000
 const SELECTION_CAP = 640
 const GUI_HELPER_INDEX_CAP = 8
+/** A varredura da recuperação custa disco: a paginação de uma conversa
+ *  recuperada reusa a lista por um instante em vez de varrer a cada clique. */
+const RECOVERY_CACHE_TTL_MS = 30_000
+const RECOVERY_CACHE_CAP = 32
+const PANE_SESSION_ID_MAX = 512
 
 function addBinding(
   bindings: Map<string, HistorySessionBinding>,
@@ -264,6 +285,105 @@ function historyIndex(
   return { workspaces, bindings: [...bindings.values()] }
 }
 
+// ————— AS CONVERSAS DE UM CHAT (2026-09-28) —————
+
+/** Onde a recuperação por pasta vale para ESTE pane: só o chat dev de uma
+ *  missão com worktree próprio. Planejamento/release rodam na raiz do projeto,
+ *  onde tudo se mistura — ali a busca do Ctrl+K continua sendo o caminho. */
+interface PaneRecoveryTarget {
+  projectId: string
+  cwd: string
+  since: number
+  until?: number
+}
+
+function paneRecoveryTarget(
+  ctx: MainContext,
+  paneId: string,
+  record: GuiSessionRecord | undefined
+): PaneRecoveryTarget | undefined {
+  for (const project of ctx.projects.list()) {
+    for (const mission of ctx.missions.list(project.id)) {
+      // Revisor e ajudantes numerados dividem o worktree com o dev: a lista
+      // deles repetiria as conversas do dev como se fossem suas.
+      if (guiMissionPaneId('dev', mission.id) !== paneId) continue
+      // Missão integrada perde o `worktree` no registro (a pasta sai com a
+      // branch), mas o caminho é determinístico (missionEngine: worktrees/
+      // <projeto>/mission-<id8>) — e é por ele que o CLI gravou as conversas.
+      // É justamente o chat somente leitura que mais precisa desta porta.
+      const worktree =
+        mission.worktree?.trim() ||
+        missionWorktreeDescriptor(join(app.getPath('userData'), 'worktrees', project.id), mission.id).dir
+      if (historyComparablePath(worktree) === historyComparablePath(project.path)) return undefined
+      const window = guiRecoveryWindow(mission.createdAt, record)
+      return window ? { projectId: project.id, cwd: worktree, ...window } : undefined
+    }
+  }
+  return undefined
+}
+
+/** Todo pane GUI que o índice conhece neste universo — o MESMO recorte de
+ *  `historyIndex`: planejamento, dev/revisor e ajudantes numerados. */
+function knownGuiPaneIds(ctx: MainContext, projectId: string): string[] {
+  const paneIds = [guiPlanningPaneId(projectId)]
+  for (const mission of ctx.missions.list(projectId)) {
+    paneIds.push(guiMissionPaneId('dev', mission.id), guiMissionPaneId('reviewer', mission.id))
+    for (let index = 1; index <= GUI_HELPER_INDEX_CAP; index += 1) {
+      paneIds.push(guiMissionPaneId('helper', mission.id, index))
+    }
+  }
+  return paneIds
+}
+
+/**
+ * Os ids de conversa dos AJUDANTES da delegação (userData/gui-helpers.json).
+ * Leitura SÓ de leitura: o `loadJsonStore` repara o arquivo ao ler, e uma
+ * regravação daqui poderia atropelar uma gravação mais nova do motor. Nenhum
+ * dos dois arquivos existe = nunca houve frota; existe e não lê = `undefined`,
+ * e quem chama falha FECHADO (sem recuperação, nunca ajudante como conversa).
+ */
+async function delegationHelperSessionIds(): Promise<Set<string> | undefined> {
+  const file = join(app.getPath('userData'), GUI_HELPERS_STORE_FILE)
+  let missing = 0
+  for (const candidate of [file, `${file}.bak`]) {
+    let text: string
+    try {
+      text = await readFile(candidate, 'utf8')
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException | undefined)?.code === 'ENOENT') missing += 1
+      continue
+    }
+    try {
+      const parsed: unknown = JSON.parse(text)
+      if (!isGuiHelperStoreDoc(parsed)) continue
+      const ids = new Set<string>()
+      for (const helper of parsed.helpers as unknown[]) {
+        const sessionId =
+          helper && typeof helper === 'object' ? (helper as { sessionId?: unknown }).sessionId : undefined
+        if (typeof sessionId === 'string' && sessionId.trim()) {
+          ids.add(historySessionIdOf(sessionId).toLowerCase())
+        }
+      }
+      return ids
+    } catch {
+      // tenta o backup
+    }
+  }
+  return missing === 2 ? new Set() : undefined
+}
+
+function paneSessionIdProblem(value: unknown): string | null {
+  if (value === undefined || value === null) return null
+  if (typeof value !== 'string' || !value.trim() || value.length > PANE_SESSION_ID_MAX) {
+    return 'conversa em formato inválido — reabra as conversas deste chat'
+  }
+  return null
+}
+
+function paneConversationsFailure(paneId: string, error: string): HistoryPaneConversationsResult {
+  return { ok: false, paneId, conversations: [], error }
+}
+
 function emptySearch(input: Partial<HistorySearchInput>, error?: string): HistorySearchResult {
   return {
     ok: !error,
@@ -306,6 +426,97 @@ export function registerHistoryIpc(ctx: MainContext, deps: HistoryIpcDeps): void
         controllers.delete(key)
       }
     })
+  }
+
+  const recoveryCache = new Map<
+    string,
+    { at: number; key: string; entries: GuiRecoveredConversation[] }
+  >()
+
+  /**
+   * As conversas RECUPERADAS deste pane (melhor esforço, nunca lança): as da
+   * pasta da missão, na janela do `guiRecoveryWindow`, menos tudo que se sabe
+   * ser de outro dono — os vínculos do índice (outros panes, maestro, PTYs),
+   * a corrente dos outros panes GUI e as conversas dos ajudantes.
+   */
+  const recoveredConversations = async (
+    paneId: string,
+    record: GuiSessionRecord | undefined
+  ): Promise<GuiRecoveredConversation[]> => {
+    try {
+      const target = paneRecoveryTarget(ctx, paneId, record)
+      if (!target) return []
+      const cacheKey = `${target.cwd}|${target.since}|${target.until ?? ''}`
+      const cached = recoveryCache.get(paneId)
+      if (cached && cached.key === cacheKey && Date.now() - cached.at < RECOVERY_CACHE_TTL_MS) {
+        return cached.entries
+      }
+      const excluded = await delegationHelperSessionIds()
+      if (!excluded) return []
+      for (const binding of historyIndex(ctx, deps.guiSessions, target.projectId).bindings) {
+        if (binding.paneId !== paneId) excluded.add(binding.sessionId.toLowerCase())
+      }
+      for (const otherPaneId of knownGuiPaneIds(ctx, target.projectId)) {
+        if (otherPaneId === paneId) continue
+        const other = deps.guiSessions.remembered(otherPaneId)
+        if (other?.sessionId) excluded.add(historySessionIdOf(other.sessionId).toLowerCase())
+        for (const past of guiPastSessionsOf(other?.pastSessions)) {
+          excluded.add(historySessionIdOf(past.sessionId).toLowerCase())
+        }
+      }
+      const live = deps.guiSessions.transcriptSourceOf(paneId)
+      const providers: HistoryProvider[] = ['claude', 'codex']
+      const lists = await Promise.all(
+        providers.map((provider) =>
+          listWorkspaceHistorySessions({
+            provider,
+            cwd: target.cwd,
+            since: target.since,
+            ...(target.until !== undefined ? { until: target.until } : {}),
+            configDirs: paneConfigDirs(
+              ctx,
+              provider,
+              live?.cli === provider ? live.configDir : undefined
+            )
+          })
+        )
+      )
+      const entries = lists
+        .flat()
+        .filter((session) => !excluded.has(session.sessionId.toLowerCase()))
+        .map((session) => ({
+          provider: session.provider,
+          sessionId: session.sessionId,
+          updatedAt: new Date(session.mtime).toISOString()
+        }))
+      recoveryCache.delete(paneId)
+      recoveryCache.set(paneId, { at: Date.now(), key: cacheKey, entries })
+      while (recoveryCache.size > RECOVERY_CACHE_CAP) {
+        const oldest = recoveryCache.keys().next().value
+        if (oldest === undefined) break
+        recoveryCache.delete(oldest)
+      }
+      return entries
+    } catch {
+      return []
+    }
+  }
+
+  /** A conversa pedida, SE ela for deste chat — a lista é recalculada aqui,
+   *  nunca aceita do renderer. A corrente do chat é barata e decide quase
+   *  tudo; o disco só é varrido quando o id é de uma conversa recuperada. */
+  const paneConversationOf = async (
+    paneId: string,
+    sessionId: string
+  ): Promise<HistoryPaneConversation | undefined> => {
+    const record = deps.guiSessions.remembered(paneId)
+    return (
+      guiPaneConversationFor(guiPaneConversations(record), sessionId) ??
+      guiPaneConversationFor(
+        guiPaneConversations(record, await recoveredConversations(paneId, record)),
+        sessionId
+      )
+    )
   }
 
   ipcMain.on('history:cancel', (event, requestId: string) => {
@@ -451,15 +662,47 @@ export function registerHistoryIpc(ctx: MainContext, deps: HistoryIpcDeps): void
   )
 
   /**
+   * AS CONVERSAS DESTE CHAT (2026-09-28): a corrente que o registro guarda
+   * (/new, troca de CLI, conta sem identidade), a atual por último e, no chat
+   * dev de missão, as recuperadas da pasta dela. É desta lista — recalculada
+   * no main — que o `history:loadForPane` aceita um `sessionId`.
+   */
+  ipcMain.handle(
+    'history:paneConversations',
+    async (event, paneId: unknown): Promise<HistoryPaneConversationsResult> => {
+      deps.assertAppRendererSender(event)
+      if (typeof paneId !== 'string' || !paneId || paneId.length > 256) {
+        return paneConversationsFailure('', 'pane sem identificador válido')
+      }
+      try {
+        const record = deps.guiSessions.remembered(paneId)
+        const recovered = await recoveredConversations(paneId, record)
+        return { ok: true, paneId, conversations: guiPaneConversations(record, recovered) }
+      } catch {
+        return paneConversationsFailure(
+          paneId,
+          'não consegui listar as conversas deste chat agora — feche e abra a conversa completa de novo'
+        )
+      }
+    }
+  )
+
+  /**
    * A CONVERSA COMPLETA DESTE PANE (R24.2). Não há busca aqui: o registro sabe
    * qual conversa é (provider + sessionId) e o disco tem o arquivo. A leitura
    * é EFÊMERA e passa pelas mesmas portas do `history:load` — contenção
    * revalidada, extrator fechado, redação e tetos por página. Nada é indexado
-   * em background: só acontece no clique do dono.
+   * em background: só acontece no clique do dono. Desde 2026-09-28 o terceiro
+   * argumento escolhe UMA das conversas do chat (`history:paneConversations`).
    */
   ipcMain.handle(
     'history:loadForPane',
-    async (event, paneId: unknown, page: unknown): Promise<HistoryPaneLoadResult> => {
+    async (
+      event,
+      paneId: unknown,
+      page: unknown,
+      requestedSessionId: unknown
+    ): Promise<HistoryPaneLoadResult> => {
       deps.assertAppRendererSender(event)
       if (typeof paneId !== 'string' || !paneId || paneId.length > 256) {
         return paneLoadFailure('', 'pane sem identificador válido')
@@ -468,27 +711,48 @@ export function registerHistoryIpc(ctx: MainContext, deps: HistoryIpcDeps): void
       if (page !== undefined && page !== null && !request) {
         return paneLoadFailure(paneId, 'faixa de leitura inválida — reabra a conversa completa')
       }
+      const sessionProblem = paneSessionIdProblem(requestedSessionId)
+      if (sessionProblem) return paneLoadFailure(paneId, sessionProblem)
       const remembered = deps.guiSessions.remembered(paneId)
       const live = deps.guiSessions.transcriptSourceOf(paneId)
-      const cli = live?.cli ?? remembered?.cli
-      if (!cli) {
-        return paneLoadFailure(
-          paneId,
-          'este chat ainda não tem conversa gravada — mande uma mensagem e tente de novo'
-        )
-      }
-      const sessionId = remembered?.sessionId?.trim()
-      if (!sessionId) {
-        return paneLoadFailure(
-          paneId,
-          'esta conversa ainda não recebeu um id do CLI — mande uma mensagem e tente de novo'
-        )
+      let cli: HistoryProvider | undefined
+      let sessionId: string | undefined
+      // Sem id pedido, a conversa é a ATUAL (o comportamento de sempre); com
+      // id, ele tem de estar na lista deste chat e o CLI é o DELA — um chat
+      // pode ter conversas dos dois CLIs.
+      let current = true
+      if (typeof requestedSessionId === 'string') {
+        const conversation = await paneConversationOf(paneId, requestedSessionId)
+        if (!conversation) {
+          return paneLoadFailure(
+            paneId,
+            'essa conversa não pertence a este chat — reabra as conversas deste chat'
+          )
+        }
+        cli = conversation.provider
+        sessionId = conversation.sessionId
+        current = conversation.current
+      } else {
+        cli = live?.cli ?? remembered?.cli
+        if (!cli) {
+          return paneLoadFailure(
+            paneId,
+            'este chat ainda não tem conversa gravada — mande uma mensagem e tente de novo'
+          )
+        }
+        sessionId = remembered?.sessionId?.trim()
+        if (!sessionId) {
+          return paneLoadFailure(
+            paneId,
+            'esta conversa ainda não recebeu um id do CLI — mande uma mensagem e tente de novo'
+          )
+        }
       }
       const cwds = [...(live?.cwd ? [live.cwd] : []), ...paneWorkspaceCwds(ctx, paneId)]
       const session = await locateHistorySessionFile({
         provider: cli,
         sessionId,
-        configDirs: paneConfigDirs(ctx, cli, live?.configDir),
+        configDirs: paneConfigDirs(ctx, cli, live?.cli === cli ? live.configDir : undefined),
         cwds
       })
       if (!session) {
@@ -503,8 +767,10 @@ export function registerHistoryIpc(ctx: MainContext, deps: HistoryIpcDeps): void
           'o arquivo dessa conversa não está mais num local permitido'
         )
       }
+      // Sem página: a conversa ATUAL abre no começo (o que o anel perdeu); uma
+      // ANTIGA abre no fim, que é onde ela encosta na seguinte.
       const result = await loadLocalHistorySessionPage(session, {
-        ...(request ? { page: request } : {})
+        ...(request ? { page: request } : current ? {} : { anchor: 'last' as const })
       })
       return { ...result, paneId }
     }

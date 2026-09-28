@@ -1,0 +1,130 @@
+/* ---- 2026-09-28: as conversas do chat na tela ----
+   O /new deixou de apagar o fio. Onde a conversa trocou, uma RÉGUA de largura
+   inteira com a frase no meio: é marco do fio, não fala — sem card, sem bolha,
+   sem cor em repouso. A forma diz o que ela é: duas réguas finas que cortam o
+   fio, diferente da nota de margem da poda (uma régua só, embaixo). */
+.gui-conversation-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin: 6px 0;
+  color: var(--ink-3);
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 1.45;
+  letter-spacing: 0.02em;
+}
+
+.gui-conversation-divider::before,
+.gui-conversation-divider::after {
+  content: '';
+  flex: 1 1 18px;
+  min-width: 18px;
+  border-top: 1px solid var(--gui-line-strong);
+}
+
+.gui-conversation-divider .gcd-label {
+  flex: 0 1 auto;
+  min-width: 0;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+/* A navegação do leitor: uma fileira sob o cabeçalho, no mesmo papel dele.
+   As setas são os botões de sempre do leitor (borda, papel de card); o meio é
+   texto — onde o dono está e de quando é a conversa. */
+.gui-history-nav {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 18px;
+  border-bottom: 1px solid var(--gui-line);
+  background: var(--paper);
+  font-family: var(--mono);
+}
+
+.gui-history-nav .ghn-step {
+  flex: none;
+  min-height: 26px;
+  padding: 0 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--ink-2);
+  font-family: var(--mono);
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+}
+
+.gui-history-nav .ghn-step:hover:not(:disabled),
+.gui-history-nav .ghn-step:focus-visible {
+  border-color: var(--accent);
+  color: var(--accent-deep);
+  outline: 2px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  outline-offset: 1px;
+}
+
+.gui-history-nav .ghn-step:disabled {
+  border-color: var(--line);
+  background: none;
+  color: var(--ink-3);
+  cursor: default;
+}
+
+.gui-history-nav .ghn-where {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: center;
+  gap: 2px 8px;
+  text-align: center;
+}
+
+.gui-history-nav .ghn-where b {
+  color: var(--ink);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.gui-history-nav .ghn-where small {
+  color: var(--ink-3);
+  font-size: 9.5px;
+}
+
+/* Conversa achada na pasta da missão: etiqueta de FORMA (moldura tracejada),
+   porque a autoria dela é palpite — nunca a mesma cara de uma do registro. */
+.gui-history-nav .ghn-tag {
+  padding: 0 6px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 4px;
+  color: var(--ink-2);
+  font-size: 9px;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+
+@media (max-width: 520px) {
+  .gui-history-nav {
+    padding-right: 12px;
+    padding-left: 12px;
+  }
+}
+
+@media (forced-colors: active) {
+  .gui-conversation-divider::before,
+  .gui-conversation-divider::after {
+    border-top-color: CanvasText;
+  }
+
+  .gui-history-nav .ghn-step:hover:not(:disabled),
+  .gui-history-nav .ghn-step:focus-visible {
+    border-color: Highlight;
+  }
+}

@@ -3481,7 +3481,7 @@ test('carga repara no disco um documento acima do teto global de panes', (t) => 
   assert.equal(repaired.transcripts['p-01'], undefined)
 })
 
-test('/clear troca o backend, apaga fio e resume; kill sozinho preserva até exclusão', (t) => {
+test('/clear troca o backend e o resume, preserva o fio acima do divisor; kill sozinho preserva até exclusão', (t) => {
   const root = mkdtempSync(join(tmpdir(), 'synkora-gui-clear-'))
   t.after(() => rmSync(root, { recursive: true, force: true }))
   const storeFile = join(root, 'gui-sessions.json')
@@ -3543,11 +3543,18 @@ test('/clear troca o backend, apaga fio e resume; kill sozinho preserva até exc
     'o listener montado recebe um marco posterior ao cursor antigo'
   )
   const cleared = gui.state(spawn.paneId)
-  assert.equal(cleared.events.some(({ evt }) => evt.type === 'user-message'), false)
-  assert.equal(cleared.events.some(({ evt }) => evt.type === 'text'), false)
+  const divider = cleared.events.findIndex(({ evt }) => evt.type === 'conversation-cleared')
+  assert.ok(cleared.events.slice(0, divider).some(({ evt }) => evt.type === 'user-message'))
+  assert.ok(cleared.events.slice(0, divider).some(({ evt }) => evt.type === 'text'))
+  assert.equal(cleared.events.slice(divider).some(({ evt }) => evt.type === 'user-message'), false)
+  assert.equal(cleared.events.slice(divider).some(({ evt }) => evt.type === 'text'), false)
   assert.equal(
     cleared.events.filter(({ evt }) => evt.type === 'conversation-cleared').length,
     1
+  )
+  assert.deepEqual(
+    gui.remembered(spawn.paneId).pastSessions.map(({ cli, sessionId }) => ({ cli, sessionId })),
+    [{ cli: 'claude', sessionId: 'session-1' }]
   )
 
   assert.equal(gui.kill(spawn.paneId).ok, true)
@@ -3667,17 +3674,32 @@ for (const cli of ['codex', 'claude']) {
       assert.deepEqual(spawns[1], { ...spawn, resumeSessionId: undefined, firstPrompt: undefined })
       assert.equal(gui.remembered(spawn.paneId).sessionId, 'session-2')
       assert.equal(gui.remembered(spawn.paneId).contextTokens, undefined)
+      // 2026-09-28: a conversa é outra, o FIO fica. O id antigo vai para a
+      // corrente que o leitor da conversa completa navega.
+      assert.deepEqual(
+        gui.remembered(spawn.paneId).pastSessions.map(({ cli: c, sessionId }) => ({ cli: c, sessionId })),
+        [{ cli, sessionId: 'session-1' }]
+      )
       sinks[0]({ type: 'text', text: 'resposta atrasada da conversa anterior' })
       const fresh = gui.state(spawn.paneId)
       assert.ok(fresh.cursor > cursor)
-      assert.equal(fresh.events.some(({ evt }) => ['text', 'user-message'].includes(evt.type)), false)
-      assert.ok(fresh.events.some(({ evt }) => evt.type === 'command-output' && /Ctrl\+K/u.test(evt.text)), 'explica como consultar o histórico')
+      const divider = fresh.events.findIndex(({ evt }) => evt.type === 'conversation-cleared')
+      assert.ok(divider > 0, 'o divisor fica DEPOIS das falas antigas')
+      assert.equal(fresh.events.filter(({ evt }) => evt.type === 'conversation-cleared').length, 1)
+      assert.ok(fresh.events.slice(0, divider).some(({ evt }) => evt.type === 'user-message'), 'a fala antiga continua no fio')
+      assert.ok(fresh.events.slice(0, divider).some(({ evt }) => evt.type === 'text' && evt.text === 'resposta antiga'))
+      assert.equal(fresh.events.slice(divider).some(({ evt }) => ['text', 'user-message'].includes(evt.type)), false)
+      assert.equal(fresh.events.some(({ evt }) => evt.type === 'text' && /atrasada/u.test(evt.text)), false, 'a geração morta não fala')
+      assert.equal(fresh.events.some(({ evt }) => evt.type === 'command-output' && /Ctrl\+K/u.test(evt.text)), false, 'o divisor é a notícia — sem nota extra')
       assert.equal(gui.send(spawn.paneId, 'continue pelo arquivo', 'fresh-message').ok, true)
       assert.deepEqual(messages, [guiBriefedPrompt('briefing inicial antigo', 'assunto antigo'), 'continue pelo arquivo'])
       assert.equal(readFileSync(projectFile, 'utf8'), 'trabalho preservado')
       const reopened = new GuiSessionRegistry({ push: () => undefined, systemPromptFile: () => undefined, storeFile })
       assert.equal(reopened.remembered(spawn.paneId).sessionId, 'session-2')
-      assert.equal(reopened.state(spawn.paneId).events.some(({ evt }) => evt.type === 'text'), false)
+      assert.deepEqual(reopened.remembered(spawn.paneId).pastSessions.map(({ sessionId }) => sessionId), ['session-1'])
+      const replay = reopened.state(spawn.paneId).events
+      const replayDivider = replay.findIndex(({ evt }) => evt.type === 'conversation-cleared')
+      assert.ok(replay.slice(0, replayDivider).some(({ evt }) => evt.type === 'text'), 'o disco guarda o fio com o divisor')
     })
   }
 }
@@ -4348,11 +4370,15 @@ test('seat sem identidade limpa conversa e executor, mas preserva a permissão',
     model: 'opus',
     effort: 'high'
   }
-  assert.deepEqual(guiSessionWithoutIdentity(remembered), {
+  const endedAt = '2026-09-28T12:00:00.000Z'
+  assert.deepEqual(guiSessionWithoutIdentity(remembered, endedAt), {
     cli: 'claude',
     projectId: 'proj',
     updatedAt: '2026-08-13T00:00:00.000Z',
-    permissionMode: 'acceptEdits'
+    permissionMode: 'acceptEdits',
+    // 2026-09-28: sai do resume, não da história.
+    pastSessions: [{ cli: 'claude', sessionId: 'sessao-do-seat-removido', endedAt }],
+    pastSessionsSince: endedAt
   })
   assert.deepEqual(remembered, {
     sessionId: 'sessao-do-seat-removido',
@@ -4375,13 +4401,16 @@ test('transplante falho apaga só o resume e preserva escolhas do pane', () => {
     model: 'gpt-5.6',
     effort: 'high'
   }
-  assert.deepEqual(guiSessionWithoutResume(remembered), {
+  const endedAt = '2026-09-28T12:00:00.000Z'
+  assert.deepEqual(guiSessionWithoutResume(remembered, endedAt), {
     cli: 'codex',
     projectId: 'proj',
     updatedAt: '2026-08-13T00:00:00.000Z',
     permissionMode: 'plan',
     model: 'gpt-5.6',
-    effort: 'high'
+    effort: 'high',
+    pastSessions: [{ cli: 'codex', sessionId: 'sess-antiga', endedAt }],
+    pastSessionsSince: endedAt
   })
   assert.equal(remembered.sessionId, 'sess-antiga', 'a transformação não muta o registro')
 })

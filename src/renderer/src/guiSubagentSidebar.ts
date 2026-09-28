@@ -470,7 +470,21 @@ function childrenFor(
 export function guiSubagentSidebarEntries(
   items: readonly GuiItem[]
 ): GuiSubagentSidebarEntry[] {
-  const tools = items.filter((item): item is GuiToolItem => item.kind === 'tool')
+  // A FROTA É DA CONVERSA ATUAL (2026-09-28): o /new deixou de apagar o fio,
+  // mas a lateral continua mostrando só quem trabalha para a conversa que o
+  // agente lembra — a que começa depois do ÚLTIMO divisor. Varredura repetida
+  // de `guiConversationDivider.ts` de propósito: este módulo roda sob o
+  // type-stripping do node, que não resolve import de VALOR de irmão.
+  let start = 0
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    if (items[index].kind === 'divider') {
+      start = index + 1
+      break
+    }
+  }
+  const tools = items
+    .slice(start)
+    .filter((item): item is GuiToolItem => item.kind === 'tool')
   const childParentIds = new Set(
     tools.map((item) => item.parentToolUseId).filter((value): value is string => Boolean(value))
   )

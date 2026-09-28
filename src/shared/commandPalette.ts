@@ -86,6 +86,31 @@ export interface HistoryPageRequest {
   after?: number
 }
 
+/**
+ * AS CONVERSAS DE UM CHAT (2026-09-28, pedido do dono: "ver o histórico de
+ * todas as conversas"). Um pane troca de conversa no /new, /reset, /clear, na
+ * troca de CLI ou de conta; o registro guarda o id de cada uma que ficou para
+ * trás. `recovered` = conversa achada na pasta da missão para chats zerados
+ * antes deste registro existir (melhor esforço, sem prova de autoria).
+ */
+export interface HistoryPaneConversation {
+  sessionId: string
+  provider: HistoryProvider
+  /** A conversa que o chat retoma hoje (no máximo uma). */
+  current: boolean
+  source: 'chat' | 'recovered'
+  /** ISO: quando ela deixou de ser a atual (chat) ou a última escrita no disco (recuperada). */
+  updatedAt?: string
+}
+
+export interface HistoryPaneConversationsResult {
+  ok: boolean
+  paneId: string
+  /** Da mais antiga para a mais nova; a atual, se existir, é a última. */
+  conversations: HistoryPaneConversation[]
+  error?: string
+}
+
 export interface HistoryPaneLoadResult {
   ok: boolean
   paneId: string

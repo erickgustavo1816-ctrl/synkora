@@ -4375,10 +4375,16 @@ test('R24.1 — a linha-verdade do topo só existe com poda e nomeia a receita',
   assert.match(store, /prunedEvents: number/u)
   assert.match(store, /prunedEvents: 0/u, 'o pane vazio nasce sem poda')
   assert.match(store, /case 'history-pruned':/u)
-  // A linha aparece SÓ com poda — e o pane somente-leitura também a mostra.
-  assert.match(pane, /gui\.prunedEvents > 0 &&/u)
-  assert.match(pane, /guiPrunedNoticeText\(gui\.prunedEvents\)/u)
-  assert.match(pane, /ver conversa completa/u)
+  // A linha aparece com poda — e o pane somente-leitura também a mostra.
+  // 2026-09-28: a régua mudou de casa (`guiThreadTopLine`, que também acende
+  // a linha quando o fio começa no divisor do /new) e o desenho virou peça
+  // própria; a poda continua falando com o mesmo texto e a mesma receita.
+  const reader = readFileSync(new URL('../src/renderer/src/guiHistoryReader.ts', import.meta.url), 'utf8')
+  assert.match(reader, /prunedEvents > 0/u)
+  assert.match(reader, /guiPrunedNoticeText\(prunedEvents\)/u)
+  assert.match(reader, /ver conversa completa/u)
+  assert.match(pane, /historyTopLine && \(/u)
+  assert.match(pane, /<GuiThreadHistoryLine/u)
   assert.match(css, /\.gui-thread-pruned\b/u)
 })
 
@@ -4408,8 +4414,11 @@ test('R24.3 — a paginação junta páginas sem duplicar e pede a faixa pelo cu
   assert.match(preload, /loadForPane:/u)
   assert.match(store, /appendGuiHistoryPage:/u)
   assert.match(store, /hasMoreBefore\?: boolean/u)
-  // O leitor abre pelo MESMO alvo da paleta — nenhum overlay novo.
-  assert.match(pane, /showGuiHistoryTarget\(/u)
+  // O leitor abre pelo MESMO alvo da paleta — nenhum overlay novo. Desde
+  // 2026-09-28 os gestos do leitor moram no hook do pane.
+  const hook = readFileSync(new URL('../src/renderer/src/useGuiConversationHistory.ts', import.meta.url), 'utf8')
+  assert.match(pane, /useGuiConversationHistory\(/u)
+  assert.match(hook, /showGuiHistoryTarget\(/u)
   assert.match(pane, /carregar mais antigas/u)
   assert.match(pane, /carregar mais novas/u)
 })

@@ -129,6 +129,10 @@ export function guiAwaitingGoDecision(
   if (gate.status !== 'idle' || gate.perm || gate.stream || gate.awaitingCard) return false
   for (let i = items.length - 1; i >= 0; i -= 1) {
     const item = items[i]
+    // O DIVISOR do /new (2026-09-28) encerra a varredura: a pergunta acima
+    // dele é de uma conversa que o agente não lembra, e "aprovar" mandaria a
+    // frase fabricada para quem nunca perguntou nada.
+    if (item.kind === 'divider') return false
     if (item.kind === 'user') return false
     if (item.kind === 'assistant') {
       const text = item.text ?? ''

@@ -17,7 +17,8 @@
  * módulo é `historySearch.ts`, de onde vêm o extrator fechado, a redação e o
  * orçamento. Aqui não existe leitura nova de disco fora dessas portas.
  */
-import { join } from 'path'
+import { promises as fs } from 'fs'
+import { join, resolve } from 'path'
 import {
   claudeSlug,
   codexDateDirectories,
@@ -240,5 +241,241 @@ export async function loadLocalHistorySessionPage(
     truncated: truncated || hasMoreBefore || hasMoreAfter,
     hasMoreBefore,
     hasMoreAfter
+  }
+}
+
+// ————— RECUPERAÇÃO POR PASTA (2026-09-28) —————
+//
+// Chats zerados ANTES de o registro guardar a corrente de conversas
+// (`pastSessions`) perderam o id das conversas antigas. O que sobra é o disco:
+// o CLI grava cada conversa pela pasta de trabalho, e a missão tem um worktree
+// só dela. Esta listagem é o melhor esforço SEM prova de autoria — quem chama
+// (history.ts) tira dela tudo que se sabe ser de outro pane ou de um ajudante,
+// e a UI a rotula como recuperada. Nunca lança: falha = lista vazia.
+
+export interface HistoryWorkspaceSessionLimits {
+  /** Arquivos avaliados (stat + cabeçalho do codex). */
+  maxFiles: number
+  /** Bytes lidos de cabeçalhos `session_meta`. */
+  maxBytes: number
+  maxMs: number
+  /** Conversas devolvidas (as mais NOVAS ficam). */
+  maxResults: number
+  /** Teto da PRIMEIRA linha de um rollout (o session_meta real tem ~22 KB). */
+  maxMetaBytes: number
+}
+
+export const HISTORY_WORKSPACE_SESSION_LIMITS: Readonly<HistoryWorkspaceSessionLimits> = {
+  maxFiles: 400,
+  maxBytes: 16 * 1024 * 1024,
+  maxMs: 1_200,
+  maxResults: 60,
+  maxMetaBytes: 256 * 1024
+}
+
+export interface HistoryWorkspaceSessionQuery {
+  provider: HistoryProvider
+  /** A pasta de trabalho (o worktree da missão). */
+  cwd: string
+  /** Epoch ms: só arquivos escritos a partir daqui (mtime >= since). */
+  since: number
+  /** Epoch ms, exclusivo: só arquivos escritos antes daqui. */
+  until?: number
+  configDirs: readonly string[]
+  limits?: Partial<HistoryWorkspaceSessionLimits>
+  signal?: AbortSignal
+}
+
+export interface HistoryWorkspaceSession {
+  provider: HistoryProvider
+  /** Na forma do DISCO (claude: nome do arquivo; codex: o uuid). */
+  sessionId: string
+  file: string
+  configDir: string
+  mtime: number
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000
+const WORKSPACE_DIR_ENTRY_CAP = 2_048
+
+function workspaceLimitsOf(
+  input?: Partial<HistoryWorkspaceSessionLimits>
+): HistoryWorkspaceSessionLimits {
+  const positive = (value: number | undefined, fallback: number): number =>
+    Number.isSafeInteger(value) && (value as number) > 0 ? (value as number) : fallback
+  const base = HISTORY_WORKSPACE_SESSION_LIMITS
+  return {
+    maxFiles: positive(input?.maxFiles, base.maxFiles),
+    maxBytes: positive(input?.maxBytes, base.maxBytes),
+    maxMs: positive(input?.maxMs, base.maxMs),
+    maxResults: positive(input?.maxResults, base.maxResults),
+    maxMetaBytes: positive(input?.maxMetaBytes, base.maxMetaBytes)
+  }
+}
+
+/** Caminho comparável: separador único, sem barra final; no Windows a caixa
+ *  não distingue pastas (o session_meta grava o cwd como o processo o viu). */
+export function historyComparablePath(value: string): string {
+  const normalized = resolve(value).replace(/[\\/]+/gu, '/').replace(/\/+$/u, '')
+  return process.platform === 'win32' ? normalized.toLowerCase() : normalized
+}
+
+function exhausted(budget: SearchBudget): boolean {
+  return (
+    Boolean(budget.signal?.aborted) ||
+    Date.now() >= budget.deadline ||
+    budget.scannedFiles >= budget.limits.maxFiles ||
+    budget.scannedBytes >= budget.limits.maxBytes
+  )
+}
+
+function plainObject(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined
+}
+
+/**
+ * O CABEÇALHO de um rollout do codex: só a primeira linha, com teto de bytes.
+ * Mesmos sinais estruturais de `codexMeta` (historySearch.ts), que não é
+ * exportado — thread de subagente nativo não é conversa de chat nenhum.
+ */
+async function codexRolloutHeader(
+  file: string,
+  budget: SearchBudget,
+  maxMetaBytes: number
+): Promise<{ cwd: string; subagent: boolean } | undefined> {
+  const stat = await safeRegularFile(file)
+  if (!stat) return undefined
+  const length = Math.min(stat.size, maxMetaBytes, budget.limits.maxBytes - budget.scannedBytes)
+  if (length <= 0) return undefined
+  let handle: import('fs/promises').FileHandle | undefined
+  try {
+    handle = await fs.open(file, 'r')
+    const data = Buffer.alloc(length)
+    const { bytesRead } = await handle.read(data, 0, length, 0)
+    budget.scannedBytes += bytesRead
+    const view = data.subarray(0, bytesRead)
+    const newline = view.indexOf(0x0a)
+    // Cabeçalho maior que o teto é irreconhecível: falha fechado.
+    if (newline < 0 && bytesRead < stat.size) return undefined
+    const line = view.subarray(0, newline < 0 ? view.length : newline).toString('utf8')
+    const entry = plainObject(JSON.parse(line) as unknown)
+    const payload = plainObject(entry?.['payload'])
+    if (entry?.['type'] !== 'session_meta' || !payload) return undefined
+    const cwd = payload['cwd']
+    if (typeof cwd !== 'string' || !cwd.trim() || cwd.length > 4096) return undefined
+    const source = plainObject(payload['source'])
+    const threadSource =
+      typeof payload['thread_source'] === 'string' ? payload['thread_source'].toLowerCase() : ''
+    const subagent =
+      threadSource === 'subagent' ||
+      Boolean(source && Object.prototype.hasOwnProperty.call(source, 'subagent')) ||
+      Boolean(
+        payload['parent_thread_id'] &&
+          payload['id'] &&
+          payload['session_id'] &&
+          payload['id'] !== payload['session_id']
+      )
+    return { cwd, subagent }
+  } catch {
+    return undefined
+  } finally {
+    await handle?.close().catch(() => undefined)
+  }
+}
+
+/** `.../sessions/AAAA/MM/DD` → meia-noite UTC daquele dia (undefined = não é). */
+function codexDirectoryDay(dir: string): number | undefined {
+  const match = dir.replace(/[\\/]+/gu, '/').match(/\/(\d{4})\/(\d{2})\/(\d{2})$/u)
+  if (!match) return undefined
+  const day = Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]))
+  return Number.isFinite(day) ? day : undefined
+}
+
+/**
+ * As conversas de UM CLI cuja pasta de trabalho é `cwd` e que foram escritas
+ * dentro da janela [since, until). Cópias do mesmo id em contas diferentes
+ * (transplante de seat) viram uma só: a mais nova.
+ */
+export async function listWorkspaceHistorySessions(
+  query: HistoryWorkspaceSessionQuery
+): Promise<HistoryWorkspaceSession[]> {
+  try {
+    if (!query.cwd?.trim() || !Number.isFinite(query.since)) return []
+    const limits = workspaceLimitsOf(query.limits)
+    const budget: SearchBudget = {
+      limits: { ...limitsOf(), maxFiles: limits.maxFiles, maxBytes: limits.maxBytes },
+      deadline: Date.now() + limits.maxMs,
+      ...(query.signal ? { signal: query.signal } : {}),
+      scannedFiles: 0,
+      scannedBytes: 0,
+      softTruncated: false
+    }
+    const until = query.until !== undefined && Number.isFinite(query.until) ? query.until : undefined
+    const inWindow = (mtime: number): boolean =>
+      mtime >= query.since && (until === undefined || mtime < until)
+    const found = new Map<string, HistoryWorkspaceSession>()
+    const consider = (session: HistoryWorkspaceSession): void => {
+      const key = session.sessionId.toLowerCase()
+      const previous = found.get(key)
+      if (!previous || previous.mtime < session.mtime) found.set(key, session)
+    }
+    const target = historyComparablePath(query.cwd)
+    const seen = new Set<string>()
+
+    for (const configDir of query.configDirs) {
+      if (!configDir?.trim() || exhausted(budget)) continue
+      const dirKey = historyComparablePath(configDir)
+      if (seen.has(dirKey)) continue
+      seen.add(dirKey)
+
+      if (query.provider === 'claude') {
+        // O caminho do claude É o cwd: `<configDir>/projects/<slug(cwd)>/`.
+        const dir = join(configDir, 'projects', claudeSlug(query.cwd))
+        for (const entry of await safeDirectoryEntries(dir, budget, WORKSPACE_DIR_ENTRY_CAP)) {
+          if (exhausted(budget)) break
+          if (!entry.isFile() || !entry.name.endsWith('.jsonl')) continue
+          const sessionId = safeProviderId(entry.name.slice(0, -'.jsonl'.length))
+          if (!sessionId) continue
+          budget.scannedFiles += 1
+          const file = join(dir, entry.name)
+          const stat = await safeRegularFile(file)
+          if (!stat || !inWindow(stat.mtime)) continue
+          consider({ provider: 'claude', sessionId, file, configDir, mtime: stat.mtime })
+        }
+        continue
+      }
+
+      // Codex: o rollout mora em `sessions/AAAA/MM/DD/`. O dia da pasta é o
+      // LOCAL de quem gravou — folga de um dia de cada lado cobre o fuso, e o
+      // mtime decide o resto.
+      for (const dir of await codexDateDirectories(configDir, budget)) {
+        if (exhausted(budget)) break
+        const day = codexDirectoryDay(dir)
+        if (day === undefined || day + 2 * DAY_MS < query.since) continue
+        if (until !== undefined && day - DAY_MS >= until) continue
+        for (const entry of await safeDirectoryEntries(dir, budget, CODEX_DIR_ENTRY_CAP)) {
+          if (exhausted(budget)) break
+          if (!entry.isFile() || !entry.name.startsWith('rollout-') || !entry.name.endsWith('.jsonl'))
+            continue
+          const sessionId = safeProviderId(sessionIdFromCodexFilename(entry.name))
+          if (!sessionId) continue
+          budget.scannedFiles += 1
+          const file = join(dir, entry.name)
+          const stat = await safeRegularFile(file)
+          if (!stat || !inWindow(stat.mtime)) continue
+          const header = await codexRolloutHeader(file, budget, limits.maxMetaBytes)
+          if (!header || header.subagent || historyComparablePath(header.cwd) !== target) continue
+          consider({ provider: 'codex', sessionId, file, configDir, mtime: stat.mtime })
+        }
+      }
+    }
+
+    return [...found.values()]
+      .sort((a, b) => a.mtime - b.mtime || a.sessionId.localeCompare(b.sessionId))
+      .slice(-limits.maxResults)
+  } catch {
+    return []
   }
 }

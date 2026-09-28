@@ -27,11 +27,11 @@ import { createHash, randomUUID } from 'node:crypto'
 import { CodexSession } from './codexSession'
 import { codexAsyncQuestionAnswer } from './codexAsyncQuestions'
 import {
-  GUI_NEW_CONVERSATION_NOTE,
   GUI_NEW_CONVERSATION_USAGE,
   routeGuiConversationCommand,
   withGuiConversationCommands
 } from './guiConversationCommands'
+import { guiPastSessionFields, type GuiPastSession } from './guiPastSessions'
 import { MaestroSession, type SessionEvent } from './maestroSession'
 import { GUI_SKILL_RELOAD_TTL_MS } from './guiClaudeSkillReload'
 import { CLAUDE_PUBLIC_PROGRESS_STYLE } from './guiClaudePublicProgress'
@@ -846,6 +846,11 @@ export class GuiEventRing {
     // único delta acumulado. Sem esta compactação, uma resposta longa expulsava
     // turnos inteiros do histórico de 500 eventos antes mesmo de terminar.
     const event = guiEventRecord(evt)
+    // O divisor do /new encerra o ESTADO da conversa anterior também quando
+    // chega pela hidratação do disco: sem isto, um pedido pendente gravado
+    // antes dele voltaria (o snapshot põe pendências no FIM) como se fosse da
+    // conversa nova.
+    if (event?.['type'] === 'conversation-cleared') this.beginNewConversation()
     const previous = this.items.at(-1)
     const previousEvent = previous ? guiEventRecord(previous.evt) : null
     if (event?.['type'] === 'thinking' && previous?.seq === seq - 1 &&
@@ -999,11 +1004,41 @@ export class GuiEventRing {
     this.bytes = 0
     this.stickyBytes = 0
     this.interactionBytes = 0
-    // A conversa é OUTRA (é isso que o /clear significa): a poda da anterior
-    // não pode continuar dizendo que o começo desta saiu da tela.
+    // Anel zerado é fio zerado: a poda de antes não pode continuar dizendo
+    // que o começo de um fio vazio saiu da tela.
     this.evicted = 0
     if (!preserveCursor) this.nextSeq = 0
   }
+
+  /**
+   * /new, /reset e /clear (2026-09-28): a CONVERSA é outra, o FIO fica. O dono
+   * pediu para ver o histórico de todas as conversas do chat, então as falas
+   * antigas continuam no anel (e a poda, o cursor e o `evicted` seguem sendo
+   * os do fio). Sai só o que é ESTADO da conversa que acabou: metadados
+   * sticky (init/ready/contexto — o processo novo anuncia os dele) e pedidos
+   * sem resposta, que ninguém mais pode responder. O `conversation-cleared`
+   * que o chamador empurra logo depois é o divisor persistido.
+   */
+  beginNewConversation(): void {
+    this.sticky.clear()
+    this.interactions.clear()
+    this.stickyBytes = 0
+    this.interactionBytes = 0
+  }
+}
+
+/**
+ * Os eventos da CONVERSA ATUAL de um fio: tudo depois do último
+ * `conversation-cleared` (o divisor do /new). Todo estado derivado do anel —
+ * tool de integração pendente, pendências do progresso — nasce daqui: o fio
+ * guarda as conversas antigas para o dono LER, nunca para o motor herdar.
+ */
+export function eventsSinceConversationStart<T>(events: readonly T[]): T[] {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    if (guiEventRecord(events[index])?.['type'] === 'conversation-cleared')
+      return events.slice(index + 1)
+  }
+  return [...events]
 }
 
 /** Última medição canônica disponível no fio salvo. O anel já retém init e
@@ -1090,6 +1125,16 @@ export interface GuiSessionRecord {
   /** Recibos duráveis das entregas da fila. O TTL é maior que a validade do
    * envelope, então um ACK perdido nunca volta a executar após replay/evicção. */
   queuedDeliveryReceipts?: Array<{ id: string; deliveredAt: string }>
+  /**
+   * AS CONVERSAS QUE ESTE CHAT DEIXOU PARA TRÁS (2026-09-28): todo caminho que
+   * troca ou apaga o `sessionId` arquiva o anterior aqui (guiPastSessions.ts),
+   * e é por elas que o leitor da conversa completa navega. Da mais antiga para
+   * a mais nova; nunca contém a atual.
+   */
+  pastSessions?: GuiPastSession[]
+  /** ISO: desde quando toda troca de conversa deste pane é registrada. Antes
+   *  disso, só a recuperação por pasta sabe algo (history.ts). */
+  pastSessionsSince?: string
 }
 
 export interface GuiContextUsageSnapshot {
@@ -1270,9 +1315,24 @@ export function guiDelegationDefaultsOf(
 /**
  * Um transplante de conversa que falhou invalida somente o endereço de
  * resume. As escolhas do pane continuam úteis quando ele recomeçar.
+ *
+ * O endereço sai do RESUME, não da história (2026-09-28): o id vai para a
+ * corrente `pastSessions`, que é por onde o dono ainda lê aquela conversa.
  */
-export function guiSessionWithoutResume(record: GuiSessionRecord): GuiSessionRecord {
+export function guiSessionWithoutResume(
+  record: GuiSessionRecord,
+  endedAt = new Date().toISOString()
+): GuiSessionRecord {
   const next = { ...record }
+  const chain = guiPastSessionFields(
+    record,
+    record.sessionId ? { cli: record.cli, sessionId: record.sessionId } : undefined,
+    undefined,
+    endedAt
+  )
+  delete next.pastSessions
+  if (chain.pastSessions) next.pastSessions = chain.pastSessions
+  next.pastSessionsSince = chain.pastSessionsSince
   delete next.sessionId
   delete next.contextTokens
   delete next.contextWindow
@@ -1294,8 +1354,11 @@ export function guiSessionWithoutResume(record: GuiSessionRecord): GuiSessionRec
  * dependeu do CLI deste pane. O dono pode ter carimbado `gpt-*` num chat claude
  * de propósito — apagá-lo aqui trocaria a escolha dele por uma dedução nossa.
  */
-export function guiSessionWithoutIdentity(record: GuiSessionRecord): GuiSessionRecord {
-  const next = guiSessionWithoutResume(record)
+export function guiSessionWithoutIdentity(
+  record: GuiSessionRecord,
+  endedAt = new Date().toISOString()
+): GuiSessionRecord {
+  const next = guiSessionWithoutResume(record, endedAt)
   delete next.model
   delete next.effort
   return next
@@ -2054,7 +2117,12 @@ export class GuiSessionRegistry {
     }
 
     const ring = replayRing ?? new GuiEventRing()
-    this.progressTracker.open(spawn, replayRing?.snapshot())
+    // Só a conversa ATUAL do fio: pendência de uma conversa que o /new já
+    // encerrou nunca pode reabrir como "esperando o dono".
+    this.progressTracker.open(
+      spawn,
+      replayRing ? eventsSinceConversationStart(replayRing.snapshot()) : undefined
+    )
     this.notifyProgressChange()
     // Vale já DURANTE o construtor da sessão (um 'fatal' síncrono é captado
     // antes de a entrada existir no Map).
@@ -2421,10 +2489,21 @@ export class GuiSessionRegistry {
       // "trabalhando" seria a lateral mentindo. O motor já cancelou a frota no
       // teardown, mas ali o sink desta geração ainda não existia: o reparo
       // honesto é aqui, no anel, uma vez por nascimento.
-      for (const cancellation of guiOrphanHelperCancellations(
-        replayRing.snapshot(),
-        current ? 'a conversa foi reaberta' : 'o app fechou'
-      )) {
+      // O /new mantém o fio (2026-09-28): card aberto ACIMA do divisor é de
+      // uma conversa que o dono encerrou, e o motivo tem de dizer isso — não
+      // "o app fechou".
+      const replay = replayRing.snapshot()
+      const currentConversation = eventsSinceConversationStart(replay)
+      for (const cancellation of [
+        ...guiOrphanHelperCancellations(
+          replay.slice(0, replay.length - currentConversation.length),
+          'o chat começou outra conversa'
+        ),
+        ...guiOrphanHelperCancellations(
+          currentConversation,
+          current ? 'a conversa foi reaberta' : 'o app fechou'
+        )
+      ]) {
         sink(cancellation)
       }
     }
@@ -4059,7 +4138,9 @@ export class GuiSessionRegistry {
     }
     this.integrationReply.arm(
       generation,
-      pendingIntegrationTool(events.filter(isGuiPersistedEvent)),
+      // O fio guarda as conversas anteriores ao /new: um `integration_run` sem
+      // resposta de lá é história, não a chamada que esta resposta fecha.
+      pendingIntegrationTool(eventsSinceConversationStart(events).filter(isGuiPersistedEvent)),
       text,
       emit,
       finish,
@@ -4258,8 +4339,10 @@ export class GuiSessionRegistry {
   }
 
   /** /new, /new chat, /reset e /clear trocam deliberadamente a conversa. O cursor
-   *  segue monotônico para o listener já montado, mas o fio e o resume antigos
-   *  saem juntos antes de o processo novo nascer. */
+   *  segue monotônico para o listener já montado; o resume antigo sai (e vai
+   *  para a corrente `pastSessions`), mas o FIO fica (2026-09-28): as falas
+   *  antigas continuam na tela acima do divisor `conversation-cleared`, que o
+   *  renderer desenha com o aviso de que o agente não lembra do que está acima. */
   private clearConversation(entry: GuiPaneEntry): GuiResult {
     const paneId = entry.spawn.paneId
     const spawn: GuiPaneSpawn = {
@@ -4275,14 +4358,14 @@ export class GuiSessionRegistry {
       }
     }
     entry.flushPendingTerminal?.()
-    entry.ring.clear(true)
-    // O checkpoint grava numa única fotografia o fio vazio E a identidade sem
-    // sessionId. Ao vivo, o mesmo marco remove o /clear otimista do composer.
+    entry.ring.beginNewConversation()
+    // O checkpoint grava numa única fotografia o fio com o divisor E a
+    // identidade sem sessionId. Ao vivo, o mesmo marco remove o /clear
+    // otimista do composer. A nota de "conversa nova" não sai mais: o divisor
+    // é a notícia, e o renderer o desenha também no replay.
     entry.sink({ type: 'conversation-cleared' })
     this.dispose(paneId, 'clear')
-    const result = this.create(spawn)
-    if (result.ok) this.note(paneId, GUI_NEW_CONVERSATION_NOTE)
-    return result
+    return this.create(spawn)
   }
 
   private dispose(paneId: string, reason: string, preserveRing = false): void {
@@ -4648,11 +4731,25 @@ export class GuiSessionRegistry {
       previous.effort === rememberedEffort
     )
       return
+    const now = new Date().toISOString()
+    // A CORRENTE ATRAVESSA, e a conversa que sai de cena entra nela
+    // (2026-09-28): resume que caiu numa thread nova e troca de CLI trocam o
+    // id aqui mesmo, sem passar pelo `/clear` — e o dono ainda quer lê-la.
+    const leaving =
+      previous?.sessionId && (previous.cli !== spawn.cli || previous.sessionId !== nextSession)
+        ? { cli: previous.cli, sessionId: previous.sessionId }
+        : undefined
+    const chain = guiPastSessionFields(
+      previous,
+      leaving,
+      { cli: spawn.cli, sessionId: nextSession },
+      now
+    )
     this.doc.panes[spawn.paneId] = {
       ...(nextSession ? { sessionId: nextSession } : {}),
       cli: spawn.cli,
       projectId: spawn.projectId,
-      updatedAt: new Date().toISOString(),
+      updatedAt: now,
       permissionMode: mode,
       ...(rememberedModel !== undefined ? { model: rememberedModel } : {}),
       ...(rememberedEffort !== undefined ? { effort: rememberedEffort } : {}),
@@ -4674,7 +4771,9 @@ export class GuiSessionRegistry {
       ...(rememberedMilestone !== undefined
         ? { heavyContextMilestone: rememberedMilestone }
         : {}),
-      ...(queuedDeliveryReceipts.length > 0 ? { queuedDeliveryReceipts } : {})
+      ...(queuedDeliveryReceipts.length > 0 ? { queuedDeliveryReceipts } : {}),
+      ...(chain.pastSessions ? { pastSessions: chain.pastSessions } : {}),
+      pastSessionsSince: chain.pastSessionsSince
     }
     if (!this.deps.storeFile) return
     try {

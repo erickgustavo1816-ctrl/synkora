@@ -8,9 +8,6 @@ const CONVERSATION_COMMANDS: CliCommand[] = [
 ]
 const commandNames = new Set(CONVERSATION_COMMANDS.map(({ name }) => `/${name}`))
 
-export const GUI_NEW_CONVERSATION_NOTE =
-  'Conversa nova neste mesmo chat. Os arquivos continuam na missão; o contexto anterior não é carregado. Para consultar o histórico, use Ctrl+K e busque um trecho da conversa.'
-
 export const GUI_NEW_CONVERSATION_USAGE =
   'Para começar outra conversa neste mesmo chat, envie /new, /new chat, /reset ou /clear sozinho, sem anexos. Os arquivos da missão são mantidos.'
 

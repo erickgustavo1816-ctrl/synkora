@@ -17,6 +17,7 @@ import type { PlanDraft } from './planContract'
 import type {
   BrowserPanelState,
   GuiAttachmentDescriptor,
+  HistoryPaneConversation,
   HistoryTranscriptMessage,
   SynkoraSettings,
   SynkoraSettingsPatch
@@ -36,6 +37,7 @@ import {
 import { claimGuiItemId, guiItemId } from './guiItemIdentity'
 import { applyGuiOwnerMessageState, type GuiOwnerDelivery } from './guiOwnerBubble'
 import { guiPrunedEvicted, mergeGuiHistoryPage } from './guiHistoryReader'
+import { sealGuiConversationItems } from './guiConversationDivider'
 import {
   countGuiOutputLines,
   denyLatestPendingGuiTool,
@@ -502,6 +504,16 @@ export type GuiItem =
       entries: { question: string; answer: string }[]
       at: number
     }
+  /** A FRONTEIRA DE CONVERSA (2026-09-28): o /new, /reset ou /clear trocou a
+   *  conversa do CLI, mas o fio antigo FICA na tela acima desta linha. Ela diz
+   *  que o agente não lembra do que está acima; nunca é fala de ninguém. A
+   *  régua de "conversa atual" (o que vem depois da última) mora em
+   *  `guiConversationDivider.ts`. */
+  | {
+      id: string
+      kind: 'divider'
+      at: number
+    }
 
 /** Pedido de permissão vivo do CLI (mesma forma do PermPicker do espelho). */
 export interface GuiPendingPerm {
@@ -644,6 +656,11 @@ export interface GuiHistoryTarget {
    *  dele leria o transcript errado. Ausente = sem paginação nesta leitura. */
   hasMoreBefore?: boolean
   hasMoreAfter?: boolean
+  /** 2026-09-28 — as conversas DESTE chat (da mais antiga para a atual), como
+   *  o main as listou ao abrir o leitor pelo pane. Presente = o cabeçalho
+   *  navega entre elas ("conversa K de N"); ausente = leitura avulsa (paleta),
+   *  sem navegação. */
+  conversations?: HistoryPaneConversation[]
 }
 
 export const EMPTY_GUI_PANE: GuiPaneState = {
@@ -976,9 +993,10 @@ function reduceGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState
 
     case 'history-pruned': {
       // R24.1 — o anel do main descartou os eventos mais antigos: o fio na
-      // tela começa DEPOIS do começo da conversa. Só cresce (o replay traz a
-      // contagem afinada; o aviso ao vivo, a primeira notícia) e só o
-      // `conversation-cleared` zera, porque ali a conversa é outra.
+      // tela começa DEPOIS do começo do que o anel guardou. Só cresce (o
+      // replay traz a contagem afinada; o aviso ao vivo, a primeira notícia).
+      // Desde 2026-09-28 o `conversation-cleared` também a conserva: o anel
+      // atravessa conversas e o topo do fio continua sendo o mesmo.
       const evicted = guiPrunedEvicted(evt)
       if (evicted === null || evicted <= state.prunedEvents) return state
       return { ...state, prunedEvents: evicted }
@@ -1035,11 +1053,34 @@ function reduceGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState
         }
       }
 
-    case 'conversation-cleared':
-      // O processo novo pode ter emitido init/ready antes deste marco. Limpa
-      // somente o fio antigo e conserva a identidade/capacidades JÁ novas.
+    case 'conversation-cleared': {
+      // 2026-09-28 — O /new NÃO APAGA MAIS O FIO: a conversa antiga fica acima
+      // de um DIVISOR, selada (o processo dela morreu, nada ali segue
+      // pendente). O replay passa por aqui igual, então remontar ou abrir a
+      // fotografia arquivada desenha o mesmo divisor — inclusive no transcript
+      // antigo que COMEÇA neste marco. Dois marcos seguidos são um divisor só.
+      //
+      // A bolha otimista do PRÓPRIO /new sai: o main empurra este marco antes
+      // de responder ao envio (o id ainda está no lote em voo) e nunca ecoa o
+      // comando no anel — ficar com ela faria o vivo divergir do replay.
+      const inFlight = state.sendBatch?.requestIds ?? []
+      const settledItems = finalizeGuiStream(state).items
+      const sealed = sealGuiConversationItems(
+        inFlight.length === 0
+          ? settledItems
+          : settledItems.filter((item) => item.kind !== 'user' || !inFlight.includes(item.id))
+      )
+      const items =
+        sealed[sealed.length - 1]?.kind === 'divider'
+          ? sealed
+          : pushGuiItem(sealed, { id: guiItemId(), kind: 'divider', at: Date.now() })
+      // O processo novo pode ter emitido init/ready antes deste marco. O resto
+      // do estado do turno zera como sempre; a identidade/capacidades JÁ novas
+      // e a contagem de poda do anel (que continua descrevendo o topo) ficam.
       return {
         ...EMPTY_GUI_PANE,
+        items,
+        prunedEvents: state.prunedEvents,
         spawned: state.spawned,
         ready: state.ready,
         caps: state.caps,
@@ -1051,6 +1092,7 @@ function reduceGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState
         status: state.ready ? 'idle' : 'starting',
         eventRevision: state.eventRevision
       }
+    }
 
     case 'ready':
       // As caps FICAM: são elas que alimentam o autocomplete de comandos e os
@@ -1996,6 +2038,9 @@ interface SynkoraState {
       direction: 'before' | 'after'
       messages: HistoryTranscriptMessage[]
       hasMore: boolean
+      /** A conversa que ESTA página leu (2026-09-28). Diferente da aberta =
+       *  o dono navegou para outra no meio da viagem: a página cai no vazio. */
+      sessionId?: string
     }
   ) => void
   /** evento vivo do canal `gui:live` (payload cru — o redutor valida) */
@@ -2544,9 +2589,11 @@ export const useStore = create<SynkoraState>((set, get) => ({
   appendGuiHistoryPage: (paneId, page) =>
     set((state) => {
       const target = state.guiHistoryTarget
-      // Leitura trocada no meio da viagem (o dono fechou ou abriu outra): a
-      // página chega tarde e não ressuscita nada.
+      // Leitura trocada no meio da viagem (o dono fechou, abriu outra ou
+      // navegou para outra conversa do chat): a página chega tarde e não
+      // ressuscita nada.
       if (!target || target.paneId !== paneId) return {}
+      if (page.sessionId !== undefined && page.sessionId !== target.sessionId) return {}
       return {
         guiHistoryTarget: {
           ...target,

@@ -168,6 +168,9 @@ export function guiAgentPulsePresentation(input: GuiAgentPulseInput): GuiAgentPu
   let pending: WorkTool | undefined
   for (let index = input.items.length - 1; index >= 0; index--) {
     const item = input.items[index]
+    // O rastro é da conversa ATUAL (2026-09-28): acima do divisor do /new o
+    // trabalho é de outra conversa, que o agente nem lembra.
+    if (item.kind === 'divider') break
     if (!isWorkTool(item)) continue
     latest ??= item
     if (!item.result) {
