@@ -1408,7 +1408,11 @@ export default function Board({ projectId }: Props): React.JSX.Element {
         </GuiPanelErrorBoundary>
       )}
 
-      {isDirect && selMission && !selIsRelease && (
+      {/* RELEASE DIRETA (2026-09-28): "vai ser igual uma missão normal, mas é
+          de release" — a release monta este trilho também (trabalho, histórico,
+          browser, frota); a entrega dele (⇪, arquivar) é de missão e o próprio
+          trilho a cala numa release. */}
+      {isDirect && selMission && (
         <GuiPanelErrorBoundary
           paneId={`mission-delivery:${selMission.id}`}
           label="os painéis da missão"
@@ -1438,7 +1442,7 @@ export default function Board({ projectId }: Props): React.JSX.Element {
         </GuiPanelErrorBoundary>
       )}
 
-      {panelsEnabled && selMission && selMissionType === 'dev' && panelOptions.includes('mobile') && (
+      {panelsEnabled && selMission && panelOptions.includes('mobile') && (
         <GuiPanelErrorBoundary key={`mobile:${selMission.id}`} paneId={`mobile:${selMission.id}`} label="o simulador mobile">
           <DockMobile missionId={selMission.id} projectId={projectId} visible={workspaceVisible} />
         </GuiPanelErrorBoundary>

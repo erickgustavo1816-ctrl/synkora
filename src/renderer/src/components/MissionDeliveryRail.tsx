@@ -221,6 +221,10 @@ export default function MissionDeliveryRail({
   // de natureza + a alavanca de encerrar; o entregável dela (plano/) já está no
   // repo desde que a conversa escreveu.
   const planning = missionTypeOf(mission) === 'planejamento'
+  // RELEASE DIRETA (2026-09-28): a release veste os painéis da missão, mas a
+  // ENTREGA (⇪ fila, revisar, arquivar) não é dela — ela sobe pelas próprias
+  // ferramentas e o painel Release é o seu trilho.
+  const release = missionTypeOf(mission) === 'release'
 
   // ——— diff vivo da branch (onda D; medida viva na W4) ———
   const [summary, setSummary] = useState<MissionWorkspaceSummary | null>(null)
@@ -558,7 +562,7 @@ export default function MissionDeliveryRail({
         </DockSection>
       )}
 
-      {!planning && (
+      {!planning && !release && (
         <DockSection id="entrega" title="entrega" summary={entregaSummary}>
           {/* A ENTREGA COMPOSTA (rodada 2): branch à esquerda e chip empurrado
               para a direita NA MESMA linha — morreu a sobra que o dono viu. */}

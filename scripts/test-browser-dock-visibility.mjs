@@ -18,7 +18,7 @@ const mission = (id, projectId, extra = {}) => ({ id, projectId, status: 'ativa'
 const base = () => ({ appPage: 'workspace', openProjectId: 'p1', universeTabByProject: {},
   missionTabByProject: { p1: 'm1', p2: 'm2' }, missions: [mission('m1', 'p1'), mission('m2', 'p2')] })
 
-test('navigation eligibility is structural: workspace, project, board, selected direct live non-release mission', () => {
+test('navigation eligibility is structural: workspace, project, board, selected direct live mission (release included)', () => {
   assert.equal(eligibleDockMission(base()), 'm1')
   for (const patch of [
     { appPage: 'settings' }, { openProjectId: null }, { universeTabByProject: { p1: 'map' } },
@@ -26,8 +26,10 @@ test('navigation eligibility is structural: workspace, project, board, selected 
     { missions: [mission('m1', 'other')] }, { missions: [mission('m1', 'p1', { direct: false })] },
     { missions: [mission('m1', 'p1', { status: 'concluida' })] },
     { missions: [mission('m1', 'p1', { status: 'arquivada' })] },
-    { missions: [mission('m1', 'p1', { missionType: 'release' })] }
+    { missions: [mission('m1', 'p1', { missionType: 'release', status: 'concluida' })] }
   ]) assert.equal(eligibleDockMission({ ...base(), ...patch }), null, JSON.stringify(patch))
+  // RELEASE DIRETA (2026-09-28): a release viva veste o browser como a missão.
+  assert.equal(eligibleDockMission({ ...base(), missions: [mission('m1', 'p1', { missionType: 'release' })] }), 'm1')
   assert.equal(eligibleDockMission({ ...base(), missions: [mission('m1', 'p1', { status: 'integrando' })] }), 'm1')
   assert.equal(eligibleDockMission({ ...base(), openProjectId: 'p2' }), 'm2')
 })
@@ -106,10 +108,12 @@ test('real IPC accepts navigation only from app dock and validates the mission w
   handler({ sender: { id: 3 } }, 'm1')
   assert.deepEqual(calls, ['m1'], 'popout and web page cannot revoke or grant app navigation')
   assert.equal(records.length, 1)
-  for (const value of [null, undefined, {}, true, '', 'absent', 'release', 'closed']) {
+  for (const value of [null, undefined, {}, true, '', 'absent', 'closed']) {
     handler(dock, value)
     assert.equal(calls.at(-1), null)
   }
+  handler(dock, 'release')
+  assert.equal(calls.at(-1), 'release', 'a release viva ganha o browser da missão')
   assert.equal(missions.size, 3)
 })
 

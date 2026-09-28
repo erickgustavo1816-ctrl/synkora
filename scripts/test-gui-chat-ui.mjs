@@ -4482,8 +4482,15 @@ test('R27 — o board não lista o registro de release e o trilho vira release',
   )
   assert.doesNotMatch(releaseRail, /dev → main/u)
   assert.match(releaseRail, /targetBranch \?\? 'destino no chat'/u)
-  const railGate = board.indexOf('selIsRelease')
-  assert.ok(railGate > 0, 'o trilho de missão é condicionado ao registro não ser release')
+  // RELEASE DIRETA (2026-09-28): a release também monta o trilho de painéis
+  // (trabalho, histórico, browser, frota); a ENTREGA dele (⇪, arquivar) é de
+  // missão e nunca aparece numa release.
+  assert.match(board, /\{isDirect && selMission && \(\s*<GuiPanelErrorBoundary\s+paneId=\{`mission-delivery:/u)
+  const missionRail = readFileSync(
+    new URL('../src/renderer/src/components/MissionDeliveryRail.tsx', import.meta.url),
+    'utf8'
+  )
+  assert.match(missionRail, /\{!planning && !release && \(\s*<DockSection id="entrega"/u)
 })
 
 // R27 (conserto pós-estreia): o ✦ de ativas do cabeçalho e o retrato por
