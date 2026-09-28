@@ -832,9 +832,9 @@ export function registerGuiIpc(ctx: MainContext, extras: GuiIpcExtras): GuiSessi
     }
   )
 
-  ipcMain.handle('gui:interrupt', (e, paneId: string): GuiResult => {
+  ipcMain.handle('gui:interrupt', (e, paneId: string, origin: unknown): GuiResult => {
     extras.assertAppRendererSender(e)
-    return registry.interrupt(paneId)
+    return registry.interrupt(paneId, origin)
   })
 
   /**
