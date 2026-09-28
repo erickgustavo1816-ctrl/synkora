@@ -78,4 +78,3 @@ test('release briefing preserves owner request and phase without assuming a butt
   assert.match(after, /after-release/); assert.match(after, /auto-update/); assert.match(after, /new version/i)
   assert.doesNotMatch(after, /owner pressed/)
 })
-

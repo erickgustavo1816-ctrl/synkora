@@ -45,4 +45,3 @@ export function fixture(t) {
   }
   return { root, path, ctx, electron, backlog, missions, worktree, handlers, events, call, gitOff, isolationCalls: () => isolationCalls }
 }
-
