@@ -104,7 +104,7 @@ export default function MissionColumn({
               }`}
               data-tip={
                 release
-                  ? 'O chat da subida: quem sobe é o agente (release_run). Concluiu, o card sai — a aba VERSÕES reabre a conversa pelo ⇪.'
+                  ? 'O chat da release: o agente corrige e publica pelas ferramentas de release. Concluiu, o card sai da coluna.'
                   : entry.pulse
                     ? `❓ O AGENTE PERGUNTOU A VOCÊ:\n${entry.pulse}`
                     : mission.pendingIntegrationApproval
@@ -133,7 +133,7 @@ export default function MissionColumn({
               {planning ? (
                 <span className="mc-branch mc-planning">✎ planejamento · escreve plano/</span>
               ) : release ? (
-                <span className="mc-branch mc-planning">◇ release · sobe a versão para a main</span>
+                <span className="mc-branch mc-planning">◇ release · corrige e publica na main</span>
               ) : (
                 <span className="mc-branch">⎇ {mission.branch ?? 'sem branch (repo novo)'}</span>
               )}

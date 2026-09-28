@@ -718,11 +718,14 @@ test('R30 — o release VIVO tem entrada na coluna; o retrato segue sem ele', as
     /isReleaseMissionRecord\(mission\)/u,
     'a coluna consome a régua DECLARADA (missionCardAccess), nunca a reescreve'
   )
+  // Release direta (2026-09-28): a release também nasce na versão ATUAL, onde
+  // ela corrige sem subir versão nenhuma — a frase vale para os dois destinos.
   assert.match(
     column,
-    /sobe a versão para a main/u,
+    /◇ release · corrige e publica na main/u,
     'o card diz a natureza dele — não é missão'
   )
+  assert.doesNotMatch(column, /a aba VERSÕES reabre a conversa/u, 'a versão atual não tem ⇪ para reabrir')
 })
 
 test('R29 — o impl alinha o version pelo worker e o desfecho entrega a receita da caixa', async () => {
