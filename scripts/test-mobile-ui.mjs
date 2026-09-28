@@ -33,10 +33,12 @@ function load(entry, window = {}, document = { visibilityState: 'visible', addEv
   return module.exports
 }
 
-test('Mobile is scoped to live dev missions and participates in saved panel layouts', () => {
+test('Mobile is scoped to live dev and release missions and participates in saved panel layouts', () => {
   const m = load("export * from './workspacePanels'")
   assert.ok(m.availableWorkspacePanels('dev', true).includes('mobile'))
-  for (const [kind, live] of [['dev', false], ['planejamento', true], ['release', true]]) {
+  // Direct release (2026-09-28): the release chat wears the mission's panels.
+  assert.ok(m.availableWorkspacePanels('release', true).includes('mobile'))
+  for (const [kind, live] of [['dev', false], ['planejamento', true], ['release', false]]) {
     assert.ok(!m.availableWorkspacePanels(kind, live).includes('mobile'))
   }
   assert.deepEqual(m.normalizeWorkspacePreference({ panels: ['mobile', 'browser', 'mobile'] }).panels, ['mobile', 'browser'])
@@ -226,11 +228,13 @@ test('the owner can stop a boot in progress and its late start result cannot era
   await act(async () => { stop.resolve({ ok: true, value: undefined }); await stop.promise })
 })
 
-test('missing preload names the restart recipe and the Board mounts Mobile only for dev', async t => {
+test('missing preload names the restart recipe and the Board mounts Mobile from the panel menu', async t => {
   const h = await harness(t, { missing: true })
   assert.match(JSON.stringify(h.tree.toJSON()), /reinicie o app/iu)
   const board = readFileSync(new URL('../src/renderer/src/components/Board.tsx', import.meta.url), 'utf8')
-  assert.match(board, /selMissionType === 'dev'[\s\S]{0,350}<DockMobile/u)
+  // The panel menu (availableWorkspacePanels) decides — dev and release, never a repeated type check.
+  assert.match(board, /panelsEnabled && selMission && panelOptions\.includes\('mobile'\) && \([\s\S]{0,350}<DockMobile/u)
+  assert.doesNotMatch(board, /selMissionType === 'dev'[\s\S]{0,350}<DockMobile/u)
 })
 
 test('Expo is recognized without starting anything and Windows offers a physical iPhone QR', async t => {

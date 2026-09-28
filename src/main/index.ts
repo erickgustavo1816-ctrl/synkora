@@ -26,7 +26,7 @@ import {
   remoteAheadOf,
   setGitObserver
 } from './worktree'
-import { MissionStore } from './missions'
+import { MissionStore, type Mission } from './missions'
 import { buildMissionSummaries } from './missionSummary'
 import { ProjectContextStore } from './projectContextStore'
 import { buildProjectContextTools } from './projectContextTools'
@@ -44,6 +44,8 @@ import {
 import { ReleasesStore, type ReleaseRecordBump, type ReleaseRecordPush } from './releasesStore'
 import { ReleaseChangesStore } from './releaseChangesStore'
 import { buildReleaseChanges } from './releaseChanges'
+import { currentReleasedVersion } from '../shared/directRelease'
+import { resolveReleaseWorkspace } from './releaseWorkspace'
 import { releaseIdentityError, resolveReleaseChangeScope } from './releaseChangesScope'
 import { releaseChangesProbe } from './releaseChangesGit'
 import { IntegrationQueueStore } from './integrationQueue'
@@ -4112,8 +4114,7 @@ app.whenReady().then(async () => {
       const mission = id.missionId ? missions.get(id.missionId) : undefined
       const version = mission?.versionId ? backlog.getVersion(mission.versionId) : undefined
       const project = version ? projects.get(version.projectId) : undefined
-      const latest = backlog.listVersions(id.projectId).filter((v) => v.status === 'lancada')
-        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0]
+      const latest = currentReleasedVersion(backlog.listVersions(id.projectId))
       return resolveReleaseChangeScope({
         identity: id, mission, version, project,
         isolationValid: Boolean(project && version?.status === 'aberta' && versionIsolationIsValid(project.path, version)),
@@ -4811,7 +4812,23 @@ app.whenReady().then(async () => {
       }
     }
   })
-  registerFilesIpc(ctx, { assertAppRendererSender })
+  const releaseWorkspaceForMission = async (mission: Mission) => {
+    const version = mission.versionId ? backlog.getVersion(mission.versionId) : undefined
+    const project = projects.get(mission.projectId)
+    const recordedBranch = version ? releases.listForVersion(version.id)[0]?.branch : undefined
+    const target = project && version ? await gitOff('inspectReleaseTarget', project.path,
+      version.status === 'lancada' ? recordedBranch : version.releaseTargetBranch) : undefined
+    const originHead = project && version?.status === 'lancada' && target?.branch
+      ? await gitOff('fullCommitSha', project.path, `refs/remotes/origin/${target.branch}`) : undefined
+    const pendingBase = version ? releaseChangesStore.list(mission.projectId, version.id)
+      .filter(record => record.phase === 'after-release' && record.state === 'saved' && !record.pushedAt && record.branch === target?.branch)
+      .sort((left, right) => left.at.localeCompare(right.at))[0]?.parentHead : undefined
+    return resolveReleaseWorkspace({
+      mission, project, version, versions: backlog.listVersions(mission.projectId), target, originHead, pendingBase,
+      isolationValid: Boolean(project && version?.status === 'aberta' && await versionIsolationProbe(project.path, version))
+    })
+  }
+  registerFilesIpc(ctx, { assertAppRendererSender, resolveReleaseWorkspace: releaseWorkspaceForMission })
   registerSettingsIpc(ctx, {
     assertMainRendererSender,
     assertAppRendererSender,
@@ -4925,6 +4942,7 @@ app.whenReady().then(async () => {
     surveySystemPromptFile
   })
   registerMissionsIpc(ctx, {
+    resolveReleaseWorkspace: releaseWorkspaceForMission,
     lifecycle: missionLifecycle,
     projectContextBriefing: projectContext.briefing,
     engine: missionEngine,

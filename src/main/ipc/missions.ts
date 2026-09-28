@@ -65,11 +65,13 @@ import type { MainContext } from '../mainContext'
 import type { MissionEngine } from '../missionEngine'
 import { needsMissionFinalization } from '../missionFinalization'
 import type { MaestroEngine } from '../maestroEngine'
+import type { ReleaseWorkspaceResult } from '../releaseWorkspace'
 
 /** Dependências do closure do index ainda não migradas (mesmo padrão dos
  * outros ipc/*). Os dois engines viajam inteiros; o lado maestro do
  * paneSpec (budget de resume + método de planejamento) vem do maestroEngine. */
 export interface MissionsIpcExtras {
+  resolveReleaseWorkspace(mission: Mission): Promise<ReleaseWorkspaceResult>
   lifecycle?: MissionLifecycle
   projectContextBriefing?(projectId: string, missionId: string): string
   engine: MissionEngine
@@ -177,6 +179,11 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
   const { maestroResumeOverBudget, skipMaestroResume } = extras.maestroEngine
   const lifecycle = extras.lifecycle ?? buildMissionLifecycle(ctx, extras)
   const closeGuiPanesInBackground = lifecycle.closeInBackground
+  const workspaceFor = async (mission: Mission): Promise<{ dir: string; base?: string; error?: never } | { error: string; dir?: never; base?: never }> => {
+    if (missionTypeOf(mission) === 'release') return extras.resolveReleaseWorkspace(mission)
+    if (!mission.worktree || !existsSync(mission.worktree)) return { error: 'esta missão não tem worktree aberto' }
+    return { dir: mission.worktree, base: mission.baseBranch }
+  }
   const {
     missionsWithIntegration,
     createMissionImpl,
@@ -397,9 +404,9 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
       if (!project) return { ok: false, error: 'projeto não encontrado' }
       // Leitura NUNCA cria worktree (nem chama ensureMissionWorktree): missão
       // concluída/arquivada simplesmente não tem mais o que mostrar.
-      if (!mission.worktree || !existsSync(mission.worktree))
-        return { ok: false, error: 'esta missão não tem worktree aberto' }
-      const summary = await gitOff('missionWorkspaceSummary', mission.worktree, mission.baseBranch)
+      const workspace = await workspaceFor(mission)
+      if (workspace.error !== undefined) return { ok: false, error: workspace.error }
+      const summary = await gitOff('missionWorkspaceSummary', workspace.dir, workspace.base)
       if (!summary) return { ok: false, error: 'não consegui ler o diff do worktree desta missão' }
       return { ok: true, summary }
     }
@@ -422,9 +429,9 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
       if (!mission) return { ok: false, error: 'missão não encontrada' }
       if (typeof filePath !== 'string' || !filePath || filePath.length > 1024)
         return { ok: false, error: 'caminho inválido' }
-      if (!mission.worktree || !existsSync(mission.worktree))
-        return { ok: false, error: 'esta missão não tem worktree aberto' }
-      return gitOff('missionWorkspaceFileDiff', mission.worktree, filePath, mission.baseBranch)
+      const workspace = await workspaceFor(mission)
+      if (workspace.error !== undefined) return { ok: false, error: workspace.error }
+      return gitOff('missionWorkspaceFileDiff', workspace.dir, filePath, workspace.base)
     }
   )
 
@@ -441,9 +448,9 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
       if (!mission) return { ok: false, error: 'missão não encontrada' }
       const project = projects.get(mission.projectId)
       if (!project) return { ok: false, error: 'projeto não encontrado' }
-      if (!mission.worktree || !existsSync(mission.worktree))
-        return { ok: false, error: 'esta missão não tem worktree aberto' }
-      const commits = await gitOff('missionCommits', mission.worktree, mission.baseBranch)
+      const workspace = await workspaceFor(mission)
+      if (workspace.error !== undefined) return { ok: false, error: workspace.error }
+      const commits = await gitOff('missionCommits', workspace.dir, workspace.base)
       // Lista vazia é resposta BOA (missão sem commit ainda); só `undefined`
       // significa que a leitura falhou — o `!commits` cobriria os dois.
       if (!commits) return { ok: false, error: 'não consegui ler os commits desta missão' }
@@ -468,10 +475,10 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
       if (!mission) return { ok: false, error: 'missão não encontrada' }
       const project = projects.get(mission.projectId)
       if (!project) return { ok: false, error: 'projeto não encontrado' }
-      if (!mission.worktree || !existsSync(mission.worktree))
-        return { ok: false, error: 'esta missão não tem worktree aberto' }
+      const workspace = await workspaceFor(mission)
+      if (workspace.error !== undefined) return { ok: false, error: workspace.error }
       try {
-        return await gitOff('missionCommitPatch', mission.worktree, mission.baseBranch, commitSha)
+        return await gitOff('missionCommitPatch', workspace.dir, workspace.base, commitSha)
       } catch {
         return { ok: false, error: 'não consegui ler o patch deste commit' }
       }
@@ -673,6 +680,8 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
             ? planningMissionFirstPrompt(mission, project)
             : route.missionType === 'release'
               ? guiReleaseFirstPrompt({
+                  ownerRequest: mission.title,
+                  versionStatus: mission.versionId ? backlog.getVersion(mission.versionId)?.status : undefined,
                   versionName:
                     (mission.versionId ? backlog.getVersion(mission.versionId)?.name : undefined) ??
                     mission.title,

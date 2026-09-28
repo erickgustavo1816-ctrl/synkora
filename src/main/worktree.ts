@@ -1452,7 +1452,7 @@ export interface MissionCommitPatch {
   error?: string
 }
 
-function fullCommitSha(cwd: string, ref: string): string | undefined {
+export function fullCommitSha(cwd: string, ref: string): string | undefined {
   if (!ref.trim()) return undefined
   try {
     const sha = gitRaw(cwd, [

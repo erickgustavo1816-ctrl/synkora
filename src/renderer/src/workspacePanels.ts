@@ -154,13 +154,14 @@ export function readWorkspacePreference(storage: Pick<Storage, 'getItem'> | null
 /** The panels a chat can open, decided by the nature of its mission — one
  * frame for the three chats, never a different chrome per type (owner's
  * order, 2026-09-09). Dev opens everything but Release; planning has no
- * worktree, so no Trabalho/Histórico; release runs in the project folder with
- * no worktree, no delegation and no browser kit, so only its own panel. */
+ * worktree, so no Trabalho/Histórico. Release (direct release, 2026-09-28:
+ * "igual uma missão normal, mas é de release") opens the mission's panels plus
+ * its own; Trabalho/Histórico read where it works (version worktree before the
+ * ascent, project folder after), resolved by the main. */
 export function availableWorkspacePanels(type: WorkspaceMissionType, browser: boolean): WorkspacePanelId[] {
   return WORKSPACE_PANELS.filter((panel) => {
     if (panel.id === 'release') return type === 'release'
-    if (type === 'release') return false
-    if (panel.id === 'mobile') return type === 'dev' && browser
+    if (panel.id === 'mobile') return type !== 'planejamento' && browser
     if (panel.id === 'browser') return browser
     return type !== 'planejamento' || panel.id === 'frota'
   }).map((panel) => panel.id)
