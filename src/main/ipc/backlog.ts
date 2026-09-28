@@ -8,7 +8,11 @@
  * NUNCA no import — instrumentIpcMain só cobre handlers registrados depois
  * dele. uiSender/mainWindow/mcpPort e afins são lidos via ctx a cada uso.
  */
-import { ipcMain } from 'electron'
+import { app, ipcMain } from 'electron'
+import { join } from 'path'
+import { gitOff } from '../gitAsync'
+import { buildDirectRelease } from '../directRelease'
+import type { DirectReleaseInput } from '../../shared/directRelease'
 import { ensureSynkoraGitExcludes, gitHead, removeWorktreeAndBranch } from '../worktree'
 import { type BacklogItemType, type Version } from '../backlog'
 import { ensureReleaseMission } from '../releaseChat'
@@ -62,6 +66,20 @@ export function registerBacklogIpc(ctx: MainContext, extras: BacklogIpcExtras): 
     listVersionReleases,
     listProjectReleases
   } = extras
+  const createVersion = (projectId: string, input: { name: string; theme?: string; goal?: string }): CreateVersionResult => {
+    const name = input.name.trim()
+    const refusal = backlog.validateNewVersion(projectId, name)
+    if (refusal) return { ok: false, error: refusal }
+    const version = backlog.createVersion(projectId, { ...input, name })
+    emitBacklogChanged(projectId)
+    return { ok: true, version }
+  }
+  const directRelease = buildDirectRelease({
+    context: ctx, createVersion, changed: emitBacklogChanged, isolationValid: versionIsolationIsValid,
+    createIsolation: (projectPath, version) => gitOff('createVersionWorktree', projectPath,
+      join(app.getPath('userData'), 'worktrees', version.projectId), version.name, version.id)
+  })
+  ipcMain.handle('backlog:directRelease', (_e, projectId: string, input: DirectReleaseInput) => directRelease(projectId, input))
   ipcMain.handle('backlog:releaseVersion', (e, versionId: string) => {
     return releaseVersionImpl(versionId, 'user')
   })
@@ -125,15 +143,7 @@ export function registerBacklogIpc(ctx: MainContext, extras: BacklogIpcExtras): 
       projectId: string,
       input: { name: string; theme?: string; goal?: string }
     ): CreateVersionResult => {
-      const name = input.name.trim()
-      // A RÉGUA É UMA SÓ para o número calculado pela tela e para o digitado
-      // pelo dono (vazio, duplicado, abaixo/igual à lançada) — o que mudou é
-      // que a recusa volta escrita, em vez de virar um `null` mudo.
-      const refusal = backlog.validateNewVersion(projectId, name)
-      if (refusal) return { ok: false, error: refusal }
-      const version = backlog.createVersion(projectId, { ...input, name })
-      emitBacklogChanged(projectId)
-      return { ok: true, version }
+      return createVersion(projectId, input)
     }
   )
 

@@ -1,4 +1,5 @@
 import type { SynkoraApi, SynkoraOverlayApi, SynkoraProgressOverlayApi } from './index'
+export type { DirectReleaseInput, DirectReleaseResult } from '../shared/directRelease'
 import type { MobilePhoneApi } from '../shared/mobileSimulator'
 export type { MobileApi, MobileAction, MobileFrame, MobileSession, MobileState, MobileVideoPacket } from '../shared/mobileSimulator'
 export type { MobileExpoProject, MobileExpoState, MobileExpoStartRequest } from '../shared/mobileExpo'

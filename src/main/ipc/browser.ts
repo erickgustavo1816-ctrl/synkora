@@ -121,7 +121,6 @@ export function registerBrowserIpc(ctx: MainContext, extras: BrowserIpcExtras): 
       mission &&
         mission.projectId &&
         mission.direct &&
-        mission.missionType !== 'release' &&
         (mission.status === 'ativa' || mission.status === 'integrando')
         ? mission.id
         : null

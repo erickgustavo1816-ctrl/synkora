@@ -48,6 +48,7 @@ export interface ReleaseChatMission {
 
 export interface EnsureReleaseMissionDeps {
   version: ReleaseChatVersion
+  directRequest?: { title: string; currentVersionId?: string }
   /** missões do PROJETO da versão (o filtro é daqui). */
   missions: readonly ReleaseChatMission[]
   /** cria a missão de release e devolve o registro (ou null quando o store
@@ -71,6 +72,9 @@ export type EnsureReleaseMissionResult =
  */
 export function ensureReleaseMission(deps: EnsureReleaseMissionDeps): EnsureReleaseMissionResult {
   const { version } = deps
+  const request = deps.directRequest
+  if (request && version.status === 'lancada' && request.currentVersionId !== version.id)
+    return { ok: false, error: 'esta versão não é a atual; receita: escolha a versão atual em Nova missão → Release' }
   const existing = deps.missions.find(
     (mission) =>
       mission.projectId === version.projectId &&
@@ -80,17 +84,21 @@ export function ensureReleaseMission(deps: EnsureReleaseMissionDeps): EnsureRele
       mission.status !== 'concluida'
   )
   if (existing) return { ok: true, missionId: existing.id, created: false }
-  if (version.status === 'lancada')
+  if (version.status === 'lancada' && !request)
     return { ok: false, error: `a versão ${version.name} já subiu para a main — não há release a operar` }
-  if (!version.branch || !version.worktree)
+  if (version.status === 'aberta' && (!version.branch || !version.worktree))
     return {
       ok: false,
       error: `a versão ${version.name} ainda não tem branch/worktree próprios — crie uma missão nela primeiro (o isolamento nasce com a primeira missão)`
     }
   const created = deps.create({
-    title: `Publicar ${version.name}`,
+    title: request?.title.trim() ?? `Publicar ${version.name}`,
     goal:
-      `Operar o release da versão ${version.name}: conferir as travas, subir a branch da versão ` +
+      request ? `Pedido do dono: ${request.title.trim()}\nVersão ${version.name}. ` +
+        (version.status === 'lancada'
+          ? 'Fase after-release: corrigir diretamente na PASTA DO PROJETO, sem novo número. Use release_status, release_save, release_push e release_done. O app instalado não recebe esta correção por auto-update; se o dono quiser isso, explique que precisa escolher uma nova versão, nunca escolha por ele.'
+          : `Fase before-release: corrigir no WORKTREE DA VERSÃO ${version.worktree}; validar, usar release_save e depois release_run para a subida. Concluir a entrega com release_done.`)
+      : `Operar o release da versão ${version.name}: conferir as travas, subir a branch da versão ` +
       'para o destino autorizado pelo dono, usando as ferramentas de release, e conferir a publicação solicitada.',
     versionId: version.id,
     missionType: 'release'

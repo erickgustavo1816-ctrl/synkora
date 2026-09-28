@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron'
+import type { DirectReleaseInput, DirectReleaseResult } from '../shared/directRelease'
 import type { MobileApi, MobilePhoneApi, MobileVideoDelivery } from '../shared/mobileSimulator'
 export type { MobileApi, MobileAction, MobileFrame, MobileSession, MobileState, MobileVideoPacket } from '../shared/mobileSimulator'
 export type { MobileExpoProject, MobileExpoState, MobileExpoStartRequest } from '../shared/mobileExpo'
@@ -1405,6 +1406,8 @@ const api = {
       ipcRenderer.invoke('backlog:releaseVersion', id),
     /** R10: o botão "subir pra main" abre (ou reencontra) a MISSÃO DE RELEASE
      *  da versão — quem sobe é o agente do chat; o clique é o mandato. */
+    directRelease: (projectId: string, input: DirectReleaseInput): Promise<DirectReleaseResult> =>
+      ipcRenderer.invoke('backlog:directRelease', projectId, input),
     releaseChat: (
       id: string
     ): Promise<{ ok: true; missionId: string } | { ok: false; error: string }> =>
