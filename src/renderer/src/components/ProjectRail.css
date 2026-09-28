@@ -1,3 +1,40 @@
+/* ============ BORDAS DA LISTA ROLÁVEL (2026-09-28) ============
+   Universo cortado seco na borda parecia defeito. A borda que ESCONDE
+   universos esmaece (máscara, não sobreposição: a cor de cada avatar some
+   sozinha no fundo do painel); a borda sem nada escondido fica nítida. As
+   duas medidas são @property para a máscara entrar e sair deslizando. */
+@property --rail-fade-top {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 0px;
+}
+
+@property --rail-fade-bottom {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 0px;
+}
+
+.rail-list {
+  --rail-fade-top: 0px;
+  --rail-fade-bottom: 0px;
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 var(--rail-fade-top),
+    #000 calc(100% - var(--rail-fade-bottom)),
+    transparent 100%
+  );
+  transition: --rail-fade-top 160ms ease, --rail-fade-bottom 160ms ease;
+}
+
+.rail-list.fade-top { --rail-fade-top: 28px; }
+.rail-list.fade-bottom { --rail-fade-bottom: 28px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .rail-list { transition: none; }
+}
+
 .rail-mission-dot {
   position: absolute;
   right: -3px;

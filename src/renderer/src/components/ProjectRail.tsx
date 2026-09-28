@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useStore, type Mission } from '../store'
 import { projectMissionActivity, projectMissionActivityLabel } from '../projectMissionActivity'
 import { useProjectMissionActivity } from '../useProjectMissionActivity'
@@ -63,6 +63,39 @@ function RailItem({ projectId }: { projectId: string }): React.JSX.Element | nul
 }
 
 /**
+ * Quais bordas da lista escondem universos. O esmaecimento só aparece do lado
+ * que tem mais para rolar — no topo parado a lista nasce nítida, como no
+ * Discord. `itemCount` re-mede quando um universo entra ou sai (o conteúdo
+ * cresce sem a caixa da lista mudar de tamanho).
+ */
+function useRailListEdges(itemCount: number): {
+  ref: React.RefObject<HTMLDivElement | null>
+  top: boolean
+  bottom: boolean
+} {
+  const ref = useRef<HTMLDivElement>(null)
+  const [edges, setEdges] = useState({ top: false, bottom: false })
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const measure = (): void => {
+      const top = el.scrollTop > 1
+      const bottom = el.scrollTop + el.clientHeight < el.scrollHeight - 1
+      setEdges((prev) => (prev.top === top && prev.bottom === bottom ? prev : { top, bottom }))
+    }
+    measure()
+    el.addEventListener('scroll', measure, { passive: true })
+    const resize = new ResizeObserver(measure)
+    resize.observe(el)
+    return () => {
+      el.removeEventListener('scroll', measure)
+      resize.disconnect()
+    }
+  }, [itemCount])
+  return { ref, ...edges }
+}
+
+/**
  * Rail lateral estilo Discord: Home no topo e um avatar por universo.
  * Trocar de projeto NUNCA derruba nada — os universos ficam montados em
  * segundo plano; o ponto mostra atividade de missões, não a contagem de panes.
@@ -76,6 +109,7 @@ export default function ProjectRail(): React.JSX.Element {
   // ONDA D: o "+" abre o MESMO modal da Home — a pasta continua sendo o
   // essencial, mas agora existe uma decisão a mais (link do GitHub).
   const [adding, setAdding] = useState(false)
+  const listEdges = useRailListEdges(projects.length)
 
   return (
     <nav className="project-rail">
@@ -87,7 +121,10 @@ export default function ProjectRail(): React.JSX.Element {
         <SynkoraMark size={22} />
       </button>
       <div className="rail-sep" />
-      <div className="rail-list">
+      <div
+        ref={listEdges.ref}
+        className={`rail-list${listEdges.top ? ' fade-top' : ''}${listEdges.bottom ? ' fade-bottom' : ''}`}
+      >
         {projects.map((p) => (
           <RailItem key={p.id} projectId={p.id} />
         ))}
