@@ -1,3 +1,6 @@
+import type { GuiInterruptOrigin } from '../shared/guiInterrupt'
+import { normalizeGuiInterruptOrigin, traceGuiInterrupt } from './guiInterruptDiagnostics'
+
 /**
  * MOTOR DO PANE GUI (Synkora 2.0, onda A — docs/GUI_PANE_CONTRACT.md).
  *
@@ -2823,7 +2826,7 @@ export class GuiSessionRegistry {
     // jeito — nenhum passo depende de entrega única.
     let stopped = false
     try {
-      stopped = entry.session.interrupt()
+      stopped = this.interruptTurn(entry, { source: 'owner-message-handoff' })
     } catch {
       stopped = false
     }
@@ -2976,7 +2979,7 @@ export class GuiSessionRegistry {
     const lastStep = this.ownerSteer.lastStepOf(paneId)
     let stopped = false
     try {
-      stopped = entry.session.interrupt()
+      stopped = this.interruptTurn(entry, { source: 'owner-message-force' })
     } catch {
       // O motor que estoura no corte não pode derrubar o gesto: a fala já está
       // no pote e no CLI, e o fecho (ou o renascimento) resolve de todo jeito.
@@ -3940,6 +3943,14 @@ export class GuiSessionRegistry {
     return sent.ok
   }
 
+  private interruptTurn(entry: GuiPaneEntry, origin: GuiInterruptOrigin): boolean {
+    return traceGuiInterrupt(origin, () => entry.session.interrupt(), (detail) => {
+      this.deps.record?.('gui-interrupt-request', {
+        paneId: entry.spawn.paneId, projectId: entry.spawn.projectId
+      }, detail)
+    })
+  }
+
   /**
    * O ■ DO DONO — ATÔMICO (R6.3), e as três partes são uma decisão só:
    *
@@ -3958,10 +3969,10 @@ export class GuiSessionRegistry {
    * Sem turno ativo o ■ ainda vale: o dono pode ter apertado justamente para
    * parar a frota, e recusar aqui deixaria os ajudantes rodando.
    */
-  interrupt(paneId: string): GuiResult {
+  interrupt(paneId: string, origin?: unknown): GuiResult {
     const entry = this.panes.get(paneId)
     if (!entry) return { ok: false, error: 'este pane não tem sessão aberta' }
-    const turnStopped = entry.session.interrupt()
+    const turnStopped = this.interruptTurn(entry, normalizeGuiInterruptOrigin(origin))
     // R39.1 — O ■ NÃO PODE ENGOLIR A FALA DELE. Num motor que descarta a fila ao
     // cortar (o codex, medido na sonda 3b de 02/09), a fala steerada sem recibo
     // morreu com o turno: a cópia do pote deixa de ser cinto e vira a entrega do

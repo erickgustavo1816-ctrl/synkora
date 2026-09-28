@@ -661,14 +661,16 @@ test('mover painéis no grid real conserva conteúdo, larguras e no máximo duas
 // dock-head/dock-sec) porque o Board o excluía dos painéis. Agora os três
 // chats vestem o WorkspacePanels; o que muda por natureza é o CARDÁPIO.
 
-test('o cardápio de painéis nasce da natureza da missão: o release só tem o painel Release', () => {
+test('o cardápio de painéis nasce da natureza da missão: a release veste os painéis da missão e o seu', () => {
   const m = runtime()
   assert.deepEqual(m.availableWorkspacePanels('dev', true), ['browser', 'mobile', 'frota', 'trabalho', 'historico'])
   assert.deepEqual(m.availableWorkspacePanels('dev', false), ['frota', 'trabalho', 'historico'])
   assert.deepEqual(m.availableWorkspacePanels('planejamento', true), ['browser', 'frota'])
   assert.deepEqual(m.availableWorkspacePanels('planejamento', false), ['frota'])
-  assert.deepEqual(m.availableWorkspacePanels('release', true), ['release'], 'sem worktree, sem delegação e sem kit de browser: só a subida')
-  assert.deepEqual(m.availableWorkspacePanels('release', false), ['release'])
+  // RELEASE DIRETA (ordem do dono, 2026-09-28): "vai ser igual uma missão
+  // normal, mas é de release" — os painéis da missão mais o dela.
+  assert.deepEqual(m.availableWorkspacePanels('release', true), ['browser', 'mobile', 'frota', 'trabalho', 'historico', 'release'])
+  assert.deepEqual(m.availableWorkspacePanels('release', false), ['frota', 'trabalho', 'historico', 'release'])
   assert.equal(m.WORKSPACE_PANELS.find(panel => panel.id === 'release')?.title, 'Release')
   // O painel guardado na preferência do projeto sobrevive à troca de chat e só
   // aparece onde cabe — a mesma régua de trabalho/histórico no planejamento.

@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { createRequire } from 'node:module'
+import { buildSync } from 'esbuild'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 
@@ -140,6 +142,8 @@ test('o picker de primeira versão só nasce com a lista de elegíveis VAZIA', a
   assert.ok(gate, 'o gate `needsFirstVersion` sumiu do modal')
   assert.match(gate[0], /!lockVersion/u)
   assert.match(gate[0], /!planning/u)
+  // a release direta tem destino próprio (atual/aberta/nova): nunca o picker
+  assert.match(gate[0], /!releasing/u)
   assert.match(gate[0], /eligibleVersions\.length === 0/u)
   assert.match(gate[0], /!versionDataLoading/u)
   assert.match(gate[0], /!versionChoicesError/u)
@@ -149,7 +153,8 @@ test('o picker de primeira versão só nasce com a lista de elegíveis VAZIA', a
 
   // o seletor de destino e o picker são EXCLUDENTES: os dois juntos diriam ao
   // dono que a versão já existe e que ele precisa escolhê-la, ao mesmo tempo
-  assert.match(modal, /\{!lockVersion && !needsFirstVersion && \(/u)
+  // (e a release direta desenha o seu próprio seletor no lugar dos dois)
+  assert.match(modal, /\{!lockVersion && !releasing && !needsFirstVersion && \(/u)
   assert.match(modal, /\{needsFirstVersion && \(/u)
 })
 
@@ -320,4 +325,64 @@ test('as duas telas passam o manifesto para a régua e o leem pelo preload', asy
   assert.match(preload, /ipcRenderer\.invoke\('backlog:manifestVersion', projectId\)/u)
   const ipc = await source('src/main/ipc/backlog.ts')
   assert.match(ipc, /ipcMain\.handle\('backlog:manifestVersion'/u)
+})
+
+// ————— RELEASE DIRETA (ordem do dono, 2026-09-28) —————
+// "Quero poder criar uma release direto [...] tanto na versão atual quanto em
+// novas (única opção que pode criar na versão atual)." O cardápio nasce da
+// régua compartilhada com o main (src/shared/directRelease.ts) e das mesmas
+// sugestões da versão nova. O módulo importa o contrato compartilhado, então
+// entra por bundle (esbuild) em vez do import dinâmico cru.
+
+function loadDirectReleaseChoice() {
+  const out = buildSync({ entryPoints: ['src/renderer/src/directReleaseChoice.ts'], bundle: true,
+    platform: 'node', format: 'cjs', write: false })
+  const loaded = { exports: {} }
+  new Function('require', 'module', 'exports', out.outputFiles[0].text)(createRequire(import.meta.url), loaded, loaded.exports)
+  return loaded.exports
+}
+
+const releaseVersions = [
+  // V0.1.3 foi EDITADA depois da subida da V0.1.4: a atual é a do carimbo da
+  // subida (releasedAt), nunca a da última edição.
+  { id: 'v3', name: 'V0.1.3', status: 'lancada', releasedAt: '2026-09-01T00:00:00Z', updatedAt: '2026-09-25T00:00:00Z' },
+  { id: 'v4', name: 'V0.1.4', status: 'lancada', releasedAt: '2026-09-20T00:00:00Z', updatedAt: '2026-09-20T00:00:00Z' },
+  { id: 'v5', name: 'V0.1.5', status: 'aberta' }
+]
+
+test('release direta: a versão atual primeiro, depois as abertas e as novas sugeridas', () => {
+  const m = loadDirectReleaseChoice()
+  const choices = m.directReleaseChoices(releaseVersions, '0.1.4')
+  assert.deepEqual(choices.map((c) => c.value), ['current:v4', 'open:v5', 'new:V0.1.6', 'new:V0.2', 'new:V1.0'])
+  assert.equal(choices[0].label, '◈ V0.1.4 — atual, na main')
+  assert.equal(choices[1].label, '◈ V0.1.5 — em desenvolvimento')
+  assert.equal(choices[2].label, '+ V0.1.6 — nova')
+  assert.ok(!choices.some((c) => c.value === 'current:v3' || c.value === 'open:v3'), 'versão lançada antiga não recebe release')
+  // Projeto sem versão nenhuma: só as novas, a partir do manifesto quando existe.
+  assert.deepEqual(m.directReleaseChoices([], '1.20').map((c) => c.value), ['new:V1.20.1', 'new:V1.21', 'new:V2.0'])
+})
+
+test('release direta: o pedido leva UM destino e a nota diz o que acontece com a correção', () => {
+  const m = loadDirectReleaseChoice()
+  const [current, open, fresh] = m.directReleaseChoices(releaseVersions, null)
+  assert.deepEqual(m.directReleaseInput('  Corrigir login  ', current), { title: 'Corrigir login', versionId: 'v4' })
+  assert.deepEqual(m.directReleaseInput('Corrigir login', open), { title: 'Corrigir login', versionId: 'v5' })
+  assert.deepEqual(m.directReleaseInput('Corrigir login', fresh), { title: 'Corrigir login', newVersionName: 'V0.1.6' })
+  assert.match(m.directReleaseNote(current), /sem número novo/u)
+  assert.match(m.directReleaseNote(current), /atualização automática/u, 'o aviso que o dono precisa ver ANTES de escolher a atual')
+  assert.match(m.directReleaseNote(open), /branch da V0\.1\.5/u)
+  assert.match(m.directReleaseNote(fresh), /V0\.1\.6 nasce agora/u)
+})
+
+test('release direta: o modal oferece a terceira natureza e cria pela ponte própria', async () => {
+  const modal = await source('src/renderer/src/components/NewMissionModal.tsx')
+  assert.match(modal, /⇪ release/u, 'a terceira natureza no seletor de tipo')
+  assert.match(modal, /directReleaseChoices\(versions, manifestVersion\)/u, 'o cardápio vem do módulo puro')
+  assert.match(modal, /directReleaseNote\(/u)
+  assert.match(modal, /backlog\?\.directRelease/u, 'a criação é do main, pela ponte própria')
+  assert.match(modal, /directReleaseInput\(title, /u)
+  assert.match(modal, /reinicie o Synkora/u, 'ponte ausente fala a receita')
+  // A release nasce no main: a lista recarrega ANTES de navegar (incidente de
+  // 2026-08-20, "cliquei e não aconteceu nada").
+  assert.match(modal, /await loadMissions\(projectId\)[\s\S]{0,200}setMissionTab\(projectId, result\.missionId\)/u)
 })

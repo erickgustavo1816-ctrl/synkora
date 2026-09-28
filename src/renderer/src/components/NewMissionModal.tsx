@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useStore, type Mission, type MissionType, type Version } from '../store'
 import { allowsOwnVersionNumber, versionSuggestions } from '../versionChoice'
+import { directReleaseChoices, directReleaseInput, directReleaseNote } from '../directReleaseChoice'
 import { ModelSelect } from './ModelSelect'
 import Select from './Select'
 
@@ -42,6 +43,9 @@ export default function NewMissionModal({
   const seats = useStore((s) => s.seats)
   const createMission = useStore((s) => s.createMission)
   const loadCatalog = useStore((s) => s.loadCatalog)
+  const loadMissions = useStore((s) => s.loadMissions)
+  const setMissionTab = useStore((s) => s.setMissionTab)
+  const setUniverseTab = useStore((s) => s.setUniverseTab)
 
   const [title, setTitle] = useState(initialTitle ?? '')
   const [goal] = useState(initialGoal ?? '')
@@ -71,6 +75,14 @@ export default function NewMissionModal({
   const [missionType, setMissionType] = useState<MissionType>('dev')
   const typeChoosable = !lockVersion
   const planning = typeChoosable && missionType === 'planejamento'
+  // RELEASE DIRETA (ordem do dono, 2026-09-28): a correção rápida sem missão
+  // antes. O destino é a versão ATUAL (só a release pode nascer nela), uma
+  // aberta ou uma nova — quem cria é o main, pela ponte própria.
+  const releasing = typeChoosable && missionType === 'release'
+  const [releaseChoiceValue, setReleaseChoiceValue] = useState('')
+  const releaseChoices = directReleaseChoices(versions, manifestVersion)
+  const releaseChoice =
+    releaseChoices.find((choice) => choice.value === releaseChoiceValue) ?? releaseChoices[0]
   const eligibleVersions = versionChoices?.versions ?? []
   const defaultVersion = eligibleVersions.find(
     (version) => version.id === versionChoices?.defaultVersionId
@@ -78,8 +90,10 @@ export default function NewMissionModal({
   /** as DUAS leituras de versão pousaram: as elegíveis (o destino) e a lista
    *  completa (que é quem sabe se este projeto ainda é virgem). */
   const versionDataLoading = versionChoicesLoading || versionsLoading
-  const versionLookupBlocksCreation =
-    !lockVersion && !planning && (versionDataLoading || Boolean(versionChoicesError))
+  // A release lê só a lista completa: as elegíveis são o destino de MISSÃO.
+  const versionLookupBlocksCreation = releasing
+    ? versionsLoading
+    : !lockVersion && !planning && (versionDataLoading || Boolean(versionChoicesError))
 
   // PRIMEIRA VERSÃO DO PROJETO (ordem do dono, 2026-08-17): sem nenhuma versão
   // aberta, o modal PERGUNTA em vez de deixar o motor semear "V1.0" sozinho —
@@ -89,6 +103,7 @@ export default function NewMissionModal({
   const needsFirstVersion =
     !lockVersion &&
     !planning &&
+    !releasing &&
     !versionDataLoading &&
     !versionChoicesError &&
     eligibleVersions.length === 0
@@ -200,6 +215,33 @@ export default function NewMissionModal({
   // criação 2.0 não tem selects de conta/modelo/effort — isso se decide
   // DENTRO da missão, na primeira conversa.
 
+  async function createRelease(): Promise<void> {
+    const create = window.synkora.backlog?.directRelease
+    if (!create) {
+      setSubmitError('reinicie o Synkora para criar a release direta')
+      return
+    }
+    if (!releaseChoice) {
+      setSubmitError('escolha onde a correção vai subir')
+      return
+    }
+    try {
+      const result = await create(projectId, directReleaseInput(title, releaseChoice))
+      if (!result.ok) {
+        setSubmitError(result.error)
+        return
+      }
+      onClose()
+      // A release acabou de nascer no main: sem recarregar a lista, o board não
+      // a conhece e a navegação cai no vazio (incidente de 2026-08-20).
+      await loadMissions(projectId)
+      setMissionTab(projectId, result.missionId)
+      setUniverseTab(projectId, 'board')
+    } catch {
+      setSubmitError('não consegui criar a release agora — tente de novo')
+    }
+  }
+
   async function submit(): Promise<void> {
     if (!title.trim()) return
     if (submitting) return
@@ -210,6 +252,10 @@ export default function NewMissionModal({
     setSubmitError('')
     setSubmitting(true)
     try {
+      if (releasing) {
+        await createRelease()
+        return
+      }
       // PRIMEIRA VERSÃO ANTES DA MISSÃO: o número que o dono escolheu vira
       // versão de verdade aqui, e só então a missão nasce carimbada nela. A
       // recusa do main (nome vazio, duplicado, abaixo da lançada) encerra o
@@ -272,7 +318,7 @@ export default function NewMissionModal({
       <div className="task-modal mission-modal" onClick={(e) => e.stopPropagation()}>
         <div className="task-modal-head">
           <span className="task-dept">
-            {planning ? '✎ novo planejamento' : '🚀 nova missão'}
+            {planning ? '✎ novo planejamento' : releasing ? '⇪ nova release' : '🚀 nova missão'}
           </span>
           {lockVersion && versionId && (
             <span className="task-origin" data-tip="Versão herdada da aba Versões">
@@ -288,7 +334,7 @@ export default function NewMissionModal({
             {submitError}
           </div>
         )}
-        {/* NATUREZA da missão — duas, decididas no nascimento. Fica no TOPO
+        {/* NATUREZA da missão — três, decididas no nascimento. Fica no TOPO
             porque é ela que governa o resto do formulário (planejamento não
             tem versão nem escopo de paths). */}
         {typeChoosable && (
@@ -296,8 +342,8 @@ export default function NewMissionModal({
             <button
               type="button"
               role="radio"
-              aria-checked={!planning}
-              className={`mtc-opt${planning ? '' : ' active'}`}
+              aria-checked={missionType === 'dev'}
+              className={`mtc-opt${missionType === 'dev' ? ' active' : ''}`}
               data-tip="Trabalho de produto: branch e worktree próprios, o agente trabalha isolado e o ⇪ leva para a fila de integração"
               onClick={() => setMissionType('dev')}
             >
@@ -313,6 +359,16 @@ export default function NewMissionModal({
             >
               ✎ planejamento
             </button>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={releasing}
+              className={`mtc-opt${releasing ? ' active' : ''}`}
+              data-tip="Uma correção rápida publicada direto, sem missão antes: na versão atual (direto na main, sem número novo) ou numa versão nova. A conversa tem os mesmos painéis de uma missão"
+              onClick={() => setMissionType('release')}
+            >
+              ⇪ release
+            </button>
           </div>
         )}
         {planning && (
@@ -320,17 +376,49 @@ export default function NewMissionModal({
             roda na raiz do projeto e escreve o plano/ — não entra na fila
           </span>
         )}
+        {releasing && (
+          <span className="mission-type-hint">
+            corrige e publica direto, sem missão antes — não entra na fila
+          </span>
+        )}
         <input
           className="task-modal-title"
           autoFocus
           placeholder={
-            planning ? 'título (ex.: Plano da V1.1)' : 'título (ex.: Tela de checkout)'
+            planning
+              ? 'título (ex.: Plano da V1.1)'
+              : releasing
+                ? 'o que corrigir (ex.: Login não responde)'
+                : 'título (ex.: Tela de checkout)'
           }
           value={title}
           onChange={(e) => setTitle(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && void submit()}
         />
-        {!lockVersion && !needsFirstVersion && (
+        {releasing && (
+          <label className="mission-version-choice">
+            versão da release
+            <Select
+              value={releaseChoice?.value ?? ''}
+              disabled={versionsLoading || releaseChoices.length === 0}
+              tip="Onde a correção sobe"
+              onChange={setReleaseChoiceValue}
+              options={
+                versionsLoading
+                  ? [{ value: '', label: 'carregando versões...' }]
+                  : releaseChoices.map((choice) => ({
+                      value: choice.value,
+                      label: choice.label,
+                      hint: choice.hint
+                    }))
+              }
+            />
+            <span className="mission-version-note" aria-live="polite">
+              {versionsLoading ? 'consultando as versões do projeto' : directReleaseNote(releaseChoice)}
+            </span>
+          </label>
+        )}
+        {!lockVersion && !releasing && !needsFirstVersion && (
           <label className="mission-version-choice">
             {'vers\u00e3o de destino'}
             <Select
@@ -404,7 +492,9 @@ export default function NewMissionModal({
           <span className="task-modal-meta">
             {planning
               ? 'a conversa abre na RAIZ do projeto e entrega escrevendo plano/ — sem branch, sem worktree e fora da fila de integração'
-              : versionDataLoading
+              : releasing
+                ? 'a conversa de release abre com os painéis de uma missão — conta, modelo e permissões você escolhe dentro dela, na primeira conversa'
+                : versionDataLoading
                 ? 'consultando as versoes abertas antes de criar a missao'
                 : versionChoicesError
                   ? versionChoicesError
@@ -423,11 +513,12 @@ export default function NewMissionModal({
               !title.trim() ||
               versionLookupBlocksCreation ||
               submitting ||
-              (needsFirstVersion && !firstVersionName.trim())
+              (needsFirstVersion && !firstVersionName.trim()) ||
+              (releasing && !releaseChoice)
             }
             onClick={() => void submit()}
           >
-            {planning ? 'criar planejamento' : 'criar missão'}
+            {planning ? 'criar planejamento' : releasing ? 'criar release' : 'criar missão'}
           </button>
         </div>
       </div>

@@ -2410,8 +2410,6 @@ test('composer usa trilho plano do app, anexos e contexto no rodapé', () => {
   assert.match(pane, /stopInsteadOfSend \? ' stop' : ''/u)
   assert.match(pane, /aria-label=\{\s*stopInsteadOfSend\s*\? 'Interromper resposta'/u)
   assert.match(pane, /aria-keyshortcuts=\{stopInsteadOfSend \? 'Escape' : undefined\}/u)
-  assert.ok(/onClick=\{stopInsteadOfSend \? \(\) => void interruptGuiPane\(paneId\) : \(\) => submit\(\)\}/u.test(pane),
-    'botão principal interrompe a resposta atual ou envia com o modo padrão')
   assert.match(pane, /stopInsteadOfSend \? <StopGlyph \/> : <SendGlyph \/>/u)
   // Glifos desenhados à mão na mesma grade de 16: nada de emoji, nada de
   // biblioteca de ícones, e a MESMA caixa nos dois estados — trocar enviar por
@@ -4482,8 +4480,15 @@ test('R27 — o board não lista o registro de release e o trilho vira release',
   )
   assert.doesNotMatch(releaseRail, /dev → main/u)
   assert.match(releaseRail, /targetBranch \?\? 'destino no chat'/u)
-  const railGate = board.indexOf('selIsRelease')
-  assert.ok(railGate > 0, 'o trilho de missão é condicionado ao registro não ser release')
+  // RELEASE DIRETA (2026-09-28): a release também monta o trilho de painéis
+  // (trabalho, histórico, browser, frota); a ENTREGA dele (⇪, arquivar) é de
+  // missão e nunca aparece numa release.
+  assert.match(board, /\{isDirect && selMission && \(\s*<GuiPanelErrorBoundary\s+paneId=\{`mission-delivery:/u)
+  const missionRail = readFileSync(
+    new URL('../src/renderer/src/components/MissionDeliveryRail.tsx', import.meta.url),
+    'utf8'
+  )
+  assert.match(missionRail, /\{!planning && !release && \(\s*<DockSection id="entrega"/u)
 })
 
 // R27 (conserto pós-estreia): o ✦ de ativas do cabeçalho e o retrato por

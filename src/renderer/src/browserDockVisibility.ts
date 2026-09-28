@@ -10,7 +10,6 @@ export interface BrowserDockNavigation {
     projectId: string
     direct?: boolean
     status: string
-    missionType?: string
   }[]
 }
 
@@ -23,7 +22,6 @@ export function eligibleDockMission(state: BrowserDockNavigation): string | null
   const selected = state.missionTabByProject[projectId]
   const mission = state.missions.find((m) => m.id === selected && m.projectId === projectId)
   return mission?.direct &&
-    mission.missionType !== 'release' &&
     (mission.status === 'ativa' || mission.status === 'integrando')
     ? mission.id
     : null

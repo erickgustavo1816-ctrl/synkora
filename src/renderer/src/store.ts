@@ -1,3 +1,4 @@
+import type { GuiInterruptOrigin } from '../../shared/guiInterrupt'
 import { create } from 'zustand'
 import { isGuiBrowserReferenceList, type GuiBrowserReference } from '../../shared/guiBrowserReferences'
 import { guiParentTurnActivity } from './guiParentTurnActivity'
@@ -2069,7 +2070,7 @@ interface SynkoraState {
     approve: boolean,
     note?: string
   ) => Promise<void>
-  interruptGuiPane: (paneId: string) => Promise<void>
+  interruptGuiPane: (paneId: string, origin?: GuiInterruptOrigin) => Promise<void>
   /** pane fechado: encerra a sessão no main e descarta a conversa */
   dropGuiPane: (paneId: string) => void
   paneStats: Record<string, PaneStats>
@@ -3111,7 +3112,7 @@ export const useStore = create<SynkoraState>((set, get) => ({
     }
   },
 
-  interruptGuiPane: async (paneId) => {
+  interruptGuiPane: async (paneId, origin) => {
     const before = get().guiPanes[paneId]
     if (!before || before.status !== 'working') return
     const turnIdentity = {
@@ -3137,7 +3138,7 @@ export const useStore = create<SynkoraState>((set, get) => ({
         }
       }
     })
-    const result = await guiApi.interrupt(paneId)
+    const result = await guiApi.interrupt(paneId, origin)
     if (result.ok && result.alreadyIdle) {
       set((s) => {
         const prev = s.guiPanes[paneId]

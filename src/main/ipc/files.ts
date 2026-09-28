@@ -35,6 +35,8 @@ import {
 } from '../fileActions'
 import { archiveDirectoryToNewFileOffMain } from '../fileArchiveAsync'
 import type { MainContext } from '../mainContext'
+import type { Mission } from '../missions'
+import type { ReleaseWorkspaceResult } from '../releaseWorkspace'
 import {
   listReadOnlyFileTree,
   readReadOnlyFilePreview,
@@ -43,6 +45,7 @@ import {
 } from '../filePreview'
 
 export interface FilesIpcExtras {
+  resolveReleaseWorkspace(mission: Mission): Promise<ReleaseWorkspaceResult>
   /** Host ou canvas: ambos são renderers empacotados e autenticados. */
   assertAppRendererSender(event: IpcMainInvokeEvent | IpcMainEvent): void
 }
@@ -257,10 +260,10 @@ export function registerFilesIpc(ctx: MainContext, extras: FilesIpcExtras): void
    * Mission worktrees are authoritative state owned by MissionStore. The
    * read-only helper performs the second, physical containment check.
    */
-  const readOnlyRootPath = (
+  const readOnlyRootPath = async (
     projectId: unknown,
     rawRoot: unknown
-  ): { kind: FileTreeRoot['kind']; path: string } | null => {
+  ): Promise<{ kind: FileTreeRoot['kind']; path: string } | null> => {
     if (typeof projectId !== 'string' || projectId.length === 0 || projectId.length > 256) return null
     const project = projects.get(projectId)
     if (!project || typeof project.path !== 'string') return null
@@ -277,20 +280,24 @@ export function registerFilesIpc(ctx: MainContext, extras: FilesIpcExtras): void
     // integração limpa o registro — sem isto, missão encerrada seguia legível e
     // missão sem worktree caía na RAIZ DO PROJETO rotulada "worktree da missão".
     if (mission.status !== 'ativa') return null
+    if (mission.missionType === 'release') {
+      const workspace = await extras.resolveReleaseWorkspace(mission)
+      return workspace.error !== undefined ? null : { kind: 'mission', path: workspace.dir }
+    }
     if (typeof mission.worktree !== 'string' || !mission.worktree) return null
     return { kind: 'mission', path: mission.worktree }
   }
 
-  ipcMain.handle('files:listTree', (_e, projectId: unknown, rawRoot: unknown) => {
-    const root = readOnlyRootPath(projectId, rawRoot)
+  ipcMain.handle('files:listTree', async (_e, projectId: unknown, rawRoot: unknown) => {
+    const root = await readOnlyRootPath(projectId, rawRoot)
     if (!root) return { entries: [], truncated: false, skipped: 0, error: 'raiz de arquivos indisponível' }
     return listReadOnlyFileTree(root.path)
   })
 
   ipcMain.handle(
     'files:preview',
-    (_e, projectId: unknown, rawRoot: unknown, relativePath: unknown) => {
-      const root = readOnlyRootPath(projectId, rawRoot)
+    async (_e, projectId: unknown, rawRoot: unknown, relativePath: unknown) => {
+      const root = await readOnlyRootPath(projectId, rawRoot)
       if (!root || typeof relativePath !== 'string') return null
       return readReadOnlyFilePreview(root.path, relativePath)
     }
@@ -337,7 +344,7 @@ export function registerFilesIpc(ctx: MainContext, extras: FilesIpcExtras): void
         return { ok: false, error }
       }
 
-      const root = readOnlyRootPath(projectId, rawRoot)
+      const root = await readOnlyRootPath(projectId, rawRoot)
       if (!root) return refuse('a origem deste arquivo não está mais disponível')
       if (typeof relativePath !== 'string') return refuse('caminho de arquivo inválido')
       const file = resolveReadOnlyFile(root.path, relativePath)
