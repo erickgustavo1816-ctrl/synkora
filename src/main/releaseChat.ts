@@ -74,7 +74,7 @@ export function ensureReleaseMission(deps: EnsureReleaseMissionDeps): EnsureRele
   const { version } = deps
   const request = deps.directRequest
   if (request && version.status === 'lancada' && request.currentVersionId !== version.id)
-    return { ok: false, error: 'esta versão não é a atual; receita: escolha a versão atual em Nova missão → Release' }
+    return { ok: false, error: 'esta versão lançada não é a atual' }
   const existing = deps.missions.find(
     (mission) =>
       mission.projectId === version.projectId &&

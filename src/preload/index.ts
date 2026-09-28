@@ -1404,10 +1404,12 @@ const api = {
       ipcRenderer.invoke('backlog:removeVersion', projectId, id),
     releaseVersion: (id: string): Promise<string> =>
       ipcRenderer.invoke('backlog:releaseVersion', id),
-    /** R10: o botão "subir pra main" abre (ou reencontra) a MISSÃO DE RELEASE
-     *  da versão — quem sobe é o agente do chat; o clique é o mandato. */
+    /** Release direta (2026-09-28): o modal de missão nova abre (ou reencontra)
+     *  a release da versão atual ou de uma não lançada — sem missão antes. */
     directRelease: (projectId: string, input: DirectReleaseInput): Promise<DirectReleaseResult> =>
       ipcRenderer.invoke('backlog:directRelease', projectId, input),
+    /** R10: o botão "subir pra main" abre (ou reencontra) a MISSÃO DE RELEASE
+     *  da versão — quem sobe é o agente do chat; o clique é o mandato. */
     releaseChat: (
       id: string
     ): Promise<{ ok: true; missionId: string } | { ok: false; error: string }> =>

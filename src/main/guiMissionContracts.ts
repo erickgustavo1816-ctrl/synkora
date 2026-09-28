@@ -1017,7 +1017,7 @@ export function guiReleaseFirstPrompt(input: {
     ...(input.ownerRequest ? [`OWNER REQUEST: ${input.ownerRequest}`] : []),
     input.versionStatus === 'lancada'
       ? `PHASE after-release: edit in PROJECT FOLDER ${input.projectPath}. Use release_save, release_push and release_done; no new number. The installed app will not receive this correction via auto-update. Explain that a new version chosen by the owner is required for that; never choose one yourself.`
-      : `PHASE before-release: edit and validate in VERSION WORKTREE ${input.versionWorktree ?? '(read release_status)'}, then release_save and release_run for ascent.`,
+      : `PHASE before-release: any correction is edited and validated in VERSION WORKTREE ${input.versionWorktree ?? '(read release_status)'} and saved with release_save; release_run is the ascent.`,
     // R27 — THE MAP. The owner once ran a build in the wrong folder because no
     // instruction ever named the folder it applied to. Addresses are spoken.
     ...(input.projectPath
