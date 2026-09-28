@@ -1,6 +1,6 @@
 {
   "name": "synkora",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Synkora — Agentic Development Environment: projetos como universos, departamentos com orquestradores e harness automático sobre CLIs de IA.",
   "main": "./out/main/index.js",
   "author": "Erick",
