@@ -64,7 +64,8 @@ import { normalizeGuiSubagentSidebar } from '../guiSubagentSidebar'
 import { guiHistoryPageRequest, guiPrunedNoticeText } from '../guiHistoryReader'
 import {
   noteGuiPaneInteraction,
-  registerGuiEscapeTarget
+  registerGuiEscapeTarget,
+  captureGuiInterruptOrigin
 } from '../guiEscape'
 import {
   canComposeGuiMessage,
@@ -1386,7 +1387,7 @@ export default function GuiPane({
       paneId,
       element,
       () => escapeStateRef.current,
-      () => interruptGuiPane(paneId),
+      (origin) => interruptGuiPane(paneId, origin),
       () => dismissEscapeMenuRef.current()
     )
   }, [interruptGuiPane, paneId])
@@ -2908,7 +2909,9 @@ export default function GuiPane({
                     : 'Enviar mensagem'
                 }
                 aria-keyshortcuts={stopInsteadOfSend ? 'Escape' : undefined}
-                onClick={stopInsteadOfSend ? () => void interruptGuiPane(paneId) : () => submit()}
+                onClick={stopInsteadOfSend
+                  ? (event) => void interruptGuiPane(paneId, captureGuiInterruptOrigin('stop-button', event.nativeEvent))
+                  : () => submit()}
               >
                 {stopInsteadOfSend ? <StopGlyph /> : <SendGlyph />}
               </button>

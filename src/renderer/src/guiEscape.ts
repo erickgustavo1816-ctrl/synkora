@@ -1,3 +1,32 @@
+import type { GuiInterruptOrigin, GuiInterruptTarget } from '../../shared/guiInterrupt'
+
+function interruptTarget(node: EventTarget | null): GuiInterruptTarget {
+  if (!(node instanceof Element)) return 'none'
+  switch (node.tagName.toLowerCase()) {
+    case 'button': return 'button'
+    case 'textarea': return 'textarea'
+    case 'input': return 'input'
+    case 'a': return 'link'
+    default: return node instanceof HTMLElement && node.isContentEditable ? 'contenteditable' : 'other'
+  }
+}
+
+export function captureGuiInterruptOrigin(
+  source: 'stop-button' | 'escape',
+  event?: Event & { repeat?: boolean }
+): GuiInterruptOrigin {
+  if (!event) return { source }
+  return {
+    source,
+    ...(event.type === 'click' || event.type === 'keydown' ? { eventType: event.type } : {}),
+    isTrusted: event.isTrusted,
+    defaultPrevented: event.defaultPrevented,
+    ...(typeof event.repeat === 'boolean' ? { repeat: event.repeat } : {}),
+    target: interruptTarget(event.target),
+    focus: interruptTarget(document.activeElement)
+  }
+}
+
 interface GuiEscapeState {
   working: boolean
   questionOpen: boolean
@@ -8,7 +37,7 @@ interface GuiEscapeEntry {
   paneId: string
   element: HTMLElement
   state: () => GuiEscapeState
-  interrupt: () => void | Promise<void>
+  interrupt: (origin: GuiInterruptOrigin) => void | Promise<void>
   dismissMenu: () => void
   lastInterruptAt: number
 }
@@ -32,7 +61,7 @@ export function registerGuiEscapeTarget(
   paneId: string,
   element: HTMLElement,
   state: () => GuiEscapeState,
-  interrupt: () => void | Promise<void>,
+  interrupt: (origin: GuiInterruptOrigin) => void | Promise<void>,
   dismissMenu: () => void
 ): () => void {
   const entry: GuiEscapeEntry = {
@@ -99,7 +128,7 @@ function dispatchGuiEscape(event?: KeyboardEvent): boolean {
   const now = Date.now()
   if (now - entry.lastInterruptAt < 500) return true
   entry.lastInterruptAt = now
-  void entry.interrupt()
+  void entry.interrupt(captureGuiInterruptOrigin('escape', event))
   return true
 }
 

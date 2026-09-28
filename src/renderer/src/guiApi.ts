@@ -19,6 +19,7 @@ import type {
 } from '../../preload'
 import type { GuiBrowserReference, GuiBrowserReferenceRevealResult } from '../../shared/guiBrowserReferences'
 import type { GuiUsageMeters } from '../../shared/guiUsage'
+import type { GuiInterruptOrigin } from '../../shared/guiInterrupt'
 
 export interface GuiBrowserReferencesResult {
   ok: boolean
@@ -532,7 +533,7 @@ interface GuiBridge {
     note?: string
   ) => Promise<{ ok: boolean; error?: string }>
   /** Mirrors GuiResult in main/guiSessions.ts for the stop/finish race. */
-  interrupt: (paneId: string) => Promise<{ ok: boolean; error?: string; alreadyIdle?: boolean }>
+  interrupt: (paneId: string, origin?: GuiInterruptOrigin) => Promise<{ ok: boolean; error?: string; alreadyIdle?: boolean }>
   /** R39.1 (D4') — "LER AGORA". Espelho declarado de `gui:forceOwnerMessage`
    *  (`src/preload/index.ts` + `src/main/ipc/gui.ts`). */
   forceOwnerMessage: (paneId: string, messageId: string) => Promise<{ ok: boolean; error?: string }>
@@ -781,11 +782,11 @@ export const guiApi = {
     }
   },
 
-  async interrupt(paneId: string): Promise<{ ok: boolean; error?: string; alreadyIdle?: boolean }> {
+  async interrupt(paneId: string, origin?: GuiInterruptOrigin): Promise<{ ok: boolean; error?: string; alreadyIdle?: boolean }> {
     const api = bridge()
     if (!api?.interrupt) return { ok: false, error: NO_BRIDGE }
     try {
-      return (await api.interrupt(paneId)) ?? { ok: false, error: 'a sessão não confirmou a interrupção' }
+      return (await api.interrupt(paneId, origin)) ?? { ok: false, error: 'a sessão não confirmou a interrupção' }
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) }
     }

@@ -1,3 +1,4 @@
+import type { GuiInterruptOrigin } from '../shared/guiInterrupt'
 import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron'
 import type { MobileApi, MobilePhoneApi, MobileVideoDelivery } from '../shared/mobileSimulator'
 export type { MobileApi, MobileAction, MobileFrame, MobileSession, MobileState, MobileVideoPacket } from '../shared/mobileSimulator'
@@ -1186,8 +1187,8 @@ const api = {
      *  aquele ajudante e a ficha é história; a lateral tira a linha nos dois. */
     dismissHelper: (helperId: string): Promise<GuiHelperOwnerDismissResult> =>
       ipcRenderer.invoke('gui:dismissHelper', helperId),
-    interrupt: (paneId: string): Promise<GuiResult> =>
-      ipcRenderer.invoke('gui:interrupt', paneId),
+    interrupt: (paneId: string, origin?: GuiInterruptOrigin): Promise<GuiResult> =>
+      ipcRenderer.invoke('gui:interrupt', paneId, origin),
     /** R39.1 (D4', 2026-09-02) — "LER AGORA": o dono corta o turno em curso
      *  para que o CLI leia AGORA a fala que ainda está sem recibo de leitura.
      *  Decisão dele, verbatim: *"se eu quiser eu posso forçar, aí forçando ele
