@@ -979,25 +979,36 @@ select {
   align-items: center;
   gap: 10px;
   padding: 12px 0;
-  overflow-y: auto;
-  /* barra ESCONDIDA de propósito (o trilho rola pela roda); o par
-     ::-webkit-scrollbar abaixo é a receita da casa para esconder */
-  scrollbar-width: none;
-}
-
-.project-rail::-webkit-scrollbar {
-  display: none;
+  /* como no Discord (pedido do dono, 2026-09-28): o Home e o selo de versão
+     ficam FIXOS e só a lista de universos rola. Antes o trilho inteiro rolava
+     e, com muitos universos, o flex achatava o botão Home até o logo sumir. */
+  overflow: hidden;
 }
 
 .rail-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
   display: flex;
   flex-direction: column;
   gap: 10px;
   align-items: center;
+  /* folga para o anel do ativo/atenção não ser cortado pela rolagem */
+  padding: 4px 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  /* barra ESCONDIDA de propósito (a lista rola pela roda); o par
+     ::-webkit-scrollbar abaixo é a receita da casa para esconder */
+  scrollbar-width: none;
+}
+
+.rail-list::-webkit-scrollbar {
+  display: none;
 }
 
 .rail-item {
   position: relative;
+  flex-shrink: 0;
   width: 46px;
   height: 46px;
   border: none;
