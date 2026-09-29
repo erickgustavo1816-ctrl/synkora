@@ -82,9 +82,9 @@
      barra de baixo (a costura some embaixo dela) — a aba e a barra viram o
      mesmo objeto, como num browser de verdade. As outras moram na prateleira. */
   .nb-tabs { position: relative; display: flex; align-items: flex-end; flex: none; height: 33px; padding: 5px 6px 0; background: var(--paper); border-bottom: 1px solid var(--line-strong); }
-  .nb-tablist { display: flex; align-items: flex-end; flex: 1 1 auto; min-width: 0; height: 100%; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+  .nb-tablist { display: flex; align-items: flex-end; flex: 0 1 auto; min-width: 0; height: 100%; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
   .nb-tablist.fade-r { mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); }
-  .nb-tab { position: relative; display: flex; align-items: center; gap: 6px; flex: 1 1 0; min-width: 64px; max-width: 200px; height: 28px; margin-bottom: -1px;
+  .nb-tab { position: relative; display: flex; align-items: center; gap: 6px; flex: 0 1 180px; min-width: 64px; height: 28px; margin-bottom: -1px;
     padding: 0 4px 1px 10px; border: 1px solid transparent; border-bottom: 0; border-radius: 7px 7px 0 0;
     color: var(--ink-2); font-size: 10.5px; cursor: pointer; user-select: none; isolation: isolate; }
   .nb-tab::before { content: ''; position: absolute; inset: 3px 2px 4px; border-radius: 5px; background: transparent; transition: background var(--motion-fast) ease; z-index: -1; }
@@ -108,6 +108,9 @@
   .nb-tab.on .nb-tab-x, .nb-tab:hover .nb-tab-x, .nb-tab.is-hover .nb-tab-x, .nb-tab-x:focus-visible { opacity: 1; }
   .nb-tab-x:hover { background: var(--line); color: var(--ink); }
   .nb-tab-x svg { width: 11px; height: 11px; }
+  /* O + mora colado à direita da ÚLTIMA aba, como no Chrome: com poucas abas
+     ele fica perto de onde a mão já está; com a tira cheia, ele encosta na
+     borda e não vai junto para debaixo da rolagem. */
   .nb-add { flex: none; align-self: center; display: grid; place-items: center; width: 24px; height: 24px; margin: 0 0 3px 3px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--ink-2); cursor: pointer; }
   .nb-add:hover { background: color-mix(in srgb, var(--ink) 7%, transparent); color: var(--ink); }
   .nb-add svg { width: 13px; height: 13px; }
@@ -165,6 +168,18 @@
   .nb-info-x svg { width: 11px; height: 11px; }
   @keyframes nb-info-in { from { opacity: 0; transform: translateY(-3px); } }
 
+  .nb-tab-err { flex: none; width: 12px; height: 12px; color: var(--err); }
+  .pg-blank { position: absolute; inset: 0; background: #fff; }
+  /* VARIANTE B: a própria página explica (o motor esconde a página nativa
+     enquanto a aba está em erro, e o retângulo — que já é painel escuro —
+     fala). Mesma gramática do convite "abrir browser" que já mora ali. */
+  .pg-error { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 24px; text-align: center; background: var(--panel-2); }
+  .pg-error > svg { width: 26px; height: 26px; color: #e8897f; }
+  .pg-error h4 { margin: 0; font: 700 12.5px var(--mono); color: var(--panel-ink); }
+  .pg-error p { margin: 0; max-width: 38ch; font: 11px/1.55 var(--mono); color: var(--panel-ink-2); }
+  .pg-error small { max-width: 38ch; font: 10px/1.4 var(--mono); color: var(--panel-ink-3); overflow-wrap: anywhere; }
+  .pg-error button { margin-top: 4px; padding: 6px 14px; border: 1.5px solid var(--panel-ink-2); border-radius: 6px; background: transparent; font: 700 10.5px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--panel-ink); cursor: pointer; }
+  .pg-error button:hover { background: var(--panel-ink); border-color: var(--panel-ink); color: var(--panel); }
   .nb-page { position: relative; flex: 1; min-height: 0; min-width: 0; background: var(--panel-2); overflow: hidden; }
   .nb button:focus-visible, .nb .nb-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 
@@ -192,7 +207,7 @@
 <style>
   /* ——— a prancha ——— */
   body { margin: 0; padding: 32px 24px 72px; background: var(--paper); color: var(--ink); font-family: var(--mono); }
-  .page { max-width: 1060px; margin: 0 auto; display: flex; flex-direction: column; gap: 44px; }
+  .page { max-width: 1180px; margin: 0 auto; display: flex; flex-direction: column; gap: 44px; }
   h1 { font-size: 18px; margin: 0 0 8px; }
   h2 { font-size: 13px; margin: 0 0 6px; letter-spacing: .04em; text-transform: uppercase; }
   .lede, .note { font-size: 12.5px; line-height: 1.6; color: var(--ink-2); margin: 0; max-width: 80ch; }
@@ -235,11 +250,32 @@
   </section>
 
   <section>
-    <h2>2 · Mouse numa aba + recado do motor</h2>
-    <p class="note">A cena que você descreveu, congelada: o mouse está sobre a aba do INV-BRAND e a prévia
-      local recusou a conexão. No antes, a frase da aba toma o pé e os recados caem soltos embaixo do
-      corpo. No depois, a dica é o tooltip nativo do Windows (<code>title</code>), que desenha
-      <b>por cima</b> da página nativa, e o recado vira uma faixa com a saída dentro: RECARREGAR ou ×.</p>
+    <h2>2 · Quando dá erro</h2>
+    <p class="note">A aba do dev tentou abrir a prévia e o servidor não estava de pé. O que a página nativa mostra
+      nesse caso é uma <b>página em branco</b>: o Electron não desenha página de erro, e o recado do motor é a
+      única explicação. No antes, esse recado cai como linha solta embaixo do corpo, longe dos olhos.
+      No depois há dois jeitos, e a escolha é sua. Nos dois, a aba que falhou ganha a marca de erro, visível mesmo
+      olhando outra aba, e o aviso some sozinho quando a aba volta a carregar. As janelas do depois são
+      interativas: clique em RECARREGAR.</p>
+    <div class="pair">
+      <div class="cell" id="e-antes"></div>
+      <div class="cell" id="e-depois-a"></div>
+      <div class="cell" id="e-depois-b"></div>
+    </div>
+    <p class="note" style="margin-top: 14px">
+      <b>A · faixa acima da página</b>: o aviso mora entre a barra e a página, com RECARREGAR e ×; a página
+      em branco continua lá. Mexe só no painel (mais a marca na aba, que precisa do motor dizendo qual aba falhou).<br />
+      <b>B · a página explica, igual ao Chrome</b>: enquanto a aba está em erro, o motor esconde a página nativa e
+      o retângulo mostra o erro com RECARREGAR no meio, onde o olho já está. Não há faixa nem página branca muda.
+      Mexe também no motor do browser, que passa a contar o erro POR ABA. Queda da página ("a página caiu")
+      segue o mesmo desenho.</p>
+  </section>
+
+  <section>
+    <h2>3 · Mouse numa aba</h2>
+    <p class="note">O mouse está sobre a aba do INV-BRAND. No antes, a frase da aba toma o pé, quebra linha e a
+      página encolhe. No depois, a dica é o tooltip nativo do Windows (<code>title</code>), que desenha
+      <b>por cima</b> da página nativa. Nada se mexe.</p>
     <div class="pair">
       <div class="cell" id="s2-antes"></div>
       <div class="cell" id="s2-depois"></div>
@@ -247,7 +283,7 @@
   </section>
 
   <section>
-    <h2>3 · Os três tons da faixa</h2>
+    <h2>4 · Os três tons da faixa</h2>
     <p class="note">Erro do motor (carga, queda, download barrado, teto de abas): tom de erro, e quando é
       carga ou queda vem RECARREGAR. O motor sem responder: cinza, porque a página na tela ainda é a
       última fotografia. Nota de largura, quando o painel é estreito demais para o que se pediu: neutra, porque é
@@ -256,7 +292,7 @@
   </section>
 
   <section>
-    <h2>4 · Painel estreito (340 px) em 768</h2>
+    <h2>5 · Painel estreito (340 px) em 768</h2>
     <p class="note">No antes, as abas viram três linhas e a página perde mais ainda. No depois, as abas
       encolhem numa linha só (com muitas, a tira rola e a borda que esconde aba esmaece), e a barra
       continua numa linha só: a largura é um seletor compacto, não uma fileira.</p>
@@ -267,7 +303,7 @@
   </section>
 
   <section>
-    <h2>5 · O que saiu, e para onde foi</h2>
+    <h2>6 · O que saiu, e para onde foi</h2>
     <table>
       <thead><tr><th>Antes</th><th>Depois</th></tr></thead>
       <tbody>
@@ -278,7 +314,7 @@
         <tr><td>Nota "a página está em 768px REAIS, centralizada…"</td><td>Vira a dica do botão aceso. As faixas laterais escuras já marcam a borda da página.</td></tr>
         <tr><td>Nota "o painel é estreito demais para 1280px…"</td><td>Faixa neutra (é situação acionável, não erro): "alargue o painel ou destaque".</td></tr>
         <tr><td>Recados <code>// …</code> soltos embaixo do corpo</td><td>Faixa dentro do corpo, entre a barra e a página, com ×. Carga ou queda trazem RECARREGAR.</td></tr>
-        <tr><td>Abas em várias linhas (até 88 px de altura)</td><td>Uma linha. A aba ativa funde com a barra. O × aparece só na ativa e na aba sob o mouse, e o hover é um fundo discreto.</td></tr>
+        <tr><td>Abas em várias linhas (até 88 px de altura), + na ponta direita da tira</td><td>Uma linha. As abas nascem largas e encolhem quando falta lugar. O + fica colado à direita da última aba, como no Chrome. A aba ativa funde com a barra, o × aparece só na ativa e na aba sob o mouse, e o hover é um fundo discreto.</td></tr>
         <tr><td>Glifos ← → ⟳ &lt;/&gt; ⧉ × +</td><td>Ícones desenhados no mesmo traço dos ícones do workspace (grade de 20, traço 1.4).</td></tr>
         <tr><td>Pé do cartão "destacado numa janela própria"</td><td>A frase "o X da janela também reencaixa" vira a linha fina do próprio cartão.</td></tr>
       </tbody>
@@ -328,6 +364,17 @@ const site = () => `<div class="site"><div class="site-nav"><i class="site-logo"
   ${['#4821 · Ana Ribeiro', '#4820 · Caio Mendes', '#4819 · Júlia Prado', '#4818 · Otávio Lins', '#4817 · Rita Sales', '#4816 · Davi Rocha', '#4815 · Lia Torres', '#4814 · Enzo Brito', '#4813 · Nina Castro', '#4812 · Tomás Reis', '#4811 · Bia Farias', '#4810 · Leo Moraes'].map((r) => `<div class="site-row"><span>${r}</span><span>entregue</span></div>`).join('')}
   </div></div>`
 
+function pageContent(s) {
+  if (s.page === 'blank') return '<div class="pg-blank"></div>'
+  if (s.page === 'error') {
+    const a = s.tabs.find((t) => t.id === s.active)
+    return `<div class="pg-error">${svg('alert')}<h4>a página não carregou</h4>
+      <p>a prévia local na porta 5173 recusou a conexão — aguarde o servidor iniciar ou reinicie a prévia</p>
+      <button data-reload-page title="recarregar a página desta aba">recarregar</button><small>${esc(a ? a.url : '')}</small></div>`
+  }
+  return site()
+}
+
 /* ————— ANTES: a marcação de hoje ————— */
 function antes(s) {
   const tabs = s.tabs.map((t) => {
@@ -350,7 +397,7 @@ function antes(s) {
       <input class="dock-browser-url" value="${esc(active ? active.url : '')}" data-hint="endereço · Enter navega" />
     </div>
     <div class="dock-browser-vp">${vp}${note}</div>
-    <div class="dock-browser-page live" data-page data-mode="${s.mode}">${site()}</div>
+    <div class="dock-browser-page live" data-page data-mode="${s.mode}">${pageContent(s)}</div>
     <div class="dock-browser-foot">${s.driving ? '<span class="dock-browser-driving"><i class="dock-browser-driving-dot"></i><b>⚡</b> agente dirigindo</span>' : ''}
       ${s.hint ? `<span class="dock-browser-hint">${esc(s.hint)}</span>` : '<span class="dock-browser-session" data-rest>sessão do projeto</span>'}</div>
   </div>${notices}</div></div>`
@@ -363,7 +410,7 @@ function depois(s) {
     const owner = t.owner ? `<span class="nb-tab-owner">${t.driving ? svg('bolt') : ''}${t.owner}</span>` : ''
     const tip = tabSentence(t) + '\n' + t.url
     return `<div class="nb-tab${on ? ' on' : ''}${s.hoverTab === t.id ? ' is-hover' : ''}" role="tab" tabindex="${on ? 0 : -1}" aria-selected="${on}" data-tab="${t.id}" title="${esc(tip)}">
-      ${t.loading ? '<i class="nb-tab-dot"></i>' : ''}${owner}<span class="nb-tab-name">${t.label}</span>
+      ${t.loading ? '<i class="nb-tab-dot"></i>' : ''}${t.failed ? svg('alert').replace('<svg', '<svg class="nb-tab-err"') : ''}${owner}<span class="nb-tab-name">${t.label}</span>
       <button class="nb-tab-x" data-close="${t.id}" aria-label="fechar ${esc(t.phrase || 'a aba')} · ${esc(t.label)}" title="${esc(t.phrase ? 'fechar a ' + t.phrase : 'fechar esta aba')}">${svg('close')}</button></div>`
   }).join('')
   const active = s.tabs.find((t) => t.id === s.active)
@@ -395,7 +442,7 @@ function depois(s) {
       <button class="nb-ico" aria-label="destacar numa janela própria" title="destacar numa janela própria · o X dela reencaixa">${svg('popout')}</button>
     </div>
     ${infos ? `<div class="nb-infos">${infos}</div>` : ''}
-    <div class="nb-page" data-page data-mode="${s.mode}">${site()}</div>
+    <div class="nb-page" data-page data-mode="${s.mode}">${pageContent(s)}</div>
   </div></div>`
 }
 
@@ -403,6 +450,7 @@ function depois(s) {
 function layoutPage(page) {
   const mode = page.dataset.mode === 'auto' ? 'auto' : Number(page.dataset.mode)
   const el = page.querySelector('.site')
+  if (!el) return
   page.querySelectorAll('.band').forEach((b) => b.remove())
   const w = page.clientWidth, h = page.clientHeight
   if (mode === 'auto') { Object.assign(el.style, { width: w + 'px', height: h + 'px', left: '0px', transform: '' }); return }
@@ -425,7 +473,7 @@ function ledger(cell) {
   cell.dataset.ph = ph
   let gain = ''
   const other = pairs[cell.id]
-  if (other && cell.id.endsWith('depois')) {
+  if (other && /depois/.test(cell.id)) {
     const o = Number(document.getElementById(other).dataset.ph || 0)
     if (o) gain = ` · <span class="gain">+${ph - o} px</span> para a página`
   }
@@ -437,6 +485,7 @@ const scenes = []
 function mount(id, kind, state, size, label) {
   const cell = document.getElementById(id)
   const s = { tabs: BASE_TABS(), active: 'b', mode: 'auto', driving: true, ...state }
+  cell.style.width = size[0] + 'px'
   const render = () => {
     cell.innerHTML = `<span class="cell-label">${label}</span><div class="wp" style="width:${size[0]}px;height:${size[1]}px">${kind === 'antes' ? antes(s) : depois(s)}</div><p class="ledger"></p>`
     const page = cell.querySelector('[data-page]')
@@ -491,11 +540,18 @@ function mount(id, kind, state, size, label) {
     }
     const dismiss = t.closest('[data-dismiss]')
     if (dismiss) { s.notices.splice(Number(dismiss.dataset.dismiss), 1); return render() }
+    if (t.closest('[data-reload-page]')) {
+      const a = s.tabs.find((x) => x.id === s.active)
+      s.page = 'site'
+      if (a) { a.failed = false; a.loading = true; setTimeout(() => { a.loading = false; render() }, 1400) }
+      return render()
+    }
     const reload = t.closest('[data-reload]')
     if (reload) {
       s.notices.splice(Number(reload.dataset.reload), 1)
       const a = s.tabs.find((x) => x.id === s.active)
-      if (a) { a.loading = true; setTimeout(() => { a.loading = false; render() }, 1400) }
+      if (a) { a.failed = false; a.loading = true; setTimeout(() => { a.loading = false; render() }, 1400) }
+      if (s.page === 'blank') s.page = 'site'
       return render()
     }
   })
@@ -515,18 +571,21 @@ function placeTooltip(cell, s) {
 }
 
 const W = [460, 640]
-pairs['s1-depois'] = 's1-antes'; pairs['s2-depois'] = 's2-antes'; pairs['s4-depois'] = 's4-antes'
+pairs['e-depois-a'] = 'e-antes'; pairs['e-depois-b'] = 'e-antes'; pairs['s1-depois'] = 's1-antes'; pairs['s2-depois'] = 's2-antes'; pairs['s4-depois'] = 's4-antes'
 mount('s1-antes', 'antes', {}, W, 'Antes · <em>interativo</em>')
 mount('s1-depois', 'depois', {}, W, 'Depois · <em>interativo</em>')
 mount('s2-antes', 'antes', {
   frozen: true,
-  hint: 'aba de inv-brand · Figma — tokens do tema · https://www.figma.com/design/k3P9/tokens-papel',
-  notices: [{ text: LOAD_FAILED }, { tone: 'muted', text: 'o motor do browser não respondeu — mostrando a última fotografia' }]
+  hint: 'aba de inv-brand · Figma — tokens do tema · https://www.figma.com/design/k3P9/tokens-papel'
 }, W, 'Antes')
 mount('s2-depois', 'depois', {
-  frozen: true, hoverTab: 'c', tooltip: true,
-  notices: [{ text: LOAD_FAILED, reload: true }]
+  frozen: true, hoverTab: 'c', tooltip: true
 }, W, 'Depois')
+const failedTabs = () => BASE_TABS().map((t) => (t.id === 'b' ? { ...t, failed: true, driving: false } : t))
+const E = [360, 600]
+mount('e-antes', 'antes', { frozen: true, tabs: failedTabs(), driving: false, page: 'blank', notices: [{ text: LOAD_FAILED }] }, E, 'Antes')
+mount('e-depois-a', 'depois', { tabs: failedTabs(), page: 'blank', notices: [{ text: LOAD_FAILED, reload: true }] }, E, 'Depois · <em>A · faixa</em>')
+mount('e-depois-b', 'depois', { tabs: failedTabs(), page: 'error' }, E, 'Depois · <em>B · a página explica</em>')
 const tones = document.getElementById('s3-tones')
 tones.style.height = '300px'
 tones.innerHTML = depois({ tabs: BASE_TABS(), active: 'b', mode: 1280, notices: [
