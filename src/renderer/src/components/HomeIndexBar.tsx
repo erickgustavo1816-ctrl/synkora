@@ -111,9 +111,14 @@ export function HomePopover({
     const onPointerDown = (e: PointerEvent): void => {
       if (outside(e.target)) close(false)
     }
-    // posição fixa não acompanha a rolagem: rolou por baixo, fecha
+    // posição fixa não acompanha a rolagem: fecha quando a âncora ANDOU. A
+    // barra é sticky, e um filtro que encolhe a grade dispara scroll (o
+    // Chromium grampeia o scrollTop) sem mover o botão — isso não fecha.
+    const anchorTop = anchor instanceof HTMLElement ? anchor.getBoundingClientRect().top : null
     const onScroll = (e: Event): void => {
-      if (!(e.target instanceof Node && ref.current?.contains(e.target))) close(false)
+      if (e.target instanceof Node && ref.current?.contains(e.target)) return
+      if (anchorTop !== null && anchor instanceof HTMLElement && Math.abs(anchor.getBoundingClientRect().top - anchorTop) < 1) return
+      close(false)
     }
     const onResize = (): void => close(false)
     window.addEventListener('pointerdown', onPointerDown, true)
@@ -124,7 +129,7 @@ export function HomePopover({
       window.removeEventListener('scroll', onScroll, true)
       window.removeEventListener('resize', onResize)
     }
-  }, [owner, close])
+  }, [owner, close, anchor])
 
   return createPortal(
     <div
@@ -296,7 +301,8 @@ export default function HomeIndexBar({
       const s = useStore.getState()
       if (s.appPage !== 'workspace' || s.openProjectId !== null) return
       if (isTypingTarget(document.activeElement)) return
-      if (document.querySelector('[aria-modal="true"]')) return
+      // modal aberto (os da casa usam `.overlay`): o teclado fica dentro dele
+      if (document.querySelector('[aria-modal="true"], .overlay')) return
       e.preventDefault()
       searchRef.current?.focus()
     }

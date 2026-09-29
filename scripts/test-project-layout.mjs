@@ -608,3 +608,22 @@ test('store does not write when an op changes nothing', () => {
     assert.equal(existsSync(file), false, 'the injected persist replaces the disk write')
   })
 })
+
+test('store never persists an empty project list over a saved layout', () => {
+  // projects.json that fails to read yields [] silently: serving the empty view
+  // is fine, writing it would wipe groups, names and colors (main and .bak)
+  withTempDir((dir) => {
+    const file = join(dir, 'project-layout.json')
+    let projectIds = ['a', 'b', 'c']
+    const store = new ProjectLayoutStore({ file, listProjectIds: () => projectIds, newId: seq() })
+    store.apply({ op: 'moveProject', projectId: 'b', target: { type: 'combine', projectId: 'a' } })
+    const saved = readFileSync(file, 'utf8')
+    projectIds = []
+    assert.deepEqual(store.get(), { entries: [], lastOpenedAt: {} })
+    assert.equal(store.reconcile().changed, false)
+    assert.equal(readFileSync(file, 'utf8'), saved)
+    projectIds = ['a', 'b', 'c']
+    const reopened = new ProjectLayoutStore({ file, listProjectIds: () => projectIds })
+    assert.equal(reopened.get().entries[0].kind, 'group')
+  })
+})

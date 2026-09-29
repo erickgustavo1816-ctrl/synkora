@@ -172,7 +172,10 @@ export function HomeGroupMenu({
 
   if (!group) return null
 
+  // o foco volta ao ··· ANTES da ação: a folha do grupo guarda quem tinha o
+  // foco ao abrir, e o item do menu some no mesmo commit
   const pick = (run: () => void) => (): void => {
+    if (anchor instanceof HTMLElement) anchor.focus({ preventScroll: true })
     onClose()
     run()
   }

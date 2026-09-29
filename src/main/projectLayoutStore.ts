@@ -43,8 +43,15 @@ export class ProjectLayoutStore {
 
   /** Encaixa o layout na lista de universos atual; grava só quando mudou. */
   reconcile(): { layout: ProjectLayout; changed: boolean } {
-    const next = reconcileProjectLayout(this.layout, this.options.listProjectIds())
+    const projectIds = this.options.listProjectIds()
+    const next = reconcileProjectLayout(this.layout, projectIds)
     if (next === this.layout) return { layout: next, changed: false }
+    // Lista VAZIA com layout de pé é, no mais provável, projects.json que
+    // falhou na leitura (o ProjectStore cai em [] em silêncio): servir a vista
+    // vazia, mas NUNCA gravá-la — gravar apagaria grupos, nomes e cores no
+    // principal e no .bak. Entrada órfã que sobra é inofensiva: toda leitura
+    // reconcilia de novo.
+    if (projectIds.length === 0) return { layout: next, changed: false }
     this.commit(next)
     return { layout: next, changed: true }
   }

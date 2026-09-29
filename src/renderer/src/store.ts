@@ -2309,6 +2309,10 @@ export const useStore = create<SynkoraState>((set, get) => ({
   },
 
   removeProject: async (id) => {
+    // sai da lista ANTES do IPC: o layout novo (sem ele) chega por broadcast
+    // antes da resposta, e um universo ainda listado mas fora do layout seria
+    // desenhado solto no fim do rail por um instante
+    set((s) => ({ projects: s.projects.filter((p) => p.id !== id) }))
     await window.synkora.projects.remove(id)
     set((s) => ({
       mountedProjects: s.mountedProjects.filter((x) => x !== id),
