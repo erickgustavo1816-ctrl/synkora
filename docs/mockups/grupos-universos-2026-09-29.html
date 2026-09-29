@@ -189,9 +189,12 @@
     gap: 5px;
     flex-shrink: 0;
   }
-  /* a pasta é só um fundo um tom acima do painel, sem contorno (como no Discord) */
-  .rail-folder { background: #34312a; }
-  .rail-folder.has-hue { background: hsl(var(--g-hue) 22% 24%); }
+  /* A LUZ DO DISCORD (medida no recorte do dono, 2026-09-29): o fundo da pasta
+     é MAIS CLARO que as miniaturas — o vão de 2px e a borda viram um contorno
+     claro desenhado em volta de cada uma. Miniatura mais clara que a pasta
+     lia como ladrilho rachado. */
+  .rail-folder { background: #413d35; }
+  .rail-folder.has-hue { background: hsl(var(--g-hue) 18% 28%); }
   .rail-folder.attn { box-shadow: 0 0 0 2px var(--accent); }
   /* GEOMETRIA DO DISCORD (medida no recorte do dono, 2026-09-29): miniaturas
      grandes e REDONDAS (canto ~40%), vão fino de 2px e ~4px de respiro até a
@@ -206,12 +209,12 @@
     display: grid;
     place-items: center;
     border-radius: 7px;
-    background: hsl(var(--card-hue, 30) 32% 36%);
+    background: hsl(var(--card-hue, 30) 30% 18%);
     color: var(--panel-ink);
     font: 700 8px/1 var(--mono);
   }
   .rf-mini.is-active { box-shadow: 0 0 0 1.5px var(--accent); }
-  .rf-mini.more { background: rgba(239, 232, 216, 0.1); color: var(--panel-ink-2); font-size: 8px; }
+  .rf-mini.more { background: rgba(20, 18, 15, 0.55); color: var(--panel-ink-2); font-size: 8px; }
   .rf-mini.is-missing { filter: grayscale(0.7); opacity: 0.6; }
 
   .rail-group-name {
@@ -816,9 +819,9 @@
   .gs-folder {
     width: 64px; height: 64px; border-radius: 20px;
     display: grid; place-items: center;
-    background: #34312a;
+    background: #413d35;
   }
-  .gs-folder.has-hue { background: hsl(var(--g-hue) 24% 22%); }
+  .gs-folder.has-hue { background: hsl(var(--g-hue) 18% 28%); }
   .gs-folder .rf-grid { grid-template-columns: repeat(2, 26px); grid-template-rows: repeat(2, 26px); gap: 3px; }
   .gs-folder .rf-mini { border-radius: 10px; font-size: 11px; }
   .gs-name {
