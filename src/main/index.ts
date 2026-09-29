@@ -11,6 +11,7 @@
 import {    join, resolve } from 'path'
 import { pathToFileURL } from 'url'
 import { ProjectStore } from './projects'
+import { ProjectLayoutStore } from './projectLayoutStore'
 import { SeatStore, type SeatCli } from './seats'
 import { PERSONA_DEV, SURVEY_SECURITY_PROMPT } from './maestro'
 import { MaestroStore } from './maestroStore'
@@ -63,6 +64,7 @@ import { registerMissionsIpc } from './ipc/missions'
 import { registerPtyIpc } from './ipc/pty'
 import { registerPanesIpc } from './ipc/panes'
 import { registerProjectsIpc } from './ipc/projects'
+import { registerProjectLayoutIpc, syncProjectLayout } from './ipc/projectLayout'
 import { registerBacklogIpc } from './ipc/backlog'
 import { registerFilesIpc } from './ipc/files'
 import { registerSettingsIpc } from './ipc/settings'
@@ -110,7 +112,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renam
 import { StallAttribution, instrumentIpcMain } from './stallAttribution'
 import { gitOff } from './gitAsync'
 import {} from 'child_process'
-import {   } from 'crypto'
+import { randomUUID } from 'crypto'
 import { PtyManager } from './pty'
 import { SessionStatsWatcher } from './sessionStats'
 import { Hub, type PaneIdentity } from './hub'
@@ -2420,6 +2422,13 @@ app.whenReady().then(async () => {
   // Fase 0: cargas síncronas dos stores no boot são etapa medida
   const endBootStores = mainStalls.begin('boot:stores')
   projects = new ProjectStore()
+  // Grupos de universos (2026-09-29): a ordem do rail num arquivo próprio,
+  // sempre reconciliada com o projects.json.
+  const projectLayout = new ProjectLayoutStore({
+    file: join(app.getPath('userData'), 'project-layout.json'),
+    listProjectIds: () => projects.list().map((p) => p.id),
+    newId: randomUUID
+  })
   seats = new SeatStore()
   const missions = new MissionStore()
   // Planos do universo (2.0, onda D): a fonte das abas do MAPA. Fica em
@@ -4917,8 +4926,10 @@ app.whenReady().then(async () => {
     ensureBypassAccepted,
     discardUnstartedPane,
     guiSessions: guiSessionRegistry,
-    killProjectGuiPanes
+    killProjectGuiPanes,
+    syncProjectLayout: () => syncProjectLayout(projectLayout, pushAll)
   })
+  registerProjectLayoutIpc(ctx, { store: projectLayout, assertAppRendererSender })
   registerBacklogIpc(ctx, {
     emitBacklogChanged,
     releaseVersionImpl,

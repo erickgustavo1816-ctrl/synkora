@@ -24,6 +24,7 @@ import type {
 } from '../../preload/index'
 import { applyDeptHueVars, DEPT_HUES_LS_KEY, loadDeptHues } from './departments'
 import { sameBrowserPanel } from './dockBrowserModel'
+import { useProjectLayout } from './projectLayoutStore'
 import { versionPortrait } from './projectLanding'
 import { isReleaseMissionRecord } from './missionCardAccess'
 import {
@@ -2538,7 +2539,11 @@ export const useStore = create<SynkoraState>((set, get) => ({
           ? [...s.mountedProjects, id]
           : s.mountedProjects
     }))
-    if (id) void get().loadMissions(id)
+    if (id) {
+      void get().loadMissions(id)
+      // "abertos por último" da Home: o único carimbo honesto de uso
+      void useProjectLayout.getState().apply({ op: 'touchOpened', projectId: id, at: new Date().toISOString() })
+    }
   },
 
   universeTabByProject: {},
