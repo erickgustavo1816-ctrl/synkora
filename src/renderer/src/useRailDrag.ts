@@ -92,6 +92,9 @@ export function useRailDrag({ listRef, enabled, onDrop }: Options): {
   onClickCapture: (event: React.MouseEvent<HTMLElement>) => void
 } {
   const [drag, setDrag] = useState<RailDragState | null>(null)
+  // os ouvintes da janela só existem entre o pointerdown num item e o fim do
+  // gesto: o rail parado não escuta nada
+  const [pressing, setPressing] = useState(false)
   const dragRef = useRef<RailDragState | null>(null)
   const pressRef = useRef<Press | null>(null)
   const pointerRef = useRef({ x: 0, y: 0 })
@@ -155,6 +158,7 @@ export function useRailDrag({ listRef, enabled, onDrop }: Options): {
     (drop: boolean) => {
       const current = dragRef.current
       pressRef.current = null
+      setPressing(false)
       if (!current) return
       window.cancelAnimationFrame(frame.current)
       document.body.classList.remove('rail-dragging')
@@ -187,6 +191,7 @@ export function useRailDrag({ listRef, enabled, onDrop }: Options): {
   }, [listRef, retarget])
 
   useEffect(() => {
+    if (!pressing) return
     const onMove = (event: PointerEvent): void => {
       pointerRef.current = { x: event.clientX, y: event.clientY }
       const current = dragRef.current
@@ -204,6 +209,7 @@ export function useRailDrag({ listRef, enabled, onDrop }: Options): {
       if (!press) return
       if (event.buttons === 0) {
         pressRef.current = null
+        setPressing(false)
         return
       }
       if (!railDragStarted(event.clientX - press.x, event.clientY - press.y)) return
@@ -214,6 +220,7 @@ export function useRailDrag({ listRef, enabled, onDrop }: Options): {
     const onUp = (): void => {
       if (dragRef.current) end(true)
       pressRef.current = null
+      setPressing(false)
     }
     const onCancel = (): void => end(false)
     const onKey = (event: KeyboardEvent): void => {
@@ -236,7 +243,7 @@ export function useRailDrag({ listRef, enabled, onDrop }: Options): {
       window.cancelAnimationFrame(frame.current)
       document.body.classList.remove('rail-dragging')
     }
-  }, [autoScroll, end, place, retarget])
+  }, [pressing, autoScroll, end, place, retarget])
 
   const onPointerDown = useCallback(
     (event: React.PointerEvent<HTMLElement>) => {
@@ -247,6 +254,7 @@ export function useRailDrag({ listRef, enabled, onDrop }: Options): {
       if (!source) return
       pointerRef.current = { x: event.clientX, y: event.clientY }
       pressRef.current = { x: event.clientX, y: event.clientY, source }
+      setPressing(true)
     },
     [enabled]
   )
