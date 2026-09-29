@@ -33,6 +33,7 @@ import {
 } from './guiConversationCommands'
 import { guiPastSessionFields, type GuiPastSession } from './guiPastSessions'
 import { MaestroSession, type SessionEvent } from './maestroSession'
+import { GuiTurnRecovery, GUI_TURN_RECOVERY_PROMPT, withoutGuiTurnRecovery } from './guiTurnRecovery'
 import { GUI_SKILL_RELOAD_TTL_MS } from './guiClaudeSkillReload'
 import { CLAUDE_PUBLIC_PROGRESS_STYLE } from './guiClaudePublicProgress'
 import { guiPublicCommentaryText, type GuiCommentaryIdentity, type GuiCommentaryDelivery } from './guiPublicCommentary'
@@ -604,6 +605,8 @@ export function isGuiPersistedEvent(value: unknown): value is SessionEvent {
     case 'turn-started':
     case 'conversation-cleared':
       return true
+    case 'turn-retry':
+      return guiRequestId(event['turnId']) && typeof event['text'] === 'string'
     case 'turn-continuation':
       return (
         typeof event['continues'] === 'boolean' &&
@@ -728,6 +731,8 @@ export function isGuiPersistedEvent(value: unknown): value is SessionEvent {
           event['outcome'] === 'cancelled') &&
         (event['continues'] === undefined || typeof event['continues'] === 'boolean') &&
         (event['turnActive'] === undefined || typeof event['turnActive'] === 'boolean') &&
+        (event['turnId'] === undefined || guiRequestId(event['turnId'])) &&
+        (event['recoveryToken'] === undefined || guiMessageIdProblem(event['recoveryToken']) === null) &&
         guiOptionalString(event['errorText']) &&
         guiOptionalString(event['resultText']) &&
         guiOptionalString(event['fastModeState']) &&
@@ -758,6 +763,7 @@ function guiTranscriptCheckpoint(evt: SessionEvent): boolean {
     case 'plan-review':
     case 'plan-proposal':
     case 'turn-continuation':
+    case 'turn-retry':
     case 'session-restarted':
     case 'conversation-cleared':
     case 'executor-changed':
@@ -1423,7 +1429,12 @@ function sanitizeGuiTranscripts(value: unknown): {
       changed = true
       continue
     }
-    const events = record['events'].slice(-GUI_TRANSCRIPT_HYDRATE_EVENT_CAP)
+    const events = record['events'].slice(-GUI_TRANSCRIPT_HYDRATE_EVENT_CAP).map(event => {
+      const result = guiPlainRecord(event)
+      if (result?.['type'] !== 'result' || result['recoveryToken'] === undefined) return event
+      changed = true
+      return withoutGuiTurnRecovery(event as SessionEvent)
+    })
     if ((record['cursor'] as number) < events.length) {
       changed = true
       continue
@@ -1509,6 +1520,7 @@ interface GuiPaneEntry {
   /** Identidade do SPAWN: mudou = processo novo; igual = remontagem reusa. */
   fingerprint: string
   session: GuiBackend
+  turnRecovery: GuiTurnRecovery
   ring: GuiEventRing
   /** Desfecho canônico aguardando o renderer apresentar o seq terminal. */
   alerts: GuiAlertSequencer
@@ -2127,6 +2139,8 @@ export class GuiSessionRegistry {
     // Vale já DURANTE o construtor da sessão (um 'fatal' síncrono é captado
     // antes de a entrada existir no Map).
     const token = { alive: true }
+    const turnRecovery = new GuiTurnRecovery()
+    const terminalRecoveryRevisions = new WeakMap<SessionEvent, number>()
     let replaySawReady = false
     // R24.1 — o anel pode já vir podado (respawn/hidratação): ali a verdade
     // chega pelo replay do `state`, não por um aviso ao vivo repetido.
@@ -2179,12 +2193,18 @@ export class GuiSessionRegistry {
       // que chega com a finalização armada é republicado como continuação da
       // rodada (o app ainda está finalizando), e a geração retomada na raiz
       // herda essa rodada até o agente falar de verdade (guiIntegrationReply).
-      const visibleEvt: SessionEvent = this.integrationReply.observe(
+      let visibleEvt: SessionEvent = this.integrationReply.observe(
         token,
         evt.type === 'ready'
           ? { ...evt, caps: withGuiConversationCommands(evt.caps) }
           : metered?.event ?? budgeted
       )
+      if (visibleEvt.type === 'result') {
+        const entry = this.panes.get(spawn.paneId)
+        visibleEvt = turnRecovery.result(visibleEvt, entry ? this.turnRecoveryIdentity(entry) : undefined,
+          Boolean(entry && guiRequestId(visibleEvt.turnId) && !this.turnRecoveryProblem(entry)),
+          terminalRecoveryRevisions.get(raw) ?? turnRecovery.revision)
+      }
       const seq = ring.push(visibleEvt)
       // Eventos intermediários ficam no anel; o próximo ponto legível captura
       // o snapshot inteiro, e dispose captura inclusive um stream parcial.
@@ -2351,6 +2371,7 @@ export class GuiSessionRegistry {
       // seguinte deixa o chunk inteiro atravessar o parser antes do ring e do
       // reducer, sem mascarar um órfão quando nenhum resultado aparecer.
       if (!token.alive) return
+      turnRecovery.observe(incoming)
       // Capture parent activity at the protocol boundary, before a deferred
       // terminal or helper projection can confuse it with background work.
       const turnActive = this.panes.get(spawn.paneId)?.session.turnActive
@@ -2359,6 +2380,7 @@ export class GuiSessionRegistry {
         typeof turnActive === 'boolean'
           ? { ...incoming, turnActive }
           : incoming
+      if (evt.type === 'result') terminalRecoveryRevisions.set(evt, turnRecovery.revision)
       if (evt.type === 'turn-continuation' && !evt.continues) {
         const backend = this.panes.get(spawn.paneId)?.session
         // One source finishing cannot declare the whole chat idle while
@@ -2514,6 +2536,7 @@ export class GuiSessionRegistry {
       spawn: armedSpawn,
       fingerprint,
       session,
+      turnRecovery,
       ring,
       alerts: alertSequencer,
       token,
@@ -2601,6 +2624,68 @@ export class GuiSessionRegistry {
       return 'aguarde a troca de modelo ou effort terminar'
     }
     return undefined
+  }
+
+  private turnRecoveryIdentity(entry: GuiPaneEntry): string | undefined {
+    const sessionId = entry.turnRecovery.conversationId
+    if (entry.spawn.cli !== 'codex' || !sessionId?.startsWith('codex-thread:') ||
+      sessionId.length <= 'codex-thread:'.length || this.doc.panes[entry.spawn.paneId]?.sessionId !== sessionId ||
+      !entry.session.opts) return undefined
+    const opts = entry.session.opts
+    return JSON.stringify([sessionId, spawnFingerprint(entry.spawn), entry.spawn.seatId,
+      opts.cwd, opts.configDir, opts.model, opts.effort, opts.sandbox, opts.approvalPolicy,
+      'serviceTier' in opts ? opts.serviceTier : undefined])
+  }
+
+  private turnRecoveryProblem(entry: GuiPaneEntry): string | undefined {
+    const paneId = entry.spawn.paneId
+    if (!entry.token.alive || !entry.session.alive)
+      return 'a sessão encerrou; confira o histórico e os recibos antes de enviar uma nova orientação'
+    const busy = this.paneBusyReason(paneId, entry)
+    if (busy) return busy
+    if (entry.session.turnActive !== false) return 'aguarde a resposta atual terminar antes de continuar'
+    if (!this.turnRecoveryIdentity(entry))
+      return 'não foi possível confirmar a mesma conversa; confira o histórico e os recibos antes de enviar uma nova orientação'
+    if (this.pendingInteractionOf(entry)) return 'responda ao pedido pendente antes de continuar'
+    if (this.ownerMail.has(paneId)) return 'aguarde a mensagem pendente do dono ser entregue'
+    if (this.helperCards.hasLiveHelpers(paneId) || this.helperCards.pendingWakes(paneId) > 0)
+      return 'aguarde os ajudantes e suas entregas antes de continuar'
+    if (this.skillReloads.has(paneId) || this.pendingIntegrationRecovery.has(paneId))
+      return 'aguarde a operação pendente desta conversa terminar antes de continuar'
+    return undefined
+  }
+
+  private projectTurnRecovery(paneId: string, event: SessionEvent): SessionEvent {
+    if (event.type !== 'result' || event.recoveryToken === undefined) return event
+    const entry = this.panes.get(paneId)
+    return entry && !this.turnRecoveryProblem(entry) &&
+      entry.turnRecovery.authorizes(event.recoveryToken, this.turnRecoveryIdentity(entry), event.turnId)
+      ? event : withoutGuiTurnRecovery(event)
+  }
+
+  resumeFailedTurn(paneId: string, recoveryToken: unknown): GuiResult {
+    const entry = this.panes.get(paneId)
+    if (!entry) return { ok: false, error: 'a sessão não está aberta; confira o histórico e os recibos antes de enviar uma nova orientação' }
+    const identity = this.turnRecoveryIdentity(entry)
+    const problem = this.turnRecoveryProblem(entry)
+    if (problem) {
+      if (!entry.token.alive || !entry.session.alive || !identity ||
+        (recoveryToken === entry.turnRecovery.token && !entry.turnRecovery.authorizes(recoveryToken, identity)))
+        entry.turnRecovery.invalidate()
+      return { ok: false, error: problem }
+    }
+    if (guiMessageIdProblem(recoveryToken) !== null || recoveryToken !== entry.turnRecovery.token)
+      return { ok: false, error: 'esta continuação expirou ou já foi utilizada; confira a resposta mais recente da conversa' }
+    if (!entry.turnRecovery.authorizes(recoveryToken, identity)) {
+      entry.turnRecovery.invalidate()
+      return { ok: false, error: 'a configuração desta conversa mudou; confira o executor e envie uma nova orientação' }
+    }
+    entry.turnRecovery.invalidate()
+    try {
+      return this.deliverBackstage(paneId, GUI_TURN_RECOVERY_PROMPT, 'continuação do turno')
+    } catch {
+      return { ok: false, error: 'não foi possível entregar a continuação; confira o estado e os recibos antes de enviar uma nova orientação' }
+    }
   }
 
   /**
@@ -3580,6 +3665,7 @@ export class GuiSessionRegistry {
       }
     }
 
+    entry.turnRecovery.invalidate()
     this.executorChanges.add(entry)
     try {
       const changed = await entry.session.setExecutor({ model, effort })
@@ -4023,6 +4109,7 @@ export class GuiSessionRegistry {
   }
 
   private interruptTurn(entry: GuiPaneEntry, origin: GuiInterruptOrigin): boolean {
+    entry.turnRecovery.invalidate()
     return traceGuiInterrupt(origin, () => entry.session.interrupt(), (detail) => {
       this.deps.record?.('gui-interrupt-request', {
         paneId: entry.spawn.paneId, projectId: entry.spawn.projectId
@@ -4230,7 +4317,8 @@ export class GuiSessionRegistry {
     const pruned: GuiSequencedEvent[] =
       ring.evictedCount > 0 ? [{ seq: 0, evt: guiHistoryPrunedEvent(ring.evictedCount) }] : []
     return {
-      events: [...pruned, ...ring.sequencedSnapshot()],
+      events: [...pruned, ...ring.sequencedSnapshot().map(({ seq, evt }) => ({ seq,
+        evt: this.projectTurnRecovery(paneId, evt as SessionEvent) }))],
       cursor: ring.cursor,
       exists: true,
       alive: entry?.session.alive ?? false,
@@ -4376,6 +4464,7 @@ export class GuiSessionRegistry {
     // Última barreira antes de apagar a geração: inclui deltas parciais que
     // ainda não tinham alcançado um checkpoint semântico.
     entry.flushPendingTerminal?.()
+    entry.turnRecovery.invalidate()
     this.saveTranscript(paneId, entry.ring)
     this.integrationReply.disposed(entry.token)
     this.panes.delete(paneId)
@@ -4419,6 +4508,7 @@ export class GuiSessionRegistry {
     const transcript = this.doc.transcripts?.[paneId]
     if (!transcript) return null
     const events = transcript.events.filter(event => isGuiPersistedEvent(event) || isGuiOwnerMessageStateEvent(event))
+      .map(event => withoutGuiTurnRecovery(event as SessionEvent))
     if (events.length === 0) return null
     // A fotografia não guarda cada seq (só a barreira terminal), mas o cursor
     // permite recolocar a janela no mesmo intervalo e manter o próximo evento
@@ -4444,7 +4534,7 @@ export class GuiSessionRegistry {
     if (this.savedTranscriptCursors.get(ring) === ring.cursor) return
     const transcripts = (this.doc.transcripts ??= {})
     transcripts[paneId] = {
-      events: ring.snapshot(),
+      events: ring.snapshot().map(event => withoutGuiTurnRecovery(event as SessionEvent)),
       cursor: ring.cursor,
       updatedAt: new Date().toISOString(),
       ...(ring.evictedCount > 0 ? { evicted: ring.evictedCount } : {})

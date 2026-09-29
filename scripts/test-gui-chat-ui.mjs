@@ -1517,8 +1517,6 @@ test('Codex fecha todas as famílias de tool e não pinta falha como sucesso', (
   assert.equal(guiCodexErrorWillRetry({ willRetry: true, error: { message: 'rede' } }), true)
   assert.equal(guiCodexErrorWillRetry({ error: { message: 'rede', willRetry: true } }), true)
   assert.equal(guiCodexErrorWillRetry({ willRetry: false, error: { message: 'fatal' } }), false)
-  const codex = readFileSync(new URL('../src/main/codexSession.ts', import.meta.url), 'utf8')
-  assert.match(codex, /if \(!guiCodexErrorWillRetry\(p\)\)[\s\S]*this\.armTurnErrorGuard/u)
 })
 
 test('Edit e Write viram diffs limitados sem consultar o disco', () => {

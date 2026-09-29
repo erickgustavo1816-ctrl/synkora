@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import type { MissionRemovalConfirmation, MissionRemovalDiscard } from '../../../shared/missionRemoval'
 import {
   useStore,
   type BacklogItem,
@@ -41,6 +43,21 @@ function MissionsPane({ projectId, versions }: { projectId: string; versions: Ve
   const [sort, setSort] = useState<'recentes' | 'antigas'>('recentes')
   const [page, setPage] = useState(0)
   const [confirmDelete, setConfirmDelete] = useState<Mission | null>(null)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [discardConfirmation, setDiscardConfirmation] = useState<{
+    receipt: MissionRemovalDiscard
+    consent: boolean
+  } | null>(null)
+  const deletionPending = useRef(false)
+  useEffect(() => {
+    if (!confirmDelete) return
+    const current = missions.find((mission) => mission.id === confirmDelete.id)
+    if (current && current.title !== confirmDelete.title) {
+      setConfirmDelete(current)
+      setDiscardConfirmation(null)
+    }
+  }, [missions, confirmDelete])
   /** missão encerrada cuja conversa 2.0 o dono abriu para LER (fotografia) */
   const [chatViewer, setChatViewer] = useState<Mission | null>(null)
   const closeChatViewer = useCallback(() => setChatViewer(null), [])
@@ -97,6 +114,42 @@ function MissionsPane({ projectId, versions }: { projectId: string; versions: Ve
   function open(m: Mission): void {
     setMissionTab(projectId, m.id)
     setUniverseTab(projectId, 'board')
+  }
+
+  function closeDelete(): void {
+    if (deletionPending.current) return
+    setConfirmDelete(null)
+    setDeleteError(null)
+    setDiscardConfirmation(null)
+  }
+
+  async function confirmMissionDeletion(): Promise<void> {
+    if (!confirmDelete || deletionPending.current) return
+    if (discardConfirmation && !discardConfirmation.consent) return
+    const confirmation: MissionRemovalConfirmation | undefined = discardConfirmation
+      ? { discardToken: discardConfirmation.receipt.token, confirmTitle: discardConfirmation.receipt.title }
+      : undefined
+    deletionPending.current = true
+    setDeleting(true)
+    try {
+      const result = confirmation
+        ? await deleteMission(confirmDelete.id, confirmation)
+        : await deleteMission(confirmDelete.id)
+      if (result.ok) {
+        setConfirmDelete(null)
+        setDeleteError(null)
+        setDiscardConfirmation(null)
+      } else {
+        setDeleteError(result.error)
+        setDiscardConfirmation(result.discard ? { receipt: result.discard, consent: false } : null)
+      }
+    } catch {
+      setDeleteError('Não consegui confirmar o resultado da exclusão. Reabra a lista de missões para conferir o resultado.')
+      setDiscardConfirmation(null)
+    } finally {
+      deletionPending.current = false
+      setDeleting(false)
+    }
   }
 
   return (
@@ -205,7 +258,12 @@ function MissionsPane({ projectId, versions }: { projectId: string; versions: Ve
                 <button
                   className="btn ghost tiny danger"
                   data-tip="Excluir de vez (tarefas e branch somem)"
-                  onClick={() => setConfirmDelete(m)}
+                  onClick={() => {
+                    if (deletionPending.current) return
+                    setDeleteError(null)
+                    setDiscardConfirmation(null)
+                    setConfirmDelete(m)
+                  }}
                 >
                   🗑
                 </button>
@@ -233,12 +291,12 @@ function MissionsPane({ projectId, versions }: { projectId: string; versions: Ve
         </div>
       )}
 
-      {confirmDelete && (
-        <div className="overlay" onClick={() => setConfirmDelete(null)}>
-          <div className="task-modal confirm-modal" onClick={(e) => e.stopPropagation()}>
+      {confirmDelete && createPortal(
+        <div className="overlay" onClick={closeDelete}>
+          <div className="task-modal confirm-modal" data-mission-removal role="dialog" aria-modal="true" aria-label="Excluir missão" aria-busy={deleting} onClick={(e) => e.stopPropagation()}>
             <div className="task-modal-head">
               <span className="task-dept">🗑 excluir missão</span>
-              <button className="pane-close dark-close" onClick={() => setConfirmDelete(null)}>
+              <button className="pane-close dark-close" aria-label="Fechar confirmação" disabled={deleting} onClick={closeDelete}>
                 ×
               </button>
             </div>
@@ -257,24 +315,46 @@ function MissionsPane({ projectId, versions }: { projectId: string; versions: Ve
                 A conversa desta missão será apagada junto — arquivar guarda, excluir apaga.
               </p>
             )}
+            {deleteError && <p className="mission-modal-error" role="alert">{deleteError}</p>}
+            {discardConfirmation && (
+              <>
+                <p className="confirm-sub" id="mission-discard-loss">
+                  As alterações locais e os arquivos novos sem commit de <b>“{discardConfirmation.receipt.title}”</b>{' '}
+                  serão apagados. Não dá para desfazer. Para preservar esse trabalho, cancele e reative a missão.
+                </p>
+                <label className="mission-discard-consent">
+                  <input
+                    type="checkbox"
+                    checked={discardConfirmation.consent}
+                    disabled={deleting}
+                    aria-describedby="mission-discard-loss"
+                    onChange={(event) => {
+                      if (deletionPending.current) return
+                      const consent = event.target.checked
+                      setDiscardConfirmation((current) => current && { ...current, consent })
+                    }}
+                  />
+                  <span>Entendo que vou perder essas alterações e autorizo o descarte.</span>
+                </label>
+              </>
+            )}
             <div className="task-modal-actions">
-              <button className="btn ghost" onClick={() => setConfirmDelete(null)}>
+              <button className="btn ghost" disabled={deleting} onClick={closeDelete}>
                 cancelar
               </button>
               <span className="task-modal-meta" />
               <button
                 className="btn danger-solid"
-                onClick={() => {
-                  const m = confirmDelete
-                  setConfirmDelete(null)
-                  void deleteMission(m.id)
-                }}
+                disabled={deleting || Boolean(discardConfirmation && !discardConfirmation.consent)}
+                onClick={() => void confirmMissionDeletion()}
               >
-                🗑 excluir de vez
+                {deleting
+                  ? discardConfirmation ? 'descartando e excluindo…' : 'excluindo…'
+                  : discardConfirmation ? 'Descartar alterações e excluir' : '🗑 excluir de vez'}
               </button>
             </div>
           </div>
-        </div>
+        </div>, document.body
       )}
 
       {chatViewer && <ArchivedMissionChat mission={chatViewer} onClose={closeChatViewer} />}

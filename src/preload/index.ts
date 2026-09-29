@@ -1,4 +1,5 @@
 import type { GuiInterruptOrigin } from '../shared/guiInterrupt'
+import type { MissionRemovalConfirmation, MissionRemovalResult } from '../shared/missionRemoval'
 import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron'
 import type { DirectReleaseInput, DirectReleaseResult } from '../shared/directRelease'
 import type { MobileApi, MobilePhoneApi, MobileVideoDelivery } from '../shared/mobileSimulator'
@@ -1145,6 +1146,8 @@ const api = {
       attachments?: GuiAttachmentDescriptor[],
       browserReferences?: GuiBrowserReference[]
     ): Promise<GuiResult> => ipcRenderer.invoke('gui:send', paneId, text, messageId, attachments, browserReferences),
+    resumeFailedTurn: (paneId: string, recoveryToken: string): Promise<GuiResult> =>
+      ipcRenderer.invoke('gui:resumeFailedTurn', paneId, recoveryToken),
     browserReferencesList: (paneId: string): Promise<GuiBrowserReferencesResult> =>
       ipcRenderer.invoke('gui:browser-references-list', paneId),
     revealBrowserReference: (paneId: string, id: string): Promise<import('../shared/guiBrowserReferences').GuiBrowserReferenceRevealResult> =>
@@ -1339,8 +1342,9 @@ const api = {
     ): Promise<Mission | null> => ipcRenderer.invoke('missions:update', id, patch),
     integrate: (missionId: string): Promise<string> =>
       ipcRenderer.invoke('missions:integrate', missionId),
-    remove: (missionId: string): Promise<boolean> =>
-      ipcRenderer.invoke('missions:remove', missionId),
+    remove: (missionId: string, confirmation?: MissionRemovalConfirmation): Promise<MissionRemovalResult> =>
+      confirmation === undefined ? ipcRenderer.invoke('missions:remove', missionId)
+        : ipcRenderer.invoke('missions:remove', missionId, confirmation),
     // missão criada pelo PM: grava conta/modelo/effort do orquestrador
     // escolhidos no modal e libera o pane nascer
     // `confirmOrchestrator` e `setOrchestratorSeat` (escolha e troca de conta

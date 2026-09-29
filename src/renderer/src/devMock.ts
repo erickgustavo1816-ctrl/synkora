@@ -568,10 +568,12 @@ export function installDevMock(): void {
         return m ?? null
       },
       integrate: async () => 'missão na fila de integração #1 (mock)',
-      remove: async (id: string) => {
+      remove: async (id: string, confirmation?: unknown) => {
+        if (confirmation !== undefined)
+          return { ok: false as const, error: 'O descarte de arquivos está indisponível nesta prévia. Use a confirmação no aplicativo.' }
         const i = missions.findIndex((m) => m.id === id)
         if (i >= 0) missions.splice(i, 1)
-        return true
+        return { ok: true as const }
       },
       // 2.0: a conta da conversa é escolhida DENTRO da missão (card do chat
       // vazio / menu do cabeçalho). No preview o mock só carimba o seat.
@@ -893,6 +895,7 @@ export function installDevMock(): void {
         error: 'o padrão dos ajudantes só funciona no app'
       }),
       send: async () => ({ ok: true }),
+      resumeFailedTurn: async () => ({ ok: false, error: 'Esta conversa de demonstração não tem um turno para retomar.' }),
       deliverQueued: async () => ({ ok: true }),
       permission: async () => ({ ok: true }),
       answerQuestion: async () => ({ ok: true }),

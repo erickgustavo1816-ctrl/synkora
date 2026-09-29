@@ -1,4 +1,5 @@
 import type { GuiInterruptOrigin } from '../../shared/guiInterrupt'
+import type { MissionRemovalConfirmation, MissionRemovalResult } from '../../shared/missionRemoval'
 import { create } from 'zustand'
 import { isGuiBrowserReferenceList, type GuiBrowserReference } from '../../shared/guiBrowserReferences'
 import { guiParentTurnActivity } from './guiParentTurnActivity'
@@ -437,6 +438,8 @@ export type GuiItem =
       /** Aviso provisório enquanto um resultado de ferramenta correlacionado
        * ainda pode chegar depois do terminal do turno. */
       transient?: boolean
+      recoveryToken?: string
+      retryTurnId?: string
     }
   | {
       id: string
@@ -553,6 +556,7 @@ export type GuiPendingInteraction =
     }
 
 export interface GuiPaneState {
+  recoveryToken: string | null
   /** Main parent activity, independent from helpers keeping status working. */
   turnActive?: boolean
   items: GuiItem[]
@@ -664,6 +668,7 @@ export interface GuiHistoryTarget {
 }
 
 export const EMPTY_GUI_PANE: GuiPaneState = {
+  recoveryToken: null,
   items: [],
   stream: '',
   activeAssistantId: null,
@@ -1539,6 +1544,19 @@ function reduceGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState
       }
     }
 
+    case 'turn-retry': {
+      const base = finalizeGuiStream(state)
+      const existing = base.items.some(item =>
+        (item.kind === 'note' || item.kind === 'error') && item.retryTurnId === evt.turnId)
+      return {
+        ...base,
+        items: existing ? base.items : pushGuiItem(base.items, {
+          id: guiItemId(), kind: 'note', text: evt.text, retryTurnId: evt.turnId, at: Date.now()
+        }),
+        ...guiStatusPatch(base, busy(base))
+      }
+    }
+
     case 'limit': {
       const base = finalizeGuiStream(state)
       return {
@@ -1604,6 +1622,7 @@ function reduceGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState
               evt.errorText?.trim() ||
               (orphanedTool ? orphanedToolText(orphan.names) : 'o turno falhou sem detalhes'),
             at: Date.now(),
+            ...(evt.recoveryToken ? { recoveryToken: evt.recoveryToken } : {}),
             ...(orphanedTool && !evt.isError && evt.outcome !== 'failed'
               ? { transient: true }
               : {})
@@ -1753,7 +1772,19 @@ function reduceGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState
  * envio/interrupção guardam essa revisão e não podem rebaixar um turno novo.
  */
 export function applyGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState {
-  let next = reduceGuiEvent(state, evt)
+  const endRetries = ['fatal', 'closed', 'session-restarted', 'conversation-cleared', 'turn-started'].includes(evt.type)
+  const completedTurnId = evt.type === 'result' ? evt.turnId : undefined
+  const items = endRetries || completedTurnId
+    ? state.items.filter(item => (item.kind !== 'note' && item.kind !== 'error') ||
+      !item.retryTurnId || (!endRetries && item.retryTurnId !== completedTurnId))
+    : state.items
+  let next = reduceGuiEvent(items === state.items ? state : { ...state, items }, evt)
+  const recoveryToken = evt.type === 'result'
+    ? (evt.isError || evt.outcome === 'failed') && !evt.interrupted ? evt.recoveryToken ?? null : null
+    : ['turn-started', 'user-message', 'executor-changed', 'session-restarted', 'session-id',
+      'conversation-cleared', 'fatal', 'closed', 'turn-retry'].includes(evt.type)
+      ? null : next.recoveryToken
+  if (recoveryToken !== next.recoveryToken) next = { ...next, recoveryToken }
   const contextCompacting = guiContextCompaction(state.contextCompacting, evt)
   if (contextCompacting !== next.contextCompacting) next = { ...next, contextCompacting }
   const publicSilenceSince = guiPublicSilenceSince(state.publicSilenceSince, evt, Date.now(),
@@ -1923,7 +1954,7 @@ interface SynkoraState {
    *  plano/ fica no repo e a aba do plano segue no mapa (o main guarda a porta:
    *  'concluida' por aqui só entra em missão de PLANEJAMENTO). */
   concludePlanningMission: (id: string) => Promise<void>
-  deleteMission: (id: string) => Promise<void>
+  deleteMission: (id: string, confirmation?: MissionRemovalConfirmation) => Promise<MissionRemovalResult>
   /** A SAÍDA DA SUBIDA: arquiva e exclui num gesto só (ver releaseRailPresentation). */
   discardRelease: (id: string) => Promise<void>
   integrateMission: (missionId: string) => Promise<string>
@@ -2241,14 +2272,23 @@ export const useStore = create<SynkoraState>((set, get) => ({
     await window.synkora.missions.update(id, { status: 'arquivada' })
     await get().deleteMission(id)
   },
-  deleteMission: async (id) => {
-    if (!window.synkora.missions?.remove) return
-    await window.synkora.missions.remove(id)
+  deleteMission: async (id, confirmation) => {
+    if (!window.synkora.missions?.remove)
+      return { ok: false, error: 'A exclusão está indisponível. Reinicie o Synkora e tente novamente.' }
+    let result: MissionRemovalResult
+    try {
+      result = confirmation === undefined ? await window.synkora.missions.remove(id)
+        : await window.synkora.missions.remove(id, confirmation)
+    } catch {
+      return { ok: false, error: 'Não consegui confirmar a exclusão. Tente novamente; se persistir, reinicie o Synkora.' }
+    }
+    if (!result.ok) return result
     const pid = get().openProjectId
     if (pid) {
       get().setMissionTab(pid, null)
       await get().loadMissions(pid)
     }
+    return result
   },
   integrateMission: async (missionId) => {
     if (!window.synkora.missions) return 'reinicie o app (npm run dev) para usar missões'

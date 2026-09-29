@@ -334,9 +334,13 @@ export type GuiSessionEvent =
     }
   | { type: 'command-completed'; isError: boolean; continues: boolean; errorText?: string }
   | { type: 'limit'; text: string }
+  | { type: 'turn-retry'; turnId: string; text: string }
   | {
       type: 'result'
       isError: boolean
+      /** Mirrors main/maestroSession.ts; the server validates recovery authority. */
+      turnId?: string
+      recoveryToken?: string
       outcome?: 'completed' | 'failed' | 'cancelled'
       /** R7-E: o ■ DO DONO passou pelo motor e ESTE terminal é aquela
        *  interrupção — espelho declarado do union do main (maestroSession.ts).
@@ -444,6 +448,13 @@ export function asGuiEvent(evt: unknown): GuiSessionEvent | null {
   if (!evt || typeof evt !== 'object') return null
   const record = evt as Record<string, unknown>
   const type = record['type']
+  if (type === 'turn-retry' && (
+    typeof record['turnId'] !== 'string' || !record['turnId'] || record['turnId'].length > 256 ||
+    typeof record['text'] !== 'string' || record['text'].length > GUI_PROMPT_MAX_CHARS
+  )) return null
+  if (type === 'result' && ['turnId', 'recoveryToken'].some(key =>
+    record[key] !== undefined && (typeof record[key] !== 'string' || !record[key] || record[key].length > 256)
+  )) return null
   if (type === 'context-compaction' && typeof record['active'] !== 'boolean') return null
   if (
     type === 'tool' &&
@@ -507,6 +518,7 @@ interface GuiBridge {
     attachments?: GuiAttachmentDescriptor[],
     browserReferences?: GuiBrowserReference[]
   ) => Promise<{ ok: boolean; error?: string }>
+  resumeFailedTurn: (paneId: string, recoveryToken: string) => Promise<{ ok: boolean; error?: string }>
   deliverQueued: (
     paneId: string,
     input: GuiQueuedDeliveryInput
@@ -591,6 +603,24 @@ function bridge(): Partial<GuiBridge> | undefined {
 const NO_BRIDGE = 'a ponte do pane GUI ainda não está disponível nesta janela'
 
 export const guiApi = {
+  async resumeFailedTurn(
+    paneId: string,
+    recoveryToken: string
+  ): Promise<{ ok: boolean; error?: string; deliveryUncertain?: boolean }> {
+    const api = bridge()
+    if (!api?.resumeFailedTurn) return { ok: false, error: NO_BRIDGE }
+    try {
+      const result = await api.resumeFailedTurn(paneId, recoveryToken)
+      if (result && typeof result.ok === 'boolean') return result
+    } catch {
+      // A lost IPC reply does not prove rejection; the server consumes the receipt once.
+    }
+    return {
+      ok: false,
+      error: 'A retomada não foi confirmada. Confira a conversa antes de tentar novamente.',
+      deliveryUncertain: true
+    }
+  },
   /** false = preload sem o namespace `gui` (devMock/browser puro, ou motor
    *  ainda não mesclado). A UI mostra o aviso em vez de fingir que funcionou. */
   available(): boolean {

@@ -96,14 +96,49 @@ test('o pulso fica fora do transcript e anuncia o estado com gesto, verbo e rel�
     /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.gui-dots i\s*\{\s*animation: none/su)
 })
 
-test('silêncio público continua durante pensamento e ferramentas, e reinicia apenas com fala', () => {
+test('atividade visível de ferramentas renova o sinal depois de oito minutos sem fala', () => {
+  const now = 481_000
+  for (const name of ['mcp__synkora__lsp_diagnostics', 'Bash', 'Edit']) {
+    const started = guiPublicSilenceSince(1000, { type: 'tool', name, input: {}, toolUseId: name }, now, true)
+    assert.equal(started, now, name)
+    const pulse = pulseOf({ ...base, thinking: true }, { publicSilenceSince: started, now: now + 3000 })
+    assert.equal(pulse.tier, 'live')
+    assert.equal(pulse.clock.kind, 'since')
+    const completed = guiPublicSilenceSince(started, {
+      type: 'tool-result', toolUseId: name, text: 'recibo sintético', isError: false
+    }, now + 20_000, true)
+    assert.equal(completed, now + 20_000)
+  }
+})
+
+test('nova tentativa do serviço é um sinal atual e recibos tardios não reabrem o relógio parado', () => {
+  const retry = { type: 'turn-retry', turnId: 'synthetic-turn', text: 'O serviço está tentando novamente.' }
+  assert.equal(guiPublicSilenceSince(1000, retry, 481_000, true), 481_000)
+  assert.equal(guiPublicSilenceSince(null, retry, 481_000, false), null)
+  assert.equal(guiPublicSilenceSince(null, {
+    type: 'tool-result', toolUseId: 'late', text: 'recibo sintético', isError: false
+  }, 481_000, false), null)
+})
+
+test('os demais sinais visíveis do turno renovam o relógio sem depender do texto do aviso', () => {
+  for (const event of [
+    { type: 'command-output', text: 'Aviso sintético.' },
+    { type: 'limit', text: 'Aviso sintético.' },
+    { type: 'context-compaction', active: true },
+    { type: 'context-compaction', active: false },
+    { type: 'question', requestId: 'synthetic-question', questions: [], blocking: false },
+    { type: 'turn-continuation', continues: true, turnActive: true },
+    { type: 'result', isError: false, continues: true, turnActive: true },
+    { type: 'command-completed', isError: false, continues: true }
+  ]) assert.equal(guiPublicSilenceSince(1000, event, 481_000, true), 481_000, event.type)
+})
+
+test('pensamento privado e avisos passivos não substituem fala ou atividade visível', () => {
   let since = guiPublicSilenceSince(null, { type: 'turn-started' }, 1000, false)
   assert.equal(since, 1000)
   for (const event of [
     { type: 'thinking', text: 'SYNTHETIC_PRIVATE_REASONING' },
-    { type: 'tool', name: 'Read', input: {}, toolUseId: 'read' },
-    { type: 'tool-result', toolUseId: 'read', text: 'synthetic output', isError: false },
-    { type: 'command-output', text: 'system notice' },
+    { type: 'context-usage', contextTokens: 42, contextWindow: 1000 },
     { type: 'delta', text: ' ' },
     { type: 'turn-started' }
   ]) since = guiPublicSilenceSince(since, event, 100_000, true)
@@ -118,7 +153,7 @@ test('encerramento, retomada e espera humana delimitam o relógio de silêncio',
     assert.equal(guiPublicSilenceSince(1000, { type }, 100_000, true), null, type)
   }
   assert.equal(guiPublicSilenceSince(1000, { type: 'result', continues: true, turnActive: false }, 100_000, true), null)
-  assert.equal(guiPublicSilenceSince(1000, { type: 'question', blocking: false }, 100_000, true), 1000)
+  assert.equal(guiPublicSilenceSince(1000, { type: 'question', blocking: false }, 100_000, true), 100_000)
   assert.equal(guiPublicSilenceSince(null, { type: 'tool', name: 'Read', parentToolUseId: 'child' }, 100_000, false), null)
 })
 

@@ -4942,6 +4942,7 @@ app.whenReady().then(async () => {
     surveySystemPromptFile
   })
   registerMissionsIpc(ctx, {
+    assertAppRendererSender,
     resolveReleaseWorkspace: releaseWorkspaceForMission,
     lifecycle: missionLifecycle,
     projectContextBriefing: projectContext.briefing,

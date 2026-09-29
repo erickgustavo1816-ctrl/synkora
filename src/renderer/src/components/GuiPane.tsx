@@ -445,8 +445,8 @@ function GuiMessage({
     )
   }
   if (item.kind === 'user') return <GuiOwnerBubble paneId={paneId} item={item} />
-  if (item.kind === 'note') return <div className="gui-note">{item.text}</div>
-  if (item.kind === 'error') return <GuiErrorLine text={item.text} />
+  if (item.kind === 'note') return <div className="gui-note" role={item.retryTurnId ? 'status' : undefined}>{item.text}</div>
+  if (item.kind === 'error') return <GuiErrorLine text={item.text} paneId={paneId} recoveryToken={item.recoveryToken} />
   if (item.kind === 'divider') return <GuiConversationDivider />
   if (item.kind !== 'assistant') return null
   // A FALA É UM COMPONENTE SÓ, do primeiro delta à mensagem parada (mockup de

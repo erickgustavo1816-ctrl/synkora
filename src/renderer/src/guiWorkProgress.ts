@@ -1,6 +1,6 @@
 import type { GuiSessionEvent } from './guiApi'
 
-/** Measures observed public silence, never model reasoning or transport uptime.
+/** Public text and visible work are signals; private reasoning and telemetry are not.
  * Replay/restart starts a fresh observation window; it cannot backdate it. */
 export function guiPublicSilenceSince(
   previous: number | null | undefined,
@@ -17,14 +17,23 @@ export function guiPublicSilenceSince(
     case 'thinking':
       return previous ?? now
     case 'tool':
-      return event.parentToolUseId ? previous ?? null : previous ?? now
+      return event.parentToolUseId ? previous ?? null : now
+    case 'tool-result':
+    case 'turn-retry':
+      return parentWasActive ? now : previous ?? null
+    case 'command-output':
+    case 'limit':
+      return parentWasActive && event.text.trim() ? now : previous ?? null
+    case 'context-compaction':
+      return event.active || parentWasActive ? now : previous ?? null
     case 'result':
     case 'turn-continuation':
-      return event.turnActive === true ? previous ?? now : null
+      return event.turnActive === true ? now : null
     case 'command-completed':
-      return event.continues ? previous ?? null : null
+      return event.continues ? now : null
     case 'question':
-      return event.blocking === false ? previous ?? null : null
+      if (event.blocking !== false) return null
+      return parentWasActive ? now : previous ?? null
     case 'permission':
     case 'plan-review':
     case 'fatal':

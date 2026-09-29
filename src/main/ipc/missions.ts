@@ -16,7 +16,7 @@
  * dois lados vivem em módulos diferentes de propósito; o comentário no
  * handler conta a história da corrida da M02d.
  */
-import { app, ipcMain } from 'electron'
+import { app, ipcMain, type IpcMainInvokeEvent } from 'electron'
 import { join } from 'path'
 import { randomUUID } from 'crypto'
 import { existsSync } from 'fs'
@@ -71,6 +71,7 @@ import type { ReleaseWorkspaceResult } from '../releaseWorkspace'
  * outros ipc/*). Os dois engines viajam inteiros; o lado maestro do
  * paneSpec (budget de resume + método de planejamento) vem do maestroEngine. */
 export interface MissionsIpcExtras {
+  assertAppRendererSender(event: IpcMainInvokeEvent): void
   resolveReleaseWorkspace(mission: Mission): Promise<ReleaseWorkspaceResult>
   lifecycle?: MissionLifecycle
   projectContextBriefing?(projectId: string, missionId: string): string
@@ -972,7 +973,15 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
     return await startMissionIntegration(missionId, 'user')
   })
 
-  ipcMain.handle('missions:remove', (_e, missionId: string) => lifecycle.remove(missionId))
+  ipcMain.handle('missions:remove', (e, missionId: unknown, confirmation?: unknown) => {
+    if (confirmation !== undefined) extras.assertAppRendererSender(e)
+    if (typeof missionId !== 'string' || !missionId || missionId.length > 256)
+      return { ok: false, error: 'Reabra a lista e escolha uma missão válida para excluir.' }
+    return lifecycle.remove(missionId, () => {
+      if (confirmation === undefined) return true
+      try { extras.assertAppRendererSender(e); return true } catch { return false }
+    }, confirmation)
+  })
 
   // O PANE TUI DO ORQUESTRADOR MORREU NA LIMPA F6 (2026-08-17). O handler já
   // recusava para toda missão nascida na era 2.0 (`mission.direct` → null, e

@@ -685,6 +685,13 @@ export function registerGuiIpc(ctx: MainContext, extras: GuiIpcExtras): GuiSessi
     extras.assertAppRendererSender(e)
     return registry.browserReferencesList(paneId)
   })
+  ipcMain.handle('gui:resumeFailedTurn', (e, paneId: unknown, recoveryToken: unknown): GuiResult => {
+    extras.assertAppRendererSender(e)
+    if (typeof paneId !== 'string' || !paneId || paneId.length > 256) {
+      return { ok: false, error: 'Reabra a conversa para solicitar a retomada.' }
+    }
+    return registry.resumeFailedTurn(paneId, recoveryToken)
+  })
   ipcMain.handle('gui:browser-reference-reveal', (e, paneId: string, id: unknown) => {
     extras.assertAppRendererSender(e)
     return revealBrowserReference?.(paneId, id) ?? { ok: false, error: 'Reabra o Synkora para localizar referências na página.' }
