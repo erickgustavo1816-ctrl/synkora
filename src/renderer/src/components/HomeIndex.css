@@ -1,0 +1,862 @@
+/* ————————————————————————————————————————————————————————————————————————
+   O ÍNDICE DA HOME (grupos, 2026-09-29) — valores copiados do mockup
+   aprovado (docs/mockups/grupos-universos-2026-09-29.html: .hb*, .hb-tab*,
+   .tok, .pop*, .hg*, .uc-meta, .home-empty). O dono recusou uma primeira
+   versão com cara de formulário: UM campo e três controles no idioma de
+   botão da casa; as abas sentam numa régua; o que está ativo vira etiqueta
+   removível e só então aparece. Os nomes genéricos do mockup (.pop, .tok,
+   .dot, .linkish) ganharam o prefixo hb- porque este CSS é global.
+   ———————————————————————————————————————————————————————————————————————— */
+
+svg.hb-ico {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* ---------- a barra: gruda no topo da rolagem ---------- */
+
+.hb {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  margin: 0 -40px;
+  padding: 12px 40px 0;
+  transition:
+    background var(--motion-base) ease,
+    box-shadow var(--motion-base) ease;
+}
+
+/* papel e filete SÓ quando gruda (sem blur, sem vidro) */
+.hb.stuck {
+  background: var(--paper);
+  box-shadow: 0 1px 0 var(--line);
+}
+
+.hb-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.hb-search {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: 36px;
+  padding: 0 8px 0 12px;
+  border: 1.5px solid var(--line-strong);
+  border-radius: 7px;
+  background: var(--card);
+  color: var(--ink-3);
+  cursor: text;
+  transition: border-color var(--motion-fast) ease;
+}
+
+.hb-search:hover {
+  border-color: var(--ink-3);
+}
+
+.hb-search:focus-within {
+  border-color: var(--ink);
+  color: var(--ink-2);
+}
+
+.hb-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 12.5px;
+}
+
+.hb-search input::placeholder {
+  color: var(--ink-3);
+}
+
+.hb-search input::-webkit-search-cancel-button {
+  display: none;
+}
+
+.hb-kbd {
+  flex: none;
+  min-width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  font-size: 10.5px;
+  color: var(--ink-3);
+}
+
+.hb-clear {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+
+.hb-clear:hover {
+  background: var(--paper-2);
+  color: var(--ink);
+}
+
+.hb-clear:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.hb-ctl {
+  height: 36px;
+  flex: none;
+}
+
+.hb-ctl .v {
+  color: var(--ink);
+}
+
+.hb-ctl[aria-expanded='true'] {
+  border-color: var(--ink);
+  color: var(--ink);
+}
+
+.hb-ctl:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.hb-ctl .chev {
+  transition: rotate var(--motion-base) var(--ease-out);
+}
+
+.hb-ctl[aria-expanded='true'] .chev {
+  rotate: 180deg;
+}
+
+.hb-badge {
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  background: var(--accent);
+  color: #fff;
+  font-size: 10px;
+  letter-spacing: 0;
+}
+
+.hb-seg {
+  display: inline-flex;
+  flex: none;
+  height: 36px;
+  border: 1.5px solid var(--line-strong);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.hb-seg button {
+  width: 36px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  background: transparent;
+  color: var(--ink-3);
+  cursor: pointer;
+  transition:
+    background var(--motion-fast) ease,
+    color var(--motion-fast) ease;
+}
+
+.hb-seg button + button {
+  border-left: 1px solid var(--line-strong);
+}
+
+.hb-seg button:hover {
+  color: var(--ink);
+}
+
+.hb-seg button[aria-pressed='true'] {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+.hb-seg button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -3px;
+}
+
+.hb-seg svg.hb-ico {
+  width: 15px;
+  height: 15px;
+}
+
+/* ---------- as abas: tinta apagada em repouso, tinta cheia + filete de
+   acento na escolhida. A régua é o inset do próprio trilho (overflow-x corta
+   filho que pendura para fora); o filete da escolhida cobre a régua. ------- */
+
+.hb-tabs-wrap {
+  margin-top: 16px;
+}
+
+.hb-tabs {
+  display: flex;
+  gap: 28px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  box-shadow: inset 0 -1px 0 var(--line-strong);
+}
+
+.hb-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+/* esmaece SÓ a borda que esconde conteúdo */
+.hb-tabs-wrap.fade-r .hb-tabs {
+  mask-image: linear-gradient(to right, #000 calc(100% - 40px), transparent);
+}
+
+.hb-tabs-wrap.fade-l .hb-tabs {
+  mask-image: linear-gradient(to right, transparent, #000 40px);
+}
+
+.hb-tabs-wrap.fade-l.fade-r .hb-tabs {
+  mask-image: linear-gradient(to right, transparent, #000 40px, #000 calc(100% - 40px), transparent);
+}
+
+.hb-tab {
+  position: relative;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 0 13px;
+  border: 0;
+  background: none;
+  color: var(--ink-3);
+  font: 700 10.5px/1 var(--mono);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color var(--motion-fast) ease;
+}
+
+.hb-tab:hover {
+  color: var(--ink-2);
+}
+
+.hb-tab[aria-selected='true'] {
+  color: var(--ink);
+}
+
+.hb-tab[aria-selected='true']::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: var(--accent);
+}
+
+.hb-tab .n {
+  font-weight: 400;
+  letter-spacing: 0.04em;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.hb-tab.zero,
+.hb-tab.zero .n {
+  color: var(--line-strong);
+}
+
+.hb-tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+.hb-tab .tab-glyph {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  display: grid;
+  grid-template-columns: repeat(2, 5px);
+  grid-template-rows: repeat(2, 5px);
+  gap: 1.5px;
+  place-content: center;
+  border-radius: 4px;
+  background: var(--paper-2);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+
+.hb-tab .tab-glyph.has-hue {
+  background: hsl(var(--g-hue) 46% 86%);
+  box-shadow: inset 0 0 0 1px hsl(var(--g-hue) 34% 62%);
+}
+
+.hb-tab .tab-glyph i {
+  border-radius: 2px;
+  background: hsl(var(--card-hue, 30) 38% 48%);
+}
+
+.hb-tab.zero .tab-glyph {
+  opacity: 0.45;
+}
+
+/* ---------- filtros ativos: só existem quando existem ---------- */
+
+.hb-active {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 11px 0 1px;
+  font-size: 10.5px;
+  color: var(--ink-2);
+}
+
+.hb-tok {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 3px 0 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  background: var(--card);
+  color: var(--ink);
+  font-size: 10.5px;
+}
+
+.hb-tok .hb-dot {
+  width: 6px;
+  height: 6px;
+}
+
+.hb-tok button {
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--ink-3);
+  cursor: pointer;
+}
+
+.hb-tok button:hover {
+  background: var(--paper-2);
+  color: var(--ink);
+}
+
+.hb-tok button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.hb-tok button svg.hb-ico {
+  width: 11px;
+  height: 11px;
+}
+
+.hb-active .sum {
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.hb-active .sum b {
+  color: var(--ink);
+}
+
+.hb-dot {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+}
+
+.hb-dot.run {
+  background: var(--ok);
+}
+
+.hb-dot.attn {
+  background: var(--accent);
+}
+
+.hb-dot.active {
+  background: var(--ink-2);
+}
+
+.hb-dot.miss {
+  background: var(--err);
+}
+
+.hb-link {
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--accent-deep);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.hb-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ---------- o popover de FILTRAR / ORDEM: papel com borda de tinta ---------- */
+
+.hb-pop {
+  position: fixed;
+  z-index: 300;
+  width: 262px;
+  padding: 5px;
+  border: 1.5px solid var(--ink);
+  border-radius: 8px;
+  background: var(--card);
+  box-shadow: var(--shadow);
+  font-size: 11.5px;
+  outline: none;
+  animation: hb-pop-in 140ms var(--ease-out) both;
+}
+
+.hb-pop.sort {
+  width: 230px;
+}
+
+@keyframes hb-pop-in {
+  from {
+    opacity: 0;
+    translate: 0 4px;
+  }
+  to {
+    opacity: 1;
+    translate: 0 0;
+  }
+}
+
+.hb-pop-label {
+  padding: 8px 9px 5px;
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.hb-pop-opt {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 9px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.hb-pop-opt:hover,
+.hb-pop-opt:focus-visible {
+  background: var(--paper-2);
+  outline: none;
+}
+
+.hb-pop-opt .box {
+  width: 13px;
+  height: 13px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border: 1.5px solid var(--ink-3);
+  border-radius: 3px;
+  color: var(--paper);
+}
+
+.hb-pop-opt .box svg {
+  width: 9px;
+  height: 9px;
+  opacity: 0;
+}
+
+.hb-pop-opt[aria-checked='true'] .box {
+  background: var(--ink);
+  border-color: var(--ink);
+}
+
+.hb-pop-opt[aria-checked='true'] .box svg {
+  opacity: 1;
+}
+
+.hb-pop-opt .box.radio {
+  border-radius: 50%;
+}
+
+.hb-pop-opt[aria-checked='true'] .box.radio {
+  background: transparent;
+  border-color: var(--ink);
+  box-shadow:
+    inset 0 0 0 2.5px var(--card),
+    inset 0 0 0 7px var(--ink);
+}
+
+.hb-pop-opt .n {
+  margin-left: auto;
+  color: var(--ink-3);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.hb-pop-sep {
+  height: 1px;
+  margin: 5px 4px;
+  background: var(--line);
+}
+
+.hb-pop-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 5px 3px;
+}
+
+/* ---------- seções por grupo ---------- */
+
+.home-index-body .hg {
+  margin-top: 26px;
+}
+
+.home-index-body .hg:first-child {
+  margin-top: 18px;
+}
+
+.hg-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  margin-bottom: 12px;
+}
+
+.hg-caret {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  flex: none;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--ink-3);
+  cursor: pointer;
+}
+
+.hg-caret:hover {
+  background: var(--paper-2);
+  color: var(--ink);
+}
+
+.hg-caret:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.hg-caret svg {
+  transition: rotate var(--motion-base) var(--ease-out);
+}
+
+.hg.shut .hg-caret svg {
+  rotate: -90deg;
+}
+
+.hg-folder {
+  width: 22px;
+  height: 22px;
+  flex: none;
+  display: grid;
+  grid-template-columns: repeat(2, 7px);
+  grid-template-rows: repeat(2, 7px);
+  gap: 2px;
+  place-content: center;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--paper-2);
+}
+
+.hg-folder.has-hue {
+  border-color: hsl(var(--g-hue) 34% 62%);
+  background: hsl(var(--g-hue) 46% 86%);
+}
+
+.hg-folder i {
+  border-radius: 3px;
+  background: hsl(var(--card-hue, 30) 38% 48%);
+}
+
+.hg-folder.loose {
+  background: transparent;
+  border-style: dashed;
+}
+
+.hg-folder.loose i {
+  background: var(--line-strong);
+}
+
+.hg-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: 0;
+  border-radius: 5px;
+  padding: 3px 6px;
+  margin-left: -6px;
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  cursor: text;
+}
+
+.hg-name:hover {
+  background: var(--paper-2);
+}
+
+.hg-name:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.hg-name.static {
+  cursor: default;
+  color: var(--ink-2);
+}
+
+.hg-name.static:hover {
+  background: transparent;
+}
+
+.hg-name-input {
+  width: 260px;
+  min-width: 0;
+  padding: 3px 7px;
+  border: 1px solid var(--accent);
+  border-radius: 5px;
+  background: #fffdf6;
+  color: var(--ink);
+  outline: none;
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.hg-count {
+  flex: none;
+  font-size: 10.5px;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.hg-rule {
+  flex: 1;
+  min-width: 12px;
+  height: 1px;
+  background: var(--line);
+}
+
+/* a grade solta (uma aba escolhida ou "todos juntos") desce do índice */
+.home-index-body > .universe-grid {
+  margin-top: 22px;
+}
+
+.home-index-body > .hg + .universe-grid {
+  margin-top: 18px;
+}
+
+/* ---------- o card: linha de meta e o destaque da busca ---------- */
+
+.universe-card .core-name mark {
+  background: rgba(217, 108, 63, 0.22);
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
+.uc-path mark {
+  background: rgba(217, 108, 63, 0.22);
+  color: inherit;
+}
+
+.uc-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 4px;
+  min-width: 0;
+  font-size: 9.5px;
+  color: var(--ink-2);
+}
+
+.uc-date {
+  white-space: nowrap;
+}
+
+.uc-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 120px;
+  min-width: 0;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.uc-group span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.uc-group .sw {
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  background: var(--ink-3);
+  flex: none;
+}
+
+.uc-group .sw.hue {
+  background: hsl(var(--g-hue) 46% 50%);
+}
+
+/* O menu ··· (do card e da seção) sai do card por portal: com "mover para
+   grupo" ele passa da altura da ficha, e a ficha corta o que transborda. */
+.uc-menu-pop.is-floating {
+  position: fixed;
+  right: auto;
+  z-index: 300;
+  width: 206px;
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+  outline: none;
+}
+
+.uc-menu-label {
+  padding: 7px 8px 4px;
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--panel-ink-3);
+}
+
+.uc-menu-sep {
+  height: 1px;
+  margin: 4px;
+  background: var(--panel-line);
+}
+
+.uc-menu-pop .uc-menu-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.uc-menu-group .sw {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 2.5px;
+  background: var(--panel-ink-3);
+}
+
+.uc-menu-group .sw.hue {
+  background: hsl(var(--g-hue) 46% 50%);
+}
+
+.uc-menu-group .name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.uc-menu-group .tail {
+  margin-left: auto;
+  flex: none;
+  color: var(--panel-ink-3);
+  font-size: 9.5px;
+}
+
+/* ---------- nada com esses filtros ---------- */
+
+.home-empty {
+  margin-top: 28px;
+  padding: 34px 24px;
+  border: 1.5px dashed var(--line-strong);
+  border-radius: 12px;
+  text-align: center;
+  color: var(--ink-2);
+}
+
+.home-empty strong {
+  display: block;
+  color: var(--ink);
+  font-size: 13px;
+  margin-bottom: 6px;
+}
+
+.home-empty p {
+  margin: 0 0 14px;
+  font-size: 11px;
+}
+
+/* ---------- respiro por largura do container (.home-inner) ---------- */
+
+@container (max-width: 640px) {
+  .hb-row {
+    flex-wrap: wrap;
+  }
+
+  .hb-search {
+    flex-basis: 100%;
+  }
+}
