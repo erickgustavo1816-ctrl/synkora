@@ -1,0 +1,547 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<title>mockup · browser da missão — chrome novo (sem o pé, página na altura toda)</title>
+<!-- AUTOCONTIDO: abre direto do disco. O primeiro bloco copia do
+     src/renderer/src/global.css e do workspace/workspacePanels.css as regras
+     de HOJE do browser (o "antes"); o segundo é a PROPOSTA (o "depois"). Os
+     dois lados são montados pelo MESMO script a partir dos MESMOS dados, e a
+     régua embaixo de cada janela mede a página de verdade (getBoundingClientRect). -->
+<style>
+  :root {
+    --paper: #efe9dc; --paper-2: #e8e1d0; --card: #f6f1e6;
+    --ink: #262019; --ink-2: #5f574a; --ink-3: #948b78;
+    --line: #d9d1bd; --line-strong: #b8ae95;
+    --accent: #d96c3f; --accent-deep: #c05a2e; --ok: #3e9b5f; --err: #b54036;
+    --panel: #26241f; --panel-2: #2e2b25; --panel-ink: #efe8d6; --panel-ink-2: #b3aa93; --panel-ink-3: #7d7663;
+    --mono: 'Cascadia Code', Consolas, 'Courier New', monospace;
+    --motion-fast: 0.16s;
+  }
+  @keyframes gui-subagent-pulse { 0%, 100% { opacity: 1 } 50% { opacity: .35 } }
+  * { box-sizing: border-box; }
+
+  /* ——— moldura da janela do workspace (igual nos dois lados) ——— */
+  .wp { position: relative; display: flex; flex-direction: column; min-width: 0; overflow: hidden;
+    background: var(--card); border: 1px solid var(--line-strong); border-radius: 8px; color: var(--ink); font-family: var(--mono); }
+  .wp-head { display: flex; align-items: center; flex: none; gap: 7px; padding: 4px 6px 4px 10px; border-bottom: 1px solid var(--line); color: var(--ink-3); }
+  .wp-head > svg { flex: none; width: 14px; height: 14px; }
+  .wp-title { margin: 0; color: var(--ink-2); font: 500 11px var(--mono); }
+  .wp-summary { margin-left: auto; color: var(--ink-3); font: 10px var(--mono); white-space: nowrap; }
+  .wp-acts { display: flex; gap: 1px; color: var(--ink-3); }
+  .wp-acts span { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 4px; }
+  .wp-acts svg { width: 14px; height: 14px; }
+  .wp-body { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
+
+  /* ———————————————— ANTES: as regras de hoje ———————————————— */
+  .dock-browser { display: flex; flex-direction: column; gap: 7px; min-width: 0; flex: 1; min-height: 0; }
+  .dock-browser-shell { display: flex; flex-direction: column; min-width: 0; background: var(--card); overflow: hidden; flex: 1; min-height: 0; }
+  .dock-browser-tabbar { display: flex; align-items: flex-start; gap: 4px; min-width: 0; padding: 4px 4px 3px; border-bottom: 1px solid var(--line); background: var(--paper); flex-shrink: 0; }
+  .dock-browser-tabs { display: flex; flex: 1 1 auto; flex-wrap: wrap; gap: 4px; min-width: 0; max-height: 88px; overflow-y: auto; }
+  .dock-browser-tab-wrap { display: flex; align-items: stretch; flex: 1 1 96px; min-width: 0; max-width: 100%; border: 1px solid transparent; border-radius: 4px; overflow: hidden; }
+  .dock-browser-tab-wrap:hover { background: var(--card); }
+  .dock-browser-tab-wrap.owned { flex-basis: 138px; }
+  .dock-browser-tab-wrap.on { border-color: var(--ink); background: var(--card); }
+  .dock-browser-tab { display: flex; align-items: center; gap: 5px; flex: 1 1 auto; min-width: 0; border: 0; background: transparent; padding: 3px 2px 3px 6px; font: 10.5px var(--mono); color: var(--ink-2); text-align: left; cursor: pointer; }
+  .dock-browser-tab-wrap.on .dock-browser-tab { color: var(--ink); font-weight: 700; }
+  .dock-browser-tab-name, .dock-browser-tab-owner-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dock-browser-tab-owner { display: inline-flex; align-items: center; gap: 3px; flex: 0 0 auto; max-width: 64%; padding-right: 5px; border-right: 1px solid var(--line); color: var(--ink-2); font-size: 9px; font-weight: 700; letter-spacing: .08em; }
+  .dock-browser-tab-bolt { color: var(--accent); font-size: 9px; animation: gui-subagent-pulse 1.05s ease-in-out infinite; }
+  .dock-browser-tab-dot { flex: none; width: 5px; height: 5px; border-radius: 50%; background: var(--line-strong); }
+  .dock-browser-tab-x, .dock-browser-tab-add { flex: none; border: 0; background: transparent; padding: 0 6px; font: 12px/1 var(--mono); color: var(--ink-3); cursor: pointer; }
+  .dock-browser-tab-x:hover { color: var(--err); background: var(--paper-2); }
+  .dock-browser-tab-add { border-radius: 4px; padding: 3px 8px; color: var(--ink-2); }
+  .dock-browser-nav { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; min-width: 0; padding: 4px; border-bottom: 1px solid var(--line); flex-shrink: 0; }
+  .dock-browser-btn { flex: none; display: inline-flex; align-items: center; justify-content: center; min-width: 24px; height: 24px; padding: 0 5px; border: 0; border-radius: 4px; background: transparent; font: 11px/1 var(--mono); color: var(--ink-2); cursor: pointer; }
+  .dock-browser-btn:hover:not(:disabled) { color: var(--ink); background: var(--paper-2); }
+  .dock-browser-btn:disabled { color: var(--ink-3); }
+  .dock-browser-url { flex: 1 1 110px; min-width: 0; height: 24px; padding: 0 8px; border: 1px solid var(--line-strong); border-radius: 4px; outline: none; background: #e3dccb; color: var(--ink); font: 10.5px var(--mono); text-overflow: ellipsis; }
+  .dock-browser-vp { display: flex; flex-wrap: wrap; align-items: center; gap: 3px; min-width: 0; padding: 3px 4px 4px; border-bottom: 1px solid var(--ink); flex-shrink: 0; }
+  .dock-browser-vp-btn { flex: none; border: 1px solid transparent; border-radius: 4px; background: transparent; padding: 2px 6px; font: 700 9.5px/1.5 var(--mono); letter-spacing: .06em; color: var(--ink-3); cursor: pointer; }
+  .dock-browser-vp-btn.on { border-color: var(--ink); color: var(--ink); background: var(--card); }
+  .dock-browser-vp-note { flex: 1 1 100%; min-width: 0; padding: 1px 2px 0; font-size: 9.5px; line-height: 1.35; color: var(--ink-3); overflow-wrap: anywhere; }
+  .dock-browser-page { position: relative; flex: 1; min-width: 0; min-height: 0; background: var(--panel-2); overflow: hidden; }
+  .dock-browser-foot { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; min-height: 14px; min-width: 0; padding: 3px 6px 4px; font-size: 10px; line-height: 1.4; flex-shrink: 0; }
+  .dock-browser-driving { display: inline-flex; align-items: center; gap: 5px; flex: none; color: var(--ink); font-weight: 700; }
+  .dock-browser-driving b { color: var(--accent); }
+  .dock-browser-driving-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); animation: gui-subagent-pulse 1.05s ease-in-out infinite; }
+  .dock-browser-hint, .dock-browser-session { min-width: 0; margin-left: auto; color: var(--ink-2); overflow-wrap: anywhere; }
+  .dock-browser-session { color: var(--ink-3); }
+  .dock-browser-notice { margin-top: 2px; font-size: 9.5px; line-height: 1.35; color: var(--err); overflow-wrap: anywhere; }
+  .dock-browser-notice.stale { color: var(--ink-2); font-style: italic; }
+</style>
+<style>
+  /* ———————————————— DEPOIS: a proposta ————————————————
+     UMA regra manda: nada que aparece por causa do MOUSE muda a altura da
+     página. Dica é tooltip nativo (title — o Windows desenha por cima da
+     página nativa); recado é faixa com ×, entre a barra e a página, e só
+     existe enquanto houver o que dizer. */
+  .nb { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; background: var(--card); font-family: var(--mono); }
+
+  /* A TIRA DE ABAS: uma linha só. A aba ativa é papel de card e FUNDE com a
+     barra de baixo (a costura some embaixo dela) — a aba e a barra viram o
+     mesmo objeto, como num browser de verdade. As outras moram na prateleira. */
+  .nb-tabs { position: relative; display: flex; align-items: flex-end; flex: none; height: 33px; padding: 5px 6px 0; background: var(--paper); border-bottom: 1px solid var(--line-strong); }
+  .nb-tablist { display: flex; align-items: flex-end; flex: 1 1 auto; min-width: 0; height: 100%; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+  .nb-tablist.fade-r { mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); }
+  .nb-tab { position: relative; display: flex; align-items: center; gap: 6px; flex: 1 1 0; min-width: 64px; max-width: 200px; height: 28px; margin-bottom: -1px;
+    padding: 0 4px 1px 10px; border: 1px solid transparent; border-bottom: 0; border-radius: 7px 7px 0 0;
+    color: var(--ink-2); font-size: 10.5px; cursor: pointer; user-select: none; isolation: isolate; }
+  .nb-tab::before { content: ''; position: absolute; inset: 3px 2px 4px; border-radius: 5px; background: transparent; transition: background var(--motion-fast) ease; z-index: -1; }
+  .nb-tab:not(.on):hover::before, .nb-tab.is-hover:not(.on)::before { background: color-mix(in srgb, var(--ink) 7%, transparent); }
+  .nb-tab:not(.on):hover, .nb-tab.is-hover:not(.on) { color: var(--ink); }
+  .nb-tab + .nb-tab::after { content: ''; position: absolute; left: -1px; top: 8px; width: 1px; height: 13px; background: var(--line-strong); }
+  .nb-tab.on::after, .nb-tab.on + .nb-tab::after,
+  .nb-tab:hover::after, .nb-tab:hover + .nb-tab::after,
+  .nb-tab.is-hover::after, .nb-tab.is-hover + .nb-tab::after { opacity: 0; }
+  .nb-tab.on { z-index: 1; background: var(--card); border-color: var(--line-strong); color: var(--ink); font-weight: 700; }
+  /* A bolinha só existe enquanto a aba CARREGA: parada, ela era enfeite em
+     toda aba e comia o palmo do nome. */
+  .nb-tab-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); animation: gui-subagent-pulse 1.05s ease-in-out infinite; }
+  .nb-tab-owner { display: inline-flex; align-items: center; gap: 3px; flex: 0 0 auto; max-width: 60%; padding-right: 6px; border-right: 1px solid var(--line); font-size: 9px; font-weight: 700; letter-spacing: .08em; color: var(--ink-2); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .nb-tab.on .nb-tab-owner { color: var(--ink); }
+  .nb-tab-owner svg { flex: none; width: 10px; height: 10px; color: var(--accent); animation: gui-subagent-pulse 1.05s ease-in-out infinite; }
+  .nb-tab-name { flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  /* O × só aparece onde o gesto faz sentido: na aba ativa e na que está sob o
+     mouse. Doze × acesos numa tira eram doze alvos de erro. */
+  .nb-tab-x { flex: none; display: grid; place-items: center; width: 18px; height: 18px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--ink-2); cursor: pointer; opacity: 0; transition: opacity var(--motion-fast) ease, background var(--motion-fast) ease; }
+  .nb-tab.on .nb-tab-x, .nb-tab:hover .nb-tab-x, .nb-tab.is-hover .nb-tab-x, .nb-tab-x:focus-visible { opacity: 1; }
+  .nb-tab-x:hover { background: var(--line); color: var(--ink); }
+  .nb-tab-x svg { width: 11px; height: 11px; }
+  .nb-add { flex: none; align-self: center; display: grid; place-items: center; width: 24px; height: 24px; margin: 0 0 3px 3px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--ink-2); cursor: pointer; }
+  .nb-add:hover { background: color-mix(in srgb, var(--ink) 7%, transparent); color: var(--ink); }
+  .nb-add svg { width: 13px; height: 13px; }
+
+  /* A BARRA: navegação, endereço, largura e ferramentas numa fileira só. Ela
+     quebra (e só então ganha uma 2ª linha) quando o painel é estreito. */
+  .nb-bar { display: flex; flex-wrap: wrap; align-items: center; flex: none; gap: 4px 2px; padding: 4px 6px; background: var(--card); border-bottom: 1px solid var(--ink); }
+  .nb-bar:has(+ .nb-infos) { border-bottom-color: var(--line); }
+  .nb-ico { flex: none; display: grid; place-items: center; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 5px; background: transparent; color: var(--ink-2); cursor: pointer; transition: background var(--motion-fast) ease, color var(--motion-fast) ease; }
+  .nb-ico:hover:not(:disabled) { background: var(--paper-2); color: var(--ink); }
+  .nb-ico:disabled { color: var(--ink-3); opacity: .55; cursor: default; }
+  .nb-ico svg { width: 15px; height: 15px; }
+  .nb-url-wrap { position: relative; flex: 1 1 90px; min-width: 0; margin: 0 4px; }
+  .nb-url { width: 100%; height: 26px; padding: 0 9px; border: 1px solid var(--line-strong); border-radius: 5px; outline: none; background: var(--paper); color: var(--ink); font: 10.5px var(--mono); text-overflow: ellipsis; }
+  .nb-url:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(217, 108, 63, 0.11); }
+  .nb-url-wrap.driving .nb-url { padding-right: 30px; }
+  /* ⚡ AGENTE mora DENTRO do campo: acender e apagar não empurra nada — a
+     página não pisca de altura toda vez que o agente começa ou para. */
+  .nb-driving { position: absolute; top: 4px; right: 4px; bottom: 4px; display: grid; place-items: center; width: 22px; border-radius: 3px;
+    background: color-mix(in srgb, var(--accent) 14%, var(--paper)); color: var(--accent-deep); }
+  .nb-driving svg { width: 11px; height: 11px; animation: gui-subagent-pulse 1.05s ease-in-out infinite; }
+  /* A LARGURA: um seletor compacto, não uma fileira. A lista é a NATIVA
+     (<select>): o Windows a abre como janela própria, por cima da página. Aceso
+     (contorno ink) sempre que a página está sendo emulada — é estado que o dono
+     precisa ver de relance, inclusive quando foi o agente que pediu. */
+  .nb-width { position: relative; flex: none; display: inline-flex; align-items: center; gap: 4px; height: 26px; padding: 0 20px 0 6px;
+    border: 1px solid transparent; border-radius: 5px; color: var(--ink-2); font: 700 9.5px var(--mono); letter-spacing: .05em; cursor: pointer;
+    transition: background var(--motion-fast) ease, color var(--motion-fast) ease, border-color var(--motion-fast) ease; }
+  .nb-width:hover { background: var(--paper-2); color: var(--ink); }
+  .nb-width.on { border-color: var(--ink); color: var(--ink); background: var(--card); }
+  .nb-width.custom { border-style: dashed; border-color: var(--accent); }
+  .nb-width > svg { width: 14px; height: 14px; }
+  .nb-width > svg.chev { position: absolute; right: 4px; top: 6px; width: 12px; height: 12px; pointer-events: none; }
+  .nb-width select { position: absolute; inset: 0; width: 100%; opacity: 0; cursor: pointer; font: 12px var(--mono); }
+  .nb-width:focus-within { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .nb-sep { flex: none; width: 1px; height: 16px; margin: 0 4px; background: var(--line); }
+
+  /* A FAIXA DE AVISO — o lugar dos recados. Mora entre a barra e a página
+     (a infobar de um browser de verdade), fecha com × e, quando o recado é de
+     carga ou de queda, traz a saída no próprio corpo: RECARREGAR. */
+  .nb-infos { flex: none; border-bottom: 1px solid var(--ink); }
+  .nb-info { display: flex; align-items: flex-start; gap: 8px; padding: 6px 5px 6px 9px; font-size: 10.5px; line-height: 1.45; color: var(--ink);
+    background: color-mix(in srgb, var(--err) 7%, var(--card)); animation: nb-info-in .22s cubic-bezier(.22, 1, .36, 1); }
+  .nb-info + .nb-info { border-top: 1px solid var(--line); }
+  .nb-info > svg { flex: none; width: 14px; height: 14px; margin-top: 1px; color: var(--err); }
+  .nb-info.muted { background: var(--paper-2); color: var(--ink-2); }
+  .nb-info.muted > svg { color: var(--ink-3); }
+  .nb-info.neutral { background: var(--card); color: var(--ink-2); }
+  .nb-info.neutral > svg { color: var(--ink-2); }
+  .nb-info-text { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+  .nb-info-act { flex: none; align-self: center; height: 22px; padding: 0 8px; border: 1px solid var(--ink); border-radius: 4px; background: transparent; font: 700 9.5px var(--mono); letter-spacing: .07em; text-transform: uppercase; color: var(--ink); cursor: pointer; }
+  .nb-info-act:hover { background: var(--ink); color: var(--card); }
+  .nb-info-x { flex: none; align-self: center; display: grid; place-items: center; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--ink-2); cursor: pointer; }
+  .nb-info-x:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); color: var(--ink); }
+  .nb-info-x svg { width: 11px; height: 11px; }
+  @keyframes nb-info-in { from { opacity: 0; transform: translateY(-3px); } }
+
+  .nb-page { position: relative; flex: 1; min-height: 0; min-width: 0; background: var(--panel-2); overflow: hidden; }
+  .nb button:focus-visible, .nb .nb-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+  /* ——— um site qualquer, para a página ter cara de página ——— */
+  .site { position: absolute; top: 0; bottom: 0; left: 0; background: #fbfaf8; color: #1f2430; font-family: 'Segoe UI', system-ui, sans-serif; overflow: hidden; transform-origin: 0 0; }
+  .site-nav { display: flex; align-items: center; gap: 14px; height: 44px; padding: 0 18px; border-bottom: 1px solid #e6e3dc; font-size: 13px; color: #59606e; }
+  .site-logo { width: 22px; height: 22px; border-radius: 6px; background: #2b59c3; }
+  .site-nav b { color: #1f2430; margin-right: auto; }
+  .site-main { padding: 22px 18px; }
+  .site-main h1 { margin: 0 0 6px; font-size: 22px; letter-spacing: -.01em; }
+  .site-main p { margin: 0 0 18px; font-size: 13px; color: #59606e; }
+  .site-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; margin-bottom: 18px; }
+  .site-card { padding: 12px; border: 1px solid #e6e3dc; border-radius: 8px; background: #fff; font-size: 12px; color: #59606e; }
+  .site-card strong { display: block; margin-top: 4px; font-size: 20px; color: #1f2430; }
+  .site-row { display: flex; gap: 10px; padding: 10px 0; border-top: 1px solid #eeebe5; font-size: 12.5px; }
+  .site-row span:first-child { flex: 1; } .site-row span:last-child { color: #2b7a4b; }
+  .band { position: absolute; top: 0; bottom: 0; background: var(--panel-2); }
+  .band.l { left: 0; box-shadow: inset -1px 0 0 var(--panel-ink-3); } .band.r { right: 0; box-shadow: inset 1px 0 0 var(--panel-ink-3); }
+
+  /* ——— o tooltip nativo do Windows, desenhado para a prancha ——— */
+  .os-tip { position: absolute; z-index: 5; max-width: 290px; padding: 5px 8px; background: #fbfbfb; color: #1b1b1b; border: 1px solid #cfcfcf; border-radius: 4px;
+    box-shadow: 0 4px 10px rgba(0, 0, 0, .16); font: 12px/1.35 'Segoe UI', system-ui, sans-serif; white-space: pre-line; pointer-events: none; }
+  .os-cursor { position: absolute; z-index: 6; width: 12px; height: 18px; pointer-events: none; }
+</style>
+<style>
+  /* ——— a prancha ——— */
+  body { margin: 0; padding: 32px 24px 72px; background: var(--paper); color: var(--ink); font-family: var(--mono); }
+  .page { max-width: 1060px; margin: 0 auto; display: flex; flex-direction: column; gap: 44px; }
+  h1 { font-size: 18px; margin: 0 0 8px; }
+  h2 { font-size: 13px; margin: 0 0 6px; letter-spacing: .04em; text-transform: uppercase; }
+  .lede, .note { font-size: 12.5px; line-height: 1.6; color: var(--ink-2); margin: 0; max-width: 80ch; }
+  .note { font-size: 12px; margin-bottom: 16px; }
+  .pair { display: flex; flex-wrap: wrap; gap: 40px; align-items: flex-start; }
+  .cell { position: relative; display: flex; flex-direction: column; gap: 10px; }
+  .cell-label { font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-2); }
+  .cell-label em { font-style: normal; color: var(--accent-deep); }
+  .ledger { margin: 0; font-size: 11px; line-height: 1.5; color: var(--ink-2); }
+  .ledger b { color: var(--ink); }
+  .ledger .gain { color: var(--ok); font-weight: 700; }
+  .scene-backdrop { padding: 14px; border-radius: 10px; background: var(--paper-2); }
+  table { border-collapse: collapse; font-size: 11.5px; line-height: 1.5; width: 100%; max-width: 1000px; }
+  th, td { text-align: left; vertical-align: top; padding: 8px 12px 8px 0; border-top: 1px solid var(--line); }
+  th { font-size: 10.5px; letter-spacing: .07em; text-transform: uppercase; color: var(--ink-2); }
+  td:first-child { color: var(--ink-2); width: 34%; }
+  code { font-family: var(--mono); background: var(--paper-2); padding: 0 4px; border-radius: 3px; }
+</style>
+</head>
+<body>
+<main class="page">
+  <header>
+    <h1>Browser da missão — o chrome novo</h1>
+    <p class="lede">Três reclamações e uma regra. O pé era uma barra de status que trocava de texto
+      no hover: numa aba ela escrevia a frase longa com a URL, quebrava linha e <b>encolhia a página
+      nativa só com o mouse passando</b>. Os erros caíam como linhas soltas <code>// …</code> fora do
+      corpo. E a largura AUTO/375/768/1280 tinha uma fileira só dela. A regra do depois:
+      <b>nada que aparece por causa do mouse muda a altura da página</b>.</p>
+  </header>
+
+  <section>
+    <h2>1 · Em repouso</h2>
+    <p class="note">Mesma janela do workspace (460 × 640), mesmas três abas, agente dirigindo a aba do dev.
+      Passe o mouse nas abas e nos botões dos dois lados: no antes a régua mexe; no depois não.
+      No depois, clique nas abas, feche uma, abra outra e troque a largura no seletor ↔.</p>
+    <div class="pair">
+      <div class="cell" id="s1-antes"></div>
+      <div class="cell" id="s1-depois"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>2 · Mouse numa aba + recado do motor</h2>
+    <p class="note">A cena que você descreveu, congelada: o mouse está sobre a aba do INV-BRAND e a prévia
+      local recusou a conexão. No antes, a frase da aba toma o pé e os recados caem soltos embaixo do
+      corpo. No depois, a dica é o tooltip nativo do Windows (<code>title</code>), que desenha
+      <b>por cima</b> da página nativa, e o recado vira uma faixa com a saída dentro: RECARREGAR ou ×.</p>
+    <div class="pair">
+      <div class="cell" id="s2-antes"></div>
+      <div class="cell" id="s2-depois"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>3 · Os três tons da faixa</h2>
+    <p class="note">Erro do motor (carga, queda, download barrado, teto de abas): tom de erro, e quando é
+      carga ou queda vem RECARREGAR. O motor sem responder: cinza, porque a página na tela ainda é a
+      última fotografia. Nota de largura, quando o painel é estreito demais para o que se pediu: neutra, porque é
+      situação e não falha. Tudo fecha com ×. O erro dispensado não volta; um recado novo aparece de novo.</p>
+    <div class="scene-backdrop" style="max-width: 488px"><div class="wp" id="s3-tones" style="width: 460px"></div></div>
+  </section>
+
+  <section>
+    <h2>4 · Painel estreito (340 px) em 768</h2>
+    <p class="note">No antes, as abas viram três linhas e a página perde mais ainda. No depois, as abas
+      encolhem numa linha só (com muitas, a tira rola e a borda que esconde aba esmaece), e a barra
+      continua numa linha só: a largura é um seletor compacto, não uma fileira.</p>
+    <div class="pair">
+      <div class="cell" id="s4-antes"></div>
+      <div class="cell" id="s4-depois"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>5 · O que saiu, e para onde foi</h2>
+    <table>
+      <thead><tr><th>Antes</th><th>Depois</th></tr></thead>
+      <tbody>
+        <tr><td>Barra de status no pé (a frase do controle sob o mouse)</td><td>Some. Cada controle tem sua dica como tooltip nativo (<code>title</code>), que fica por cima da página nativa. A página não muda de altura no hover.</td></tr>
+        <tr><td>"sessão do projeto" parado no pé</td><td>Vira a dica do campo de endereço: "cookies e logins são da sessão deste universo…".</td></tr>
+        <tr><td>"⚡ agente dirigindo" no pé</td><td>O ⚡ na aba que ele dirige (como já era) e, quando é a aba à vista, um ⚡ dentro do campo de endereço, que acende sem empurrar nada. O resumo da janela ("3 abas · ⚡") continua contando.</td></tr>
+        <tr><td>Fileira própria AUTO / 375 / 768 / 1280</td><td>Seletor compacto <b>↔ 1280 ▾</b> na fileira do endereço (lista nativa, que abre por cima da página). Com a página emulada ele fica aceso; tracejado laranja quando o agente pediu uma largura fora da lista.</td></tr>
+        <tr><td>Nota "a página está em 768px REAIS, centralizada…"</td><td>Vira a dica do botão aceso. As faixas laterais escuras já marcam a borda da página.</td></tr>
+        <tr><td>Nota "o painel é estreito demais para 1280px…"</td><td>Faixa neutra (é situação acionável, não erro): "alargue o painel ou destaque".</td></tr>
+        <tr><td>Recados <code>// …</code> soltos embaixo do corpo</td><td>Faixa dentro do corpo, entre a barra e a página, com ×. Carga ou queda trazem RECARREGAR.</td></tr>
+        <tr><td>Abas em várias linhas (até 88 px de altura)</td><td>Uma linha. A aba ativa funde com a barra. O × aparece só na ativa e na aba sob o mouse, e o hover é um fundo discreto.</td></tr>
+        <tr><td>Glifos ← → ⟳ &lt;/&gt; ⧉ × +</td><td>Ícones desenhados no mesmo traço dos ícones do workspace (grade de 20, traço 1.4).</td></tr>
+        <tr><td>Pé do cartão "destacado numa janela própria"</td><td>A frase "o X da janela também reencaixa" vira a linha fina do próprio cartão.</td></tr>
+      </tbody>
+    </table>
+  </section>
+</main>
+
+<script>
+/* ————— ícones: grade de 20, traço 1.4, pontas redondas (a régua do WorkspaceIcon) ————— */
+const P = {
+  browser: '<circle cx="10" cy="10" r="7"/><ellipse cx="10" cy="10" rx="3" ry="7"/><path d="M3 10h14"/>',
+  expand: '<path d="M12 3h5v5M17 3l-5 5M8 17H3v-5M3 17l5-5"/>',
+  close: '<path d="m5 5 10 10M5 15l10-10"/>',
+  plus: '<path d="M10 4v12M4 10h12"/>',
+  back: '<path d="M16 10H4m4.5-4.5L4 10l4.5 4.5"/>',
+  forward: '<path d="M4 10h12m-4.5-4.5L16 10l-4.5 4.5"/>',
+  reload: '<path d="M16 10a6 6 0 1 1-1.76-4.24"/><path d="M16.2 3.2v3.3h-3.3"/>',
+  code: '<path d="m7 6-4 4 4 4m6-8 4 4-4 4"/>',
+  popout: '<path d="M11.5 3.5H16.5V8.5M16.5 3.5l-7 7"/><path d="M8.5 4.5h-4v11h11v-4"/>',
+  bolt: '<path d="M11.4 2.4 4.6 11.2h5l-1 6.4 6.8-8.8h-5z" fill="currentColor" stroke="none"/>',
+  alert: '<circle cx="10" cy="10" r="7"/><path d="M10 6.4v4.4M10 13.5v.1"/>',
+  stale: '<circle cx="10" cy="10" r="7"/><path d="M10 6v4l2.6 1.6"/>',
+  width: '<path d="M3 10h14M6.5 6.5 3 10l3.5 3.5M13.5 6.5 17 10l-3.5 3.5"/>',
+  chevron: '<path d="m5.5 8 4.5 4.5L14.5 8"/>',
+  info: '<circle cx="10" cy="10" r="7"/><path d="M10 9.2v4.4M10 6.5v.1"/>'
+}
+const svg = (n) => `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${P[n]}</svg>`
+const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;')
+
+const BASE_TABS = () => [
+  { id: 'a', label: 'Synkora — início', url: 'http://localhost:5173/' },
+  { id: 'b', label: 'Board · missão', url: 'http://localhost:5173/#/board?mission=b6dab7a1', owner: 'DEV', phrase: 'aba do dev', driving: true },
+  { id: 'c', label: 'Figma — tokens do tema', url: 'https://www.figma.com/design/k3P9/tokens-papel', owner: 'INV-BRAND', phrase: 'aba de inv-brand' }
+]
+const MODES = ['auto', 375, 768, 1280]
+const modeLabel = (m) => (m === 'auto' ? 'AUTO' : String(m))
+const LOAD_FAILED = 'a prévia local na porta 5173 recusou a conexão — aguarde o servidor iniciar ou reinicie a prévia; depois use ⟳'
+const tabSentence = (t) => [t.phrase, t.label, t.driving ? 'dirigindo agora' : null].filter(Boolean).join(' · ')
+
+function head(summary) {
+  return `<header class="wp-head">${svg('browser')}<h3 class="wp-title">Browser</h3><span class="wp-summary">${summary}</span>
+    <div class="wp-acts"><span>${svg('expand')}</span><span>${svg('close')}</span></div></header>`
+}
+const site = () => `<div class="site"><div class="site-nav"><i class="site-logo"></i><b>Pedidos</b><span>Hoje</span><span>Clientes</span><span>Ajustes</span></div>
+  <div class="site-main"><h1>Pedidos de hoje</h1><p>Atualizado há 2 minutos · 48 pedidos</p>
+  <div class="site-cards"><div class="site-card">Receita<strong>R$ 12,4 mil</strong></div><div class="site-card">Ticket médio<strong>R$ 258</strong></div><div class="site-card">Entregues<strong>41</strong></div></div>
+  ${['#4821 · Ana Ribeiro', '#4820 · Caio Mendes', '#4819 · Júlia Prado', '#4818 · Otávio Lins', '#4817 · Rita Sales', '#4816 · Davi Rocha', '#4815 · Lia Torres', '#4814 · Enzo Brito', '#4813 · Nina Castro', '#4812 · Tomás Reis', '#4811 · Bia Farias', '#4810 · Leo Moraes'].map((r) => `<div class="site-row"><span>${r}</span><span>entregue</span></div>`).join('')}
+  </div></div>`
+
+/* ————— ANTES: a marcação de hoje ————— */
+function antes(s) {
+  const tabs = s.tabs.map((t) => {
+    const on = t.id === s.active
+    const owner = t.owner || t.driving ? `<span class="dock-browser-tab-owner">${t.driving ? '<b class="dock-browser-tab-bolt">⚡</b>' : ''}${t.owner ? `<span class="dock-browser-tab-owner-name">${t.owner}</span>` : ''}</span>` : ''
+    return `<span class="dock-browser-tab-wrap${on ? ' on' : ''}${t.owner ? ' owned' : ''}">
+      <button class="dock-browser-tab" data-hint="${esc(tabSentence(t) + ' · ' + t.url)}"><i class="dock-browser-tab-dot"></i>${owner}<span class="dock-browser-tab-name">${t.label}</span></button>
+      <button class="dock-browser-tab-x" data-hint="${esc(t.phrase ? 'fechar ' + t.phrase : 'fechar esta aba')}">×</button></span>`
+  }).join('')
+  const active = s.tabs.find((t) => t.id === s.active)
+  const vp = MODES.map((m) => `<button class="dock-browser-vp-btn${s.mode === m ? ' on' : ''}" data-hint="largura que a página enxerga: ${modeLabel(m)}">${modeLabel(m)}</button>`).join('')
+  const note = s.mode !== 'auto' ? `<span class="dock-browser-vp-note">// a página está em ${s.mode}px REAIS, centralizada — as faixas dos lados são o app, não o site</span>` : ''
+  const notices = (s.notices || []).map((n) => `<span class="dock-browser-notice${n.tone === 'muted' ? ' stale' : ''}">// ${n.text}</span>`).join('')
+  return `${head(`${s.tabs.length} abas${s.driving ? ' · ⚡' : ''}`)}<div class="wp-body"><div class="dock-browser"><div class="dock-browser-shell">
+    <div class="dock-browser-tabbar"><div class="dock-browser-tabs">${tabs}</div><button class="dock-browser-tab-add" data-hint="abrir aba em branco · até 12">+</button></div>
+    <div class="dock-browser-nav">
+      <button class="dock-browser-btn" disabled data-hint="voltar uma página">←</button><button class="dock-browser-btn" disabled data-hint="avançar uma página">→</button>
+      <button class="dock-browser-btn" data-hint="recarregar a página">⟳</button><button class="dock-browser-btn" data-hint="devtools DA PÁGINA, em janela separada">&lt;/&gt;</button>
+      <button class="dock-browser-btn" data-hint="destacar numa janela própria · o X dela reencaixa">⧉</button>
+      <input class="dock-browser-url" value="${esc(active ? active.url : '')}" data-hint="endereço · Enter navega" />
+    </div>
+    <div class="dock-browser-vp">${vp}${note}</div>
+    <div class="dock-browser-page live" data-page data-mode="${s.mode}">${site()}</div>
+    <div class="dock-browser-foot">${s.driving ? '<span class="dock-browser-driving"><i class="dock-browser-driving-dot"></i><b>⚡</b> agente dirigindo</span>' : ''}
+      ${s.hint ? `<span class="dock-browser-hint">${esc(s.hint)}</span>` : '<span class="dock-browser-session" data-rest>sessão do projeto</span>'}</div>
+  </div>${notices}</div></div>`
+}
+
+/* ————— DEPOIS: a proposta ————— */
+function depois(s) {
+  const tabs = s.tabs.map((t) => {
+    const on = t.id === s.active
+    const owner = t.owner ? `<span class="nb-tab-owner">${t.driving ? svg('bolt') : ''}${t.owner}</span>` : ''
+    const tip = tabSentence(t) + '\n' + t.url
+    return `<div class="nb-tab${on ? ' on' : ''}${s.hoverTab === t.id ? ' is-hover' : ''}" role="tab" tabindex="${on ? 0 : -1}" aria-selected="${on}" data-tab="${t.id}" title="${esc(tip)}">
+      ${t.loading ? '<i class="nb-tab-dot"></i>' : ''}${owner}<span class="nb-tab-name">${t.label}</span>
+      <button class="nb-tab-x" data-close="${t.id}" aria-label="fechar ${esc(t.phrase || 'a aba')} · ${esc(t.label)}" title="${esc(t.phrase ? 'fechar a ' + t.phrase : 'fechar esta aba')}">${svg('close')}</button></div>`
+  }).join('')
+  const active = s.tabs.find((t) => t.id === s.active)
+  const driving = s.tabs.some((t) => t.driving)
+  const activeDriving = Boolean(active && active.driving)
+  const NAMES = { auto: 'AUTO · largura do painel', 375: '375 · celular', 768: '768 · tablet', 1280: '1280 · desktop' }
+  const options = MODES.map((m) => `<option value="${m}"${s.mode === m ? ' selected' : ''}>${NAMES[m]}</option>`).join('')
+  const widthTip = s.mode === 'auto' ? 'largura que a página enxerga · AUTO = a do painel' : `a página enxerga ${s.mode}px · as faixas escuras dos lados são o app, não o site`
+  const seg = `<label class="nb-width${s.mode !== 'auto' ? ' on' : ''}" title="${widthTip}">${svg('width')}<span>${modeLabel(s.mode)}</span>${svg('chevron').replace('<svg', '<svg class="chev"')}
+      <select data-width aria-label="largura que a página enxerga">${options}</select></label>`
+  const infos = (s.notices || []).map((n, i) => `<div class="nb-info ${n.tone || ''}" role="${n.tone ? 'status' : 'alert'}">${svg(n.tone === 'muted' ? 'stale' : n.tone === 'neutral' ? 'info' : 'alert')}
+      <span class="nb-info-text">${esc(n.text)}</span>${n.reload ? `<button class="nb-info-act" data-reload="${i}" title="recarregar a página da aba ativa">recarregar</button>` : ''}
+      <button class="nb-info-x" data-dismiss="${i}" aria-label="dispensar este aviso" title="dispensar">${svg('close')}</button></div>`).join('')
+  return `${head(`${s.tabs.length} ${s.tabs.length === 1 ? 'aba' : 'abas'}${driving ? ' · ⚡' : ''}`)}<div class="wp-body"><div class="nb">
+    <div class="nb-tabs"><div class="nb-tablist" role="tablist" aria-label="abas do browser">${tabs}</div>
+      <button class="nb-add" data-add aria-label="abrir uma aba" title="abrir aba em branco · até 12">${svg('plus')}</button></div>
+    <div class="nb-bar">
+      <button class="nb-ico" disabled aria-label="voltar" title="voltar">${svg('back')}</button>
+      <button class="nb-ico" disabled aria-label="avançar" title="avançar">${svg('forward')}</button>
+      <button class="nb-ico" aria-label="recarregar" title="recarregar">${svg('reload')}</button>
+      <div class="nb-url-wrap${activeDriving ? ' driving' : ''}">
+        <input class="nb-url" value="${esc(active ? active.url : '')}" aria-label="endereço" spellcheck="false"
+          title="Enter navega · Esc devolve o endereço da aba&#10;cookies e logins são da sessão deste universo — entrar uma vez vale para as próximas missões" />
+        ${activeDriving ? `<span class="nb-driving" role="img" aria-label="o agente está dirigindo esta aba" title="o agente está dirigindo esta aba agora — você pode assumir quando quiser: a página recebe o seu mouse e o seu teclado, sem trava">${svg('bolt')}</span>` : ''}
+      </div>
+      ${seg}
+      <span class="nb-sep"></span>
+      <button class="nb-ico" aria-label="devtools da página" title="devtools da página, em janela separada">${svg('code')}</button>
+      <button class="nb-ico" aria-label="destacar numa janela própria" title="destacar numa janela própria · o X dela reencaixa">${svg('popout')}</button>
+    </div>
+    ${infos ? `<div class="nb-infos">${infos}</div>` : ''}
+    <div class="nb-page" data-page data-mode="${s.mode}">${site()}</div>
+  </div></div>`
+}
+
+/* ————— a página: AUTO enche; largura que cabe fica real e centralizada; a que não cabe escala ————— */
+function layoutPage(page) {
+  const mode = page.dataset.mode === 'auto' ? 'auto' : Number(page.dataset.mode)
+  const el = page.querySelector('.site')
+  page.querySelectorAll('.band').forEach((b) => b.remove())
+  const w = page.clientWidth, h = page.clientHeight
+  if (mode === 'auto') { Object.assign(el.style, { width: w + 'px', height: h + 'px', left: '0px', transform: '' }); return }
+  if (mode <= w) {
+    const side = Math.floor((w - mode) / 2)
+    Object.assign(el.style, { width: mode + 'px', height: h + 'px', left: side + 'px', transform: '' })
+    if (side > 0) page.insertAdjacentHTML('beforeend', `<i class="band l" style="width:${side}px"></i><i class="band r" style="width:${w - mode - side}px"></i>`)
+    return
+  }
+  const z = w / mode
+  Object.assign(el.style, { width: mode + 'px', height: h / z + 'px', left: '0px', transform: `scale(${z})` })
+}
+
+/* ————— a régua: quanto da janela a página ganhou ————— */
+const pairs = {}
+function ledger(cell) {
+  const wp = cell.querySelector('.wp'), page = cell.querySelector('[data-page]'), out = cell.querySelector('.ledger')
+  if (!wp || !page || !out) return
+  const ph = Math.round(page.getBoundingClientRect().height), wh = Math.round(wp.getBoundingClientRect().height)
+  cell.dataset.ph = ph
+  let gain = ''
+  const other = pairs[cell.id]
+  if (other && cell.id.endsWith('depois')) {
+    const o = Number(document.getElementById(other).dataset.ph || 0)
+    if (o) gain = ` · <span class="gain">+${ph - o} px</span> para a página`
+  }
+  out.innerHTML = `página: <b>${ph} px</b> de ${wh} px (${Math.round((ph / wh) * 100)}% da janela)${gain}`
+}
+
+/* ————— as cenas ————— */
+const scenes = []
+function mount(id, kind, state, size, label) {
+  const cell = document.getElementById(id)
+  const s = { tabs: BASE_TABS(), active: 'b', mode: 'auto', driving: true, ...state }
+  const render = () => {
+    cell.innerHTML = `<span class="cell-label">${label}</span><div class="wp" style="width:${size[0]}px;height:${size[1]}px">${kind === 'antes' ? antes(s) : depois(s)}</div><p class="ledger"></p>`
+    const page = cell.querySelector('[data-page]')
+    layoutPage(page)
+    new ResizeObserver(() => { layoutPage(page); scenes.forEach(ledger) }).observe(page)
+    const list = cell.querySelector('.nb-tablist')
+    if (list) list.classList.toggle('fade-r', list.scrollWidth > list.clientWidth + 1)
+    if (s.tooltip) placeTooltip(cell, s)
+    scenes.forEach(ledger)
+  }
+  cell._render = render
+  cell._state = s
+  scenes.push(cell)
+  render()
+  if (s.frozen) return
+  if (kind === 'antes') {
+    cell.addEventListener('mouseover', (e) => {
+      const el = e.target.closest('[data-hint]')
+      const foot = cell.querySelector('.dock-browser-foot')
+      if (!foot) return
+      const slot = foot.querySelector('.dock-browser-hint, .dock-browser-session')
+      if (el) { slot.className = 'dock-browser-hint'; slot.textContent = el.dataset.hint }
+      else { slot.className = 'dock-browser-session'; slot.textContent = 'sessão do projeto' }
+    })
+    cell.addEventListener('mouseleave', () => {
+      const slot = cell.querySelector('.dock-browser-hint')
+      if (slot) { slot.className = 'dock-browser-session'; slot.textContent = 'sessão do projeto' }
+    })
+    return
+  }
+  cell.addEventListener('change', (e) => {
+    const sel = e.target.closest('[data-width]')
+    if (sel) { s.mode = sel.value === 'auto' ? 'auto' : Number(sel.value); render() }
+  })
+  cell.addEventListener('click', (e) => {
+    const t = e.target
+    const close = t.closest('[data-close]')
+    if (close) {
+      const i = s.tabs.findIndex((x) => x.id === close.dataset.close)
+      s.tabs.splice(i, 1)
+      if (s.active === close.dataset.close) s.active = (s.tabs[Math.max(0, i - 1)] || {}).id
+      return render()
+    }
+    const tab = t.closest('[data-tab]')
+    if (tab) { s.active = tab.dataset.tab; return render() }
+    if (t.closest('[data-add]')) {
+      if (s.tabs.length >= 12) return
+      const id = 'n' + Date.now()
+      s.tabs.push({ id, label: 'nova aba', url: '' })
+      s.active = id
+      return render()
+    }
+    const dismiss = t.closest('[data-dismiss]')
+    if (dismiss) { s.notices.splice(Number(dismiss.dataset.dismiss), 1); return render() }
+    const reload = t.closest('[data-reload]')
+    if (reload) {
+      s.notices.splice(Number(reload.dataset.reload), 1)
+      const a = s.tabs.find((x) => x.id === s.active)
+      if (a) { a.loading = true; setTimeout(() => { a.loading = false; render() }, 1400) }
+      return render()
+    }
+  })
+}
+
+/* o tooltip nativo desenhado na cena congelada: onde o Windows o poria (abaixo do cursor) */
+function placeTooltip(cell, s) {
+  const tab = cell.querySelector('.nb-tab.is-hover')
+  const t = s.tabs.find((x) => x.id === s.hoverTab)
+  if (!tab || !t) return
+  const c = cell.getBoundingClientRect(), r = tab.getBoundingClientRect()
+  const x = r.left - c.left + r.width * 0.45, y = r.top - c.top + r.height * 0.55
+  cell.insertAdjacentHTML('beforeend', `<svg class="os-cursor" style="left:${x}px;top:${y}px" viewBox="0 0 12 18"><path d="M1 1v14l3.6-3.4 2.6 5.6 2.2-1-2.6-5.4H12z" fill="#fff" stroke="#111" stroke-width="1"/></svg>
+    <div class="os-tip" style="left:${x + 4}px;top:${y + 22}px">${esc(tabSentence(t) + '\n' + t.url)}</div>`)
+  const tip = cell.querySelector('.os-tip')
+  tip.style.left = Math.min(x + 4, c.width - tip.offsetWidth - 6) + 'px'
+}
+
+const W = [460, 640]
+pairs['s1-depois'] = 's1-antes'; pairs['s2-depois'] = 's2-antes'; pairs['s4-depois'] = 's4-antes'
+mount('s1-antes', 'antes', {}, W, 'Antes · <em>interativo</em>')
+mount('s1-depois', 'depois', {}, W, 'Depois · <em>interativo</em>')
+mount('s2-antes', 'antes', {
+  frozen: true,
+  hint: 'aba de inv-brand · Figma — tokens do tema · https://www.figma.com/design/k3P9/tokens-papel',
+  notices: [{ text: LOAD_FAILED }, { tone: 'muted', text: 'o motor do browser não respondeu — mostrando a última fotografia' }]
+}, W, 'Antes')
+mount('s2-depois', 'depois', {
+  frozen: true, hoverTab: 'c', tooltip: true,
+  notices: [{ text: LOAD_FAILED, reload: true }]
+}, W, 'Depois')
+const tones = document.getElementById('s3-tones')
+tones.style.height = '300px'
+tones.innerHTML = depois({ tabs: BASE_TABS(), active: 'b', mode: 1280, notices: [
+  { text: 'a página caiu (crashed) — use ⟳ para recarregar', reload: true },
+  { text: 'download barrado: instalador.exe — o browser da missão não baixa arquivos' },
+  { tone: 'muted', text: 'o motor do browser não respondeu — a página na tela é a última fotografia' },
+  { tone: 'neutral', text: 'o painel é estreito demais para 1280px — a página está recebendo 1200px (alargue o painel ou destaque em janela própria)' }
+] })
+layoutPage(tones.querySelector('[data-page]'))
+const NARROW = [340, 640]
+const moreTabs = () => [...BASE_TABS(), { id: 'd', label: 'Stripe — checkout de teste', url: 'https://checkout.stripe.dev/c/pay/cs_test' }]
+mount('s4-antes', 'antes', { tabs: moreTabs(), mode: 768 }, NARROW, 'Antes')
+mount('s4-depois', 'depois', { tabs: moreTabs(), mode: 768 }, NARROW, 'Depois · <em>interativo</em>')
+scenes.forEach(ledger)
+setTimeout(() => scenes.forEach(ledger), 300)
+</script>
+</body>
+</html>
