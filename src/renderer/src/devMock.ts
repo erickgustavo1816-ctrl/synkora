@@ -732,6 +732,13 @@ export function installDevMock(): void {
       }),
       onNavigate: () => () => undefined
     },
+    // preview de browser: layout plano na ordem dos projetos; as operações
+    // devolvem o mesmo layout (o main real é quem agrupa e persiste)
+    projectLayout: {
+      get: async () => ({ entries: projects.map((p) => ({ kind: 'project' as const, projectId: p.id })), lastOpenedAt: {} }),
+      apply: async () => ({ layout: { entries: projects.map((p) => ({ kind: 'project' as const, projectId: p.id })), lastOpenedAt: {} } }),
+      onChanged: () => () => undefined
+    },
     projects: {
       list: async () => [...projects],
       create: async (name: string, path: string) => {
