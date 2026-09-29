@@ -1,7 +1,21 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useStore, type CliStatus } from '../store'
+import { useProjectLayout } from '../projectLayoutStore'
+import { hueOf } from '../util'
+import {
+  cardDateLabel,
+  clearFilters,
+  computeHomeIndex,
+  HOME_VIEW_STORAGE_KEY,
+  parseHomeView,
+  serializeHomeView,
+  type HomeIndexProject,
+  type HomeView
+} from '../homeIndexModel'
 import SynkoraMark from '../components/SynkoraMark'
 import HomeField, { type FieldAnchor, type HomeFieldHandle } from '../components/HomeField'
+import HomeIndexBar, { type PopoverAnchor } from '../components/HomeIndexBar'
+import HomeGroupSection, { HomeGroupMenu } from '../components/HomeGroupSection'
 import UniverseCard from '../components/UniverseCard'
 import NewUniverseModal from '../components/NewUniverseModal'
 import GuiPanelErrorBoundary from '../components/GuiPanelErrorBoundary'
@@ -29,6 +43,22 @@ const reduceMotion = (): boolean =>
   typeof window.matchMedia === 'function' &&
   window.matchMedia('(prefers-reduced-motion: reduce)').matches
 
+/** A aba, os filtros, a ordem e a visão ficam lembrados; a busca, não. */
+function readHomeView(): HomeView {
+  try {
+    return parseHomeView(window.localStorage.getItem(HOME_VIEW_STORAGE_KEY))
+  } catch {
+    return parseHomeView(null)
+  }
+}
+
+interface GroupMenuState {
+  groupId: string
+  anchor: PopoverAnchor
+  /** cada abertura remonta o menu (ele se posiciona uma vez só) */
+  seq: number
+}
+
 export default function Home(): React.JSX.Element {
   const projects = useStore((s) => s.projects)
   const seats = useStore((s) => s.seats)
@@ -36,8 +66,11 @@ export default function Home(): React.JSX.Element {
   const panesByProject = useStore((s) => s.panesByProject)
   const paneActivity = useStore((s) => s.paneActivity)
   const paneAttention = useStore((s) => s.paneAttention)
+  const homeStats = useStore((s) => s.homeStats)
   const loadHomeStats = useStore((s) => s.loadHomeStats)
   const openSettings = useStore((s) => s.openSettings)
+  const layout = useProjectLayout((s) => s.layout)
+  const loadLayout = useProjectLayout((s) => s.load)
 
   const fieldRef = useRef<HomeFieldHandle>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -48,6 +81,27 @@ export default function Home(): React.JSX.Element {
   // ONDA D: criar universo virou um passo com decisão (link do GitHub
   // opcional), então deixou de ser só o seletor de pasta.
   const [novoOpen, setNovoOpen] = useState(false)
+
+  // ---- o índice: busca, filtros, ordem, visão e abas de grupo ------------
+  const [view, setView] = useState<HomeView>(readHomeView)
+  const [query, setQuery] = useState('')
+  const [shut, setShut] = useState<ReadonlySet<string>>(() => new Set())
+  const [groupMenu, setGroupMenu] = useState<GroupMenuState | null>(null)
+  const menuSeq = useRef(0)
+  const panelId = useId()
+
+  // idempotente: o rail também carrega; quem chegar primeiro assina o broadcast
+  useEffect(() => {
+    void loadLayout()
+  }, [loadLayout])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(HOME_VIEW_STORAGE_KEY, serializeHomeView(view))
+    } catch {
+      // armazenamento cheio/negado: a Home segue, só não lembra
+    }
+  }, [view])
 
   // ---- âncoras: cada card registra sua caixa; o campo mede e vira gravidade --
   const anchor = useCallback((key: string, el: HTMLElement | null): void => {
@@ -260,6 +314,19 @@ export default function Home(): React.JSX.Element {
       ?.scrollIntoView({ behavior: reduceMotion() ? 'auto' : 'smooth', block: 'center' })
   }
 
+  /** Leva ao card mesmo quando um filtro ou uma seção recolhida o esconde. */
+  function revealProject(projectId: string): void {
+    const key = `project:${projectId}`
+    if (anchorsRef.current.has(key)) {
+      scrollTo(key)
+      return
+    }
+    setQuery('')
+    setView((v) => clearFilters(v))
+    setShut(new Set())
+    requestAnimationFrame(() => scrollTo(key))
+  }
+
   const alerta = seatExpirado
     ? {
         text: `a conta "${seatExpirado.name}" está com o login expirado`,
@@ -278,7 +345,7 @@ export default function Home(): React.JSX.Element {
         ? {
             text: `a pasta do universo "${projetoSumido.name}" não existe mais`,
             action: 'ver universo',
-            run: () => scrollTo(`project:${projetoSumido.id}`)
+            run: () => revealProject(projetoSumido.id)
           }
         : null
 
@@ -290,6 +357,88 @@ export default function Home(): React.JSX.Element {
     (panesByProject[pid] ?? []).some((p) => paneActivity[p.id] !== 'dead')
   ).length
   const expiradas = seats.filter((s) => s.status === 'expirado').length
+
+  // ---- o índice -----------------------------------------------------------
+  // Os fatos de cada universo com as MESMAS réguas do card (painel vivo que
+  // roda / que pede o dono) e do retrato (missões ativas).
+  const indexProjects = useMemo<HomeIndexProject[]>(
+    () =>
+      projects.map((p) => {
+        const vivos = (panesByProject[p.id] ?? []).filter((x) => paneActivity[x.id] !== 'dead')
+        return {
+          id: p.id,
+          name: p.name,
+          path: p.path,
+          createdAt: p.createdAt,
+          running: vivos.some((x) => paneActivity[x.id] === 'run'),
+          attention: vivos.some((x) => paneAttention[x.id]),
+          activeMissions: homeStats[p.id]?.missoesAtivas ?? 0,
+          missing: p.missing === true
+        }
+      }),
+    [projects, panesByProject, paneActivity, paneAttention, homeStats]
+  )
+  const hues = useMemo(() => new Map(projects.map((p) => [p.id, hueOf(p.name)])), [projects])
+  const index = useMemo(
+    () => computeHomeIndex({ projects: indexProjects, layout, view, query, now: new Date() }),
+    [indexProjects, layout, view, query]
+  )
+  const now = new Date()
+
+  // a aba lembrada sumiu (grupo desfeito, nenhum solto): com o layout JÁ
+  // lido, a lembrança acompanha a queda para TODOS — antes dele, espera
+  useEffect(() => {
+    if (layout && index.tab !== view.group) setView((v) => ({ ...v, group: index.tab }))
+  }, [layout, index.tab, view.group])
+
+  const anchorUniversos = useCallback((el: HTMLElement | null) => anchor('universos', el), [anchor])
+
+  const openGroupMenu = useCallback((groupId: string, at: PopoverAnchor): void => {
+    menuSeq.current += 1
+    const seq = menuSeq.current
+    // o mesmo `···` de novo fecha (o botão é o dono do menu)
+    setGroupMenu((cur) => (cur && cur.anchor === at ? null : { groupId, anchor: at, seq }))
+  }, [])
+  const closeGroupMenu = useCallback(() => setGroupMenu(null), [])
+
+  const clearAllFilters = (): void => {
+    setQuery('')
+    setView((v) => clearFilters(v))
+  }
+
+  const toggleSection = (key: string): void =>
+    setShut((prev) => {
+      const next = new Set(prev)
+      if (!next.delete(key)) next.add(key)
+      return next
+    })
+
+  let cardOrder = 0
+  const card = (p: HomeIndexProject, showGroup: boolean): React.JSX.Element => (
+    <GuiPanelErrorBoundary key={p.id} paneId={`home:universe:${p.id}`} label="o card do universo">
+      <UniverseCard
+        projectId={p.id}
+        index={cardOrder++}
+        anchor={anchor}
+        query={query}
+        showGroup={showGroup}
+        dateLabel={cardDateLabel(index.dateMode, p, layout?.lastOpenedAt[p.id] ?? null, now)}
+      />
+    </GuiPanelErrorBoundary>
+  )
+
+  const addCard = (
+    <button className="universe-card add" onClick={() => setNovoOpen(true)}>
+      <span className="add-plus">+</span>
+      <span className="add-title">novo universo</span>
+      <span className="add-hint">pasta do projeto · GitHub opcional</span>
+    </button>
+  )
+
+  const tabGroupName = index.tabs.find((t) => t.key === index.tab)?.group?.name
+  const emptyWhere = index.tab === 'all' ? '' : index.tab === 'none' ? ' sem grupo' : ` em ${tabGroupName ?? ''}`
+  const lastSection = index.sections?.[index.sections.length - 1]
+  const lastSectionShut = lastSection !== undefined && shut.has(lastSection.key)
 
   return (
     <div
@@ -367,29 +516,87 @@ export default function Home(): React.JSX.Element {
             </div>
           )}
 
-          <div className="section-label" ref={(el) => anchor('universos', el)}>
-            universos · {projects.length}
-          </div>
+          {projects.length === 0 ? (
+            <>
+              <div className="section-label" ref={anchorUniversos}>
+                universos · 0
+              </div>
+              <div className="universe-grid">{addCard}</div>
+            </>
+          ) : (
+            <>
+              {/* o índice: as abas sentam numa régua que substitui o rótulo
+                  "universos · N" (mockup de 2026-09-29) */}
+              <HomeIndexBar
+                index={index}
+                view={view}
+                query={query}
+                hues={hues}
+                panelId={panelId}
+                scrollRef={scrollRef}
+                anchorRef={anchorUniversos}
+                onQuery={setQuery}
+                onView={setView}
+                onClearFilters={clearAllFilters}
+                onGroupMenu={openGroupMenu}
+              />
 
-          <div className="universe-grid">
-            {projects.map((p, i) => (
-              <GuiPanelErrorBoundary
-                key={p.id}
-                paneId={`home:universe:${p.id}`}
-                label="o card do universo"
-              >
-                <UniverseCard projectId={p.id} index={i} anchor={anchor} />
-              </GuiPanelErrorBoundary>
-            ))}
-            <button className="universe-card add" onClick={() => setNovoOpen(true)}>
-              <span className="add-plus">+</span>
-              <span className="add-title">novo universo</span>
-              <span className="add-hint">pasta do projeto · GitHub opcional</span>
-            </button>
-          </div>
-
+              <div className="home-index-body" id={panelId} role="tabpanel" aria-label="Universos">
+                {index.shown.length === 0 ? (
+                  <div className="home-empty">
+                    <strong>nenhum universo{emptyWhere} com esses filtros</strong>
+                    <p>
+                      {query.trim()
+                        ? `nada com “${query.trim()}” no nome, na pasta ou no grupo.`
+                        : 'tente afrouxar um filtro.'}
+                    </p>
+                    <button className="btn ghost tiny" type="button" onClick={clearAllFilters}>
+                      limpar filtros
+                    </button>
+                  </div>
+                ) : index.sections ? (
+                  <>
+                    {index.sections.map((s) => (
+                      <HomeGroupSection
+                        key={s.key}
+                        group={s.group}
+                        count={s.items.length}
+                        total={s.total}
+                        shut={shut.has(s.key)}
+                        hues={hues}
+                        menuOpen={groupMenu !== null && groupMenu.groupId === s.group?.id}
+                        onToggle={() => toggleSection(s.key)}
+                        onGroupMenu={openGroupMenu}
+                      >
+                        <div className="universe-grid">
+                          {s.items.map((p) => card(p, false))}
+                          {s === lastSection && addCard}
+                        </div>
+                      </HomeGroupSection>
+                    ))}
+                    {/* a última seção recolhida não leva o "+ novo universo" junto */}
+                    {lastSectionShut && <div className="universe-grid">{addCard}</div>}
+                  </>
+                ) : (
+                  <div className="universe-grid">
+                    {index.shown.map((p) => card(p, index.showGroupTag))}
+                    {addCard}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
         </div>
       </div>
+
+      {groupMenu && (
+        <HomeGroupMenu
+          key={groupMenu.seq}
+          groupId={groupMenu.groupId}
+          anchor={groupMenu.anchor}
+          onClose={closeGroupMenu}
+        />
+      )}
 
       {novoOpen && (
         <GuiPanelErrorBoundary

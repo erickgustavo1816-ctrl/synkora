@@ -2,6 +2,7 @@ import type { GuiInterruptOrigin } from '../shared/guiInterrupt'
 import type { MissionRemovalConfirmation, MissionRemovalResult } from '../shared/missionRemoval'
 import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron'
 import type { DirectReleaseInput, DirectReleaseResult } from '../shared/directRelease'
+import type { ProjectLayout, ProjectLayoutOp, ProjectLayoutOpResult } from '../shared/projectLayout'
 import type { MobileApi, MobilePhoneApi, MobileVideoDelivery } from '../shared/mobileSimulator'
 export type { MobileApi, MobileAction, MobileFrame, MobileSession, MobileState, MobileVideoPacket } from '../shared/mobileSimulator'
 export type { MobileExpoProject, MobileExpoState, MobileExpoStartRequest } from '../shared/mobileExpo'
@@ -683,6 +684,9 @@ export interface SynkoraPreferences {
    *  (nunca fecha sozinho, canto inferior). */
   noticeAutoCloseSeconds?: 0 | 6 | 10 | 20
   noticeCorner?: 'bottom' | 'top'
+  /** GRUPOS NO RAIL (2026-09-29) — espelho de main/settingsCore.ts: o nome do
+   *  grupo escrito sob a pasta (à la iPhone). Ausente = ligado. */
+  railGroupNames?: boolean
 }
 
 /** Snapshot seguro do main. Nenhum segredo bruto cruza esta fronteira. */
@@ -1010,6 +1014,19 @@ const api = {
       const listener = (_e: IpcRendererEvent, projectId: string): void => cb(projectId)
       ipcRenderer.on('projects:flowChanged', listener)
       return () => ipcRenderer.removeListener('projects:flowChanged', listener)
+    }
+  },
+  /** GRUPOS DE UNIVERSOS (2026-09-29): a ordem do rail e os grupos. Só o main
+   *  muda o layout — `apply` devolve o layout novo e o main também o espalha
+   *  por `projectLayout:changed` (as outras janelas acompanham). */
+  projectLayout: {
+    get: (): Promise<ProjectLayout> => ipcRenderer.invoke('projectLayout:get'),
+    apply: (op: ProjectLayoutOp): Promise<ProjectLayoutOpResult> =>
+      ipcRenderer.invoke('projectLayout:apply', op),
+    onChanged: (cb: (layout: ProjectLayout) => void): (() => void) => {
+      const listener = (_e: IpcRendererEvent, layout: ProjectLayout): void => cb(layout)
+      ipcRenderer.on('projectLayout:changed', listener)
+      return () => ipcRenderer.removeListener('projectLayout:changed', listener)
     }
   },
   seats: {

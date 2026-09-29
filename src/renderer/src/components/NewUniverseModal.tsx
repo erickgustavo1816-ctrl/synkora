@@ -56,7 +56,13 @@ export default function NewUniverseModal({
 
   return createPortal(
     <div className="overlay">
-      <div className="task-modal confirm-modal" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="task-modal confirm-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Novo universo"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="task-modal-head">
           <span className="task-dept">＋ novo universo</span>
           <button className="pane-close dark-close" onClick={onClose}>

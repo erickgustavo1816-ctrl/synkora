@@ -25,6 +25,7 @@ import type {
 } from '../../preload/index'
 import { applyDeptHueVars, DEPT_HUES_LS_KEY, loadDeptHues } from './departments'
 import { sameBrowserPanel } from './dockBrowserModel'
+import { useProjectLayout } from './projectLayoutStore'
 import { versionPortrait } from './projectLanding'
 import { isReleaseMissionRecord } from './missionCardAccess'
 import {
@@ -2348,6 +2349,10 @@ export const useStore = create<SynkoraState>((set, get) => ({
   },
 
   removeProject: async (id) => {
+    // sai da lista ANTES do IPC: o layout novo (sem ele) chega por broadcast
+    // antes da resposta, e um universo ainda listado mas fora do layout seria
+    // desenhado solto no fim do rail por um instante
+    set((s) => ({ projects: s.projects.filter((p) => p.id !== id) }))
     await window.synkora.projects.remove(id)
     set((s) => ({
       mountedProjects: s.mountedProjects.filter((x) => x !== id),
@@ -2578,7 +2583,11 @@ export const useStore = create<SynkoraState>((set, get) => ({
           ? [...s.mountedProjects, id]
           : s.mountedProjects
     }))
-    if (id) void get().loadMissions(id)
+    if (id) {
+      void get().loadMissions(id)
+      // "abertos por último" da Home: o único carimbo honesto de uso
+      void useProjectLayout.getState().apply({ op: 'touchOpened', projectId: id, at: new Date().toISOString() })
+    }
   },
 
   universeTabByProject: {},

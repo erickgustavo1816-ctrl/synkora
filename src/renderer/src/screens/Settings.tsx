@@ -3,6 +3,7 @@ import AccessibilitySettings from '../components/AccessibilitySettings'
 import ChatNoticeSettings from '../components/ChatNoticeSettings'
 import ChatWritingSettings from '../components/ChatWritingSettings'
 import NoticeSettings from '../components/NoticeSettings'
+import RailGroupSettings from '../components/RailGroupSettings'
 import SeatDeck from '../components/SeatDeck'
 import SkillsSettings from '../components/SkillsSettings'
 import SynVoiceMicrophoneSettings from '../components/SynVoiceMicrophoneSettings'
@@ -131,6 +132,12 @@ export default function Settings(): React.JSX.Element {
                       label="os avisos do Board"
                     >
                       <NoticeSettings />
+                    </GuiPanelErrorBoundary>
+                    <GuiPanelErrorBoundary
+                      paneId="settings:rail-groups"
+                      label="os grupos no rail"
+                    >
+                      <RailGroupSettings />
                     </GuiPanelErrorBoundary>
                   </>
                 )}

@@ -16,6 +16,8 @@ import type {
   HistoryPaneLoadResult,
   HistoryTranscriptMessage
 } from '../../preload/index'
+import type { ProjectLayout } from '../../shared/projectLayout'
+import { applyProjectLayoutOp, emptyProjectLayout, reconcileProjectLayout } from '../../shared/projectLayoutOps'
 
 // Browser preview: the "Tamanho real" calibration lives only for this page.
 const previewCalibration = new Map<string, number>()
@@ -520,6 +522,20 @@ export function installDevMock(): void {
     }
   ]
 
+  // Grupos: layout em memória com as MESMAS operações do main — o preview de
+  // browser arrasta e agrupa de verdade (só não persiste).
+  let mockLayout = emptyProjectLayout()
+  const layoutListeners = new Set<(layout: ProjectLayout) => void>()
+  const publishMockLayout = (layout: ProjectLayout): void => {
+    mockLayout = layout
+    for (const cb of layoutListeners) cb(layout)
+  }
+  const syncMockLayout = (): ProjectLayout => {
+    const next = reconcileProjectLayout(mockLayout, projects.map((p) => p.id))
+    if (next !== mockLayout) publishMockLayout(next)
+    return next
+  }
+
   const api: SynkoraApi = {
     blackbox: {
       exportDiagnostics: async () => ({ ok: false, msg: 'preview: sem diagnóstico no browser' }),
@@ -734,16 +750,32 @@ export function installDevMock(): void {
       }),
       onNavigate: () => () => undefined
     },
+    projectLayout: {
+      get: async () => syncMockLayout(),
+      apply: async (op) => {
+        const result = applyProjectLayoutOp(syncMockLayout(), op)
+        publishMockLayout(result.layout)
+        return result
+      },
+      onChanged: (cb) => {
+        layoutListeners.add(cb)
+        return () => {
+          layoutListeners.delete(cb)
+        }
+      }
+    },
     projects: {
       list: async () => [...projects],
       create: async (name: string, path: string) => {
         const p = { id: `mock-${Date.now()}`, name, path, createdAt: new Date().toISOString() }
         projects.push(p)
+        syncMockLayout()
         return p
       },
       remove: async (id: string) => {
         const i = projects.findIndex((p) => p.id === id)
         if (i >= 0) projects.splice(i, 1)
+        syncMockLayout()
       },
       setPhoto: async (id: string) => projects.find((p) => p.id === id) ?? null,
       removePhoto: async (id: string) => projects.find((p) => p.id === id) ?? null,

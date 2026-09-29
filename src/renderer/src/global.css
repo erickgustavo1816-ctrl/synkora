@@ -10627,6 +10627,15 @@ body.pane-docking .pane-bar.draggable {
   border-bottom: 1px solid var(--panel-line);
 }
 
+/* ao lado (data-tip-side="right" — o rail): a seta aponta para a esquerda */
+.app-tip[data-place='right']::after {
+  left: -4px;
+  top: var(--tip-arrow-y, 50%);
+  transform: translateY(-50%) rotate(45deg);
+  border-left: 1px solid var(--panel-line);
+  border-bottom: 1px solid var(--panel-line);
+}
+
 @keyframes tip-in {
   from {
     opacity: 0;

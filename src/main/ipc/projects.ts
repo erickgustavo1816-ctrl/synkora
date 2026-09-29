@@ -46,6 +46,9 @@ export interface ProjectsIpcExtras {
   guiSessions: GuiSessionRegistry
   /** 2.0: encerra o chat de PLANEJAMENTO do projeto (fonte única no index). */
   killProjectGuiPanes(projectId: string): void | Promise<void>
+  /** Grupos (2026-09-29): reconcilia o layout do rail com a lista de
+   *  universos e espalha `projectLayout:changed` quando ele mudou. */
+  syncProjectLayout(): void
 }
 
 /** Resposta do `projects:planningGuiSpec` (2.0, onda C). */
@@ -71,7 +74,8 @@ export function registerProjectsIpc(ctx: MainContext, extras: ProjectsIpcExtras)
     killMaestroSession,
     ensureBypassAccepted,
     guiSessions,
-    killProjectGuiPanes
+    killProjectGuiPanes,
+    syncProjectLayout
   } = extras
   // `missing` é COMPUTADO na listagem (nunca persistido): pasta renomeada ou
   // movida fora do app → a UI mostra o estado quebrado e oferece relocação.
@@ -144,6 +148,7 @@ export function registerProjectsIpc(ctx: MainContext, extras: ProjectsIpcExtras)
       // repositório é alterado para forçar uma migração.
     }
     scheduleProgressSnapshot()
+    syncProjectLayout()
     // O aviso viaja NO projeto (campo extra, nunca persistido): o renderer
     // mostra e segue — a criação já aconteceu.
     return gitWarning ? { ...project, gitWarning } : project
@@ -168,6 +173,7 @@ export function registerProjectsIpc(ctx: MainContext, extras: ProjectsIpcExtras)
       (paneId, record) => record?.projectId === id || isGuiPlanningPaneId(paneId, id)
     )
     scheduleProgressSnapshot()
+    syncProjectLayout()
   })
 
   ipcMain.handle('projects:rename', (_e, id: string, name: string) => {
