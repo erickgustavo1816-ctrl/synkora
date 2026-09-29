@@ -147,6 +147,22 @@ test('concurrent removal cannot run cleanup twice or update a mission being remo
   assert.equal(h.effects.filter(e => e[0] === 'close').length, 1)
 })
 
+test('Release directs dirty mission discard to the trash without granting discard implicitly', async t => {
+  const h = fixture(t)
+  let argumentsPassed
+  h.lifecycle.remove = async (...args) => {
+    argumentsPassed = args
+    return { ok: false, error: 'Confirme o descarte abaixo.',
+      discard: { token: 'synthetic-discard-secret-token', title: 'completed' } }
+  }
+  const result = await h.remove()
+  assert.equal(result.ok, false)
+  assert.match(result.error, /lixeira/iu)
+  assert.equal(argumentsPassed.length, 2)
+  assert.doesNotMatch(JSON.stringify(result), /synthetic-discard-secret-token/u)
+  assert.equal(h.rows.has('completed'), true)
+})
+
 test('the shared archive operation preserves a pending integration finalization ticket', t => {
   const h = fixture(t)
   h.tickets.set('active', { state: 'blocked', block: { owner: 'orchestrator', code: 'target_repair_pending' } })

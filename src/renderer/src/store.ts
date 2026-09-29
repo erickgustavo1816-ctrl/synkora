@@ -1,5 +1,5 @@
 import type { GuiInterruptOrigin } from '../../shared/guiInterrupt'
-import type { MissionRemovalResult } from '../../shared/missionRemoval'
+import type { MissionRemovalConfirmation, MissionRemovalResult } from '../../shared/missionRemoval'
 import { create } from 'zustand'
 import { isGuiBrowserReferenceList, type GuiBrowserReference } from '../../shared/guiBrowserReferences'
 import { guiParentTurnActivity } from './guiParentTurnActivity'
@@ -1954,7 +1954,7 @@ interface SynkoraState {
    *  plano/ fica no repo e a aba do plano segue no mapa (o main guarda a porta:
    *  'concluida' por aqui só entra em missão de PLANEJAMENTO). */
   concludePlanningMission: (id: string) => Promise<void>
-  deleteMission: (id: string) => Promise<MissionRemovalResult>
+  deleteMission: (id: string, confirmation?: MissionRemovalConfirmation) => Promise<MissionRemovalResult>
   /** A SAÍDA DA SUBIDA: arquiva e exclui num gesto só (ver releaseRailPresentation). */
   discardRelease: (id: string) => Promise<void>
   integrateMission: (missionId: string) => Promise<string>
@@ -2272,12 +2272,13 @@ export const useStore = create<SynkoraState>((set, get) => ({
     await window.synkora.missions.update(id, { status: 'arquivada' })
     await get().deleteMission(id)
   },
-  deleteMission: async (id) => {
+  deleteMission: async (id, confirmation) => {
     if (!window.synkora.missions?.remove)
       return { ok: false, error: 'A exclusão está indisponível. Reinicie o Synkora e tente novamente.' }
     let result: MissionRemovalResult
     try {
-      result = await window.synkora.missions.remove(id)
+      result = confirmation === undefined ? await window.synkora.missions.remove(id)
+        : await window.synkora.missions.remove(id, confirmation)
     } catch {
       return { ok: false, error: 'Não consegui confirmar a exclusão. Tente novamente; se persistir, reinicie o Synkora.' }
     }

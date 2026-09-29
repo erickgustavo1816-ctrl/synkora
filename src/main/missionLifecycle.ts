@@ -9,6 +9,8 @@ import type { Mission } from './missions'
 import type { MissionEngine } from './missionEngine'
 import type { GuiSessionRegistry } from './guiSessions'
 import type { MissionRemovalResult } from '../shared/missionRemoval'
+import { MissionRemovalAuthorization } from './missionRemovalAuthorization'
+import { discardMissionWorktreeChanges, missionWorktreeSnapshot } from './missionWorktreeDiscard'
 
 export interface MissionMetadataPatch {
   title?: string
@@ -33,6 +35,7 @@ export function buildMissionLifecycle(ctx: MainContext, extras: MissionLifecycle
   const { engine, orchKey, emitBacklogChanged, guiSessions, killMissionGuiPanes } = extras
   const { emitMissionsChanged, scheduleIntegrationDrain, stopMissionExecution } = engine
   const removing = new Set<string>()
+  const discardAuthorization = new MissionRemovalAuthorization()
   const closeGuiPanesInBackground = (missionId: string): void => {
     void Promise.resolve(killMissionGuiPanes(missionId)).catch(() => {
       blackbox.record({ cat: 'app', event: 'mission-process-cleanup-failed', actor: 'harness', ids: { missionId } })
@@ -130,7 +133,7 @@ export function buildMissionLifecycle(ctx: MainContext, extras: MissionLifecycle
       }
       return updated ?? null
     },
-    async remove(missionId: string, stillAuthorized: () => boolean = () => true): Promise<MissionRemovalResult> {
+    async remove(missionId: string, stillAuthorized: () => boolean = () => true, confirmation?: unknown): Promise<MissionRemovalResult> {
       if (removing.has(missionId)) return { ok: false, error: 'A exclusão desta missão já está em andamento. Aguarde o resultado.' }
       if (!stillAuthorized()) return { ok: false, error: 'A autorização mudou. Confira a missão e confirme a exclusão novamente.' }
       removing.add(missionId)
@@ -141,7 +144,7 @@ export function buildMissionLifecycle(ctx: MainContext, extras: MissionLifecycle
           return { ok: false, error: 'Esta missão está ativa. Arquive a missão antes de excluir.' }
         const project = projects.get(mission.projectId)
         if (!project) return { ok: false, error: 'O projeto desta missão não foi encontrado. Reabra o projeto e confira a lista de missões.' }
-        const removal = { projectId: mission.projectId, rootPath: project.path, worktree: mission.worktree, branch: mission.branch, status: mission.status, updatedAt: mission.updatedAt }
+        const removal = { projectId: mission.projectId, rootPath: project.path, worktree: mission.worktree, branch: mission.branch, title: mission.title, status: mission.status, updatedAt: mission.updatedAt }
         try {
           ensureSynkoraGitExcludes(project.path)
         } catch {
@@ -160,7 +163,7 @@ export function buildMissionLifecycle(ctx: MainContext, extras: MissionLifecycle
         await killMissionGuiPanes(missionId)
         const current = missions.get(missionId)
         if (!stillAuthorized() || !current || current.status !== removal.status || current.updatedAt !== removal.updatedAt || current.projectId !== removal.projectId ||
-          current.worktree !== removal.worktree || current.branch !== removal.branch ||
+          current.worktree !== removal.worktree || current.branch !== removal.branch || current.title !== removal.title ||
           projects.get(removal.projectId)?.path !== removal.rootPath || integrationQueue.getByMission(missionId)?.state === 'merging' ||
           needsMissionFinalization(integrationQueue.getByMission(missionId)))
           return { ok: false, error: 'A missão ou sua autorização mudou durante a exclusão. Reabra a confirmação e confira o estado atual antes de tentar novamente.' }
@@ -169,15 +172,32 @@ export function buildMissionLifecycle(ctx: MainContext, extras: MissionLifecycle
           return { ok: false, error: 'Não consegui confirmar que a pasta pertence a esta missão. Reative a missão e confira o ambiente no chat antes de excluir.' }
         if (mission.branch && mission.worktree && existsSync(mission.worktree)) {
           const clean = isWorktreeClean(mission.worktree)
-          if (clean === false)
-            return { ok: false, error: 'A pasta da missão contém alterações locais. Reative a missão e peça ao agente para salvar ou revisar essas alterações antes de excluir.' }
           if (clean === undefined)
             return { ok: false, error: 'Não consegui verificar as alterações da missão pelo Git. Reative a missão e confira o ambiente no chat antes de excluir.' }
+          if (clean === false || confirmation !== undefined) {
+            const snapshot = missionWorktreeSnapshot(project.path, mission.worktree, mission.branch)
+            if (!snapshot || !stillAuthorized())
+              return { ok: false, error: 'Não consegui confirmar o estado dos arquivos. Reabra a confirmação; se persistir, reative a missão e confira o ambiente no chat.' }
+            const identity = JSON.stringify(removal)
+            if (confirmation === undefined || !discardAuthorization.consume(missionId, confirmation, identity, snapshot)) {
+              return { ok: false,
+                error: confirmation === undefined ? 'A pasta da missão contém alterações locais. Para excluí-la, confirme o descarte dessas alterações abaixo.'
+                  : 'A confirmação de descarte mudou ou expirou. Confira a missão e confirme novamente.',
+                ...(clean === false ? { discard: discardAuthorization.offer(missionId, mission.title, identity, snapshot) } : {}) }
+            }
+            if (!discardMissionWorktreeChanges(project.path, mission.worktree, mission.branch, snapshot))
+              return { ok: false, error: 'Não consegui concluir o descarte dos arquivos. A missão foi mantida. Reabra a confirmação para conferir o estado antes de tentar novamente.' }
+            blackbox.record({ cat: 'app', event: 'mission-local-changes-discarded', actor: 'user',
+              ids: { projectId: mission.projectId, missionId } })
+          }
+        } else if (confirmation !== undefined) {
+          return { ok: false, error: 'A pasta da missão mudou. Reabra a confirmação e confira o estado antes de excluir.' }
         }
         if (mission.branch && mission.worktree && !removeWorktreeAndBranch(project.path, mission.worktree, mission.branch))
           return { ok: false, error: 'Não consegui remover a pasta ou a branch da missão. Feche os programas que usam essa pasta e tente novamente; se persistir, reative a missão e investigue no chat.' }
         backlog.releaseMissionItems(missionId)
         missions.remove(missionId)
+        discardAuthorization.clear(missionId)
         guiSessions.forgetWhere((paneId) => isGuiMissionPaneId(paneId, missionId))
         emitBacklogChanged(mission.projectId)
         const short = missionId.slice(0, 8)

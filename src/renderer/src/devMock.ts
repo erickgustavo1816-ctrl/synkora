@@ -568,7 +568,9 @@ export function installDevMock(): void {
         return m ?? null
       },
       integrate: async () => 'missão na fila de integração #1 (mock)',
-      remove: async (id: string) => {
+      remove: async (id: string, confirmation?: unknown) => {
+        if (confirmation !== undefined)
+          return { ok: false as const, error: 'O descarte de arquivos está indisponível nesta prévia. Use a confirmação no aplicativo.' }
         const i = missions.findIndex((m) => m.id === id)
         if (i >= 0) missions.splice(i, 1)
         return { ok: true as const }

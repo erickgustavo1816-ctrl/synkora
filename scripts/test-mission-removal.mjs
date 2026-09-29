@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { join, resolve, sep } from 'node:path'
 import test from 'node:test'
@@ -71,9 +71,142 @@ test('local changes produce an actionable refusal without removing the mission o
   const result = await h.lifecycle.remove('synthetic')
   assert.equal(result.ok, false)
   assert.match(result.error, /alterações locais/iu)
-  assert.match(result.error, /reative/iu)
+  assert.ok(result.discard?.token, 'dirty refusal offers an explicit discard receipt')
+  assert.equal(result.discard.title, h.mission().title)
   assert.equal(readFileSync(join(h.source, 'example.txt'), 'utf8'), 'local edits\n')
   assert.ok(h.mission())
+  assert.deepEqual(h.effects, [])
+})
+
+test('explicit title and current receipt discard tracked and untracked changes before canonical removal', async t => {
+  const h = lifecycleFixture(t)
+  writeFileSync(join(h.source, 'example.txt'), 'local edits\n')
+  writeFileSync(join(h.source, 'untracked.txt'), 'synthetic untracked\n')
+  const offered = await h.lifecycle.remove('synthetic')
+  assert.ok(offered.discard?.token)
+  const result = await h.lifecycle.remove('synthetic', undefined, {
+    discardToken: offered.discard.token, confirmTitle: offered.discard.title
+  })
+  assert.deepEqual(result, { ok: true })
+  assert.equal(existsSync(h.source), false)
+  assert.equal(h.mission(), undefined)
+  assert.equal(h.git(h.project, ['branch', '--list', 'mission/synthetic']), '')
+  assert.equal(readFileSync(join(h.project, 'example.txt'), 'utf8'), 'committed\n')
+})
+
+test('confirmed discard and removal preserve the shared target of a node_modules junction', async t => {
+  const h = lifecycleFixture(t)
+  const shared = join(h.project, 'shared-packages')
+  mkdirSync(shared)
+  writeFileSync(join(shared, 'keep.txt'), 'synthetic shared packages\n')
+  writeFileSync(join(h.project, '.git', 'info', 'exclude'), 'node_modules/\n')
+  symlinkSync(shared, join(h.source, 'node_modules'), 'junction')
+  writeFileSync(join(h.source, 'example.txt'), 'local edits\n')
+  const offered = await h.lifecycle.remove('synthetic')
+  assert.ok(offered.discard?.token)
+  const result = await h.lifecycle.remove('synthetic', undefined, {
+    discardToken: offered.discard.token, confirmTitle: offered.discard.title
+  })
+  assert.deepEqual(result, { ok: true })
+  assert.equal(existsSync(h.source), false)
+  assert.equal(readFileSync(join(shared, 'keep.txt'), 'utf8'), 'synthetic shared packages\n')
+})
+
+for (const invalid of ['forged token', 'wrong title', 'unknown option', 'wrong type', 'same-path edit', 'new path', 'new head', 'mission metadata']) {
+  test(`discard refuses ${invalid} and preserves the current local files`, async t => {
+    const h = lifecycleFixture(t)
+    writeFileSync(join(h.source, 'example.txt'), 'local edits\n')
+    const offered = await h.lifecycle.remove('synthetic')
+    assert.ok(offered.discard?.token)
+    let confirmation = { discardToken: offered.discard.token, confirmTitle: offered.discard.title }
+    if (invalid === 'forged token') confirmation.discardToken = 'forged'
+    if (invalid === 'wrong title') confirmation.confirmTitle = 'Another mission'
+    if (invalid === 'unknown option') confirmation.force = true
+    if (invalid === 'wrong type') confirmation = true
+    if (invalid === 'same-path edit') writeFileSync(join(h.source, 'example.txt'), 'new local edits\n')
+    if (invalid === 'new path') writeFileSync(join(h.source, 'later.txt'), 'later edit\n')
+    if (invalid === 'new head') {
+      h.git(h.source, ['add', 'example.txt'])
+      h.git(h.source, ['-c', 'user.name=Synthetic Test', '-c', 'user.email=synthetic@example.invalid', 'commit', '-m', 'later synthetic head'])
+      writeFileSync(join(h.source, 'example.txt'), 'edits after commit\n')
+    }
+    if (invalid === 'mission metadata') h.mission().title = 'Changed synthetic title'
+    const before = readFileSync(join(h.source, 'example.txt'), 'utf8')
+    const result = await h.lifecycle.remove('synthetic', undefined, confirmation)
+    assert.equal(result.ok, false)
+    assert.ok(h.mission())
+    assert.equal(readFileSync(join(h.source, 'example.txt'), 'utf8'), before)
+    assert.deepEqual(h.effects, [])
+    if (invalid === 'same-path edit' || invalid === 'new path' || invalid === 'new head' || invalid === 'mission metadata') {
+      assert.ok(result.discard?.token)
+      assert.notEqual(result.discard.token, offered.discard.token)
+    }
+  })
+}
+
+test('an old receipt cannot be replayed after a refreshed confirmation', async t => {
+  const h = lifecycleFixture(t)
+  writeFileSync(join(h.source, 'example.txt'), 'local edits\n')
+  const first = await h.lifecycle.remove('synthetic')
+  const second = await h.lifecycle.remove('synthetic')
+  assert.ok(first.discard?.token)
+  assert.ok(second.discard?.token)
+  assert.notEqual(first.discard.token, second.discard.token)
+  const result = await h.lifecycle.remove('synthetic', undefined, {
+    discardToken: first.discard.token, confirmTitle: first.discard.title
+  })
+  assert.equal(result.ok, false)
+  assert.ok(existsSync(h.source))
+  assert.deepEqual(h.effects, [])
+})
+
+test('discard permission does not bypass a pending integration or changed cleanup authority', async t => {
+  const h = lifecycleFixture(t)
+  writeFileSync(join(h.source, 'example.txt'), 'local edits\n')
+  const offered = await h.lifecycle.remove('synthetic')
+  assert.ok(offered.discard?.token)
+  const confirmation = { discardToken: offered.discard.token, confirmTitle: offered.discard.title }
+  h.tickets.set('synthetic', { state: 'merging' })
+  assert.equal((await h.lifecycle.remove('synthetic', undefined, confirmation)).ok, false)
+  h.tickets.delete('synthetic')
+  let authorized = true
+  h.cleanup(async () => { authorized = false })
+  assert.equal((await h.lifecycle.remove('synthetic', () => authorized, confirmation)).ok, false)
+  assert.equal(readFileSync(join(h.source, 'example.txt'), 'utf8'), 'local edits\n')
+  assert.deepEqual(h.effects, [])
+})
+
+test('discard receipts expire and a token from another lifecycle cannot authorize this mission', async t => {
+  const h = lifecycleFixture(t), other = lifecycleFixture(t)
+  writeFileSync(join(h.source, 'example.txt'), 'local edits\n')
+  writeFileSync(join(other.source, 'example.txt'), 'other local edits\n')
+  const offered = await h.lifecycle.remove('synthetic')
+  assert.ok(offered.discard?.token)
+  const confirmation = { discardToken: offered.discard.token, confirmTitle: offered.discard.title }
+  assert.equal((await other.lifecycle.remove('synthetic', undefined, confirmation)).ok, false)
+  assert.equal(readFileSync(join(other.source, 'example.txt'), 'utf8'), 'other local edits\n')
+  const originalNow = Date.now
+  try {
+    Date.now = () => originalNow() + 11 * 60_000
+    assert.equal((await h.lifecycle.remove('synthetic', undefined, confirmation)).ok, false)
+  } finally { Date.now = originalNow }
+  assert.equal(readFileSync(join(h.source, 'example.txt'), 'utf8'), 'local edits\n')
+  assert.deepEqual(h.effects, [])
+})
+
+test('new edits during session shutdown cannot be discarded by an older confirmation', async t => {
+  const h = lifecycleFixture(t)
+  writeFileSync(join(h.source, 'example.txt'), 'local edits\n')
+  const offered = await h.lifecycle.remove('synthetic')
+  assert.ok(offered.discard?.token)
+  h.cleanup(async () => { writeFileSync(join(h.source, 'example.txt'), 'new edits during shutdown\n') })
+  const result = await h.lifecycle.remove('synthetic', undefined, {
+    discardToken: offered.discard.token, confirmTitle: offered.discard.title
+  })
+  assert.equal(result.ok, false)
+  assert.ok(result.discard?.token)
+  assert.notEqual(result.discard.token, offered.discard.token)
+  assert.equal(readFileSync(join(h.source, 'example.txt'), 'utf8'), 'new edits during shutdown\n')
   assert.deepEqual(h.effects, [])
 })
 

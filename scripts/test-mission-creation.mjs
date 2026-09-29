@@ -1539,6 +1539,31 @@ test('completed mission deletion uses the same cleanup as an archived mission', 
   assert.deepEqual(effects, ['closed', 'backlog', 'removed', 'chats', 'maestro', 'events'])
 })
 
+test('mission discard confirmation rejects an untrusted renderer before lifecycle access', async () => {
+  let accessed = false
+  createHarness({ configure: (ctx, extras) => {
+    extras.assertAppRendererSender = () => { throw new Error('Janela não autorizada.') }
+    ctx.missions.get = () => { accessed = true; return undefined }
+  } })
+  await assert.rejects(async () => handlers.get('missions:remove')({}, 'synthetic', {
+    discardToken: 'synthetic-token', confirmTitle: 'Synthetic mission'
+  }), /janela não autorizada/iu)
+  assert.equal(accessed, false)
+})
+
+test('mission discard transport validates authority and preserves an unknown mission', async () => {
+  let checked = 0
+  createHarness({ configure: (ctx, extras) => {
+    extras.assertAppRendererSender = () => { checked++ }
+    ctx.missions.get = () => undefined
+  } })
+  const result = await handlers.get('missions:remove')({}, 'synthetic', {
+    discardToken: 'synthetic-token', confirmTitle: 'Synthetic mission'
+  })
+  assert.equal(result.ok, false)
+  assert.ok(checked > 0)
+})
+
 for (const scenario of ['uncommitted changes', 'wrong branch']) {
 test(`mission deletion preserves the record and worktree with ${scenario}`, async (t) => {
   const h = createIntegrationHarness(t)

@@ -39,3 +39,56 @@
   outline: 1px solid var(--ink-3);
   outline-offset: -1px;
 }
+
+.confirm-modal[data-mission-removal] {
+  overflow-wrap: anywhere;
+}
+
+.mission-discard-consent {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  padding-block: 8px;
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.5;
+  cursor: pointer;
+}
+
+.mission-discard-consent input {
+  inline-size: 16px;
+  block-size: 16px;
+  margin: 1px 0 0;
+  accent-color: var(--err);
+}
+
+.mission-discard-consent input:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 3px;
+}
+
+.mission-discard-consent:has(input:disabled) {
+  cursor: default;
+}
+
+.confirm-modal[data-mission-removal] .task-modal-actions {
+  flex-wrap: wrap;
+}
+
+.confirm-modal[data-mission-removal] .task-modal-actions .btn {
+  max-inline-size: 100%;
+  min-block-size: 36px;
+  white-space: normal;
+}
+
+@media (max-width: 480px) {
+  .confirm-modal[data-mission-removal] .task-modal-actions {
+    flex-direction: column-reverse;
+    align-items: stretch;
+  }
+
+  .confirm-modal[data-mission-removal] .task-modal-meta {
+    display: none;
+  }
+}

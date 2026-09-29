@@ -65,7 +65,7 @@
     "test:project-navigation": "node --test scripts/test-project-navigation.mjs scripts/test-project-mission-activity.mjs",
     "test:workspace-panels": "node --test scripts/test-workspace-panels.mjs scripts/test-workspace-sidebar.mjs scripts/test-workspace-activity.mjs scripts/test-mobile-column.mjs",
     "test:archived-chat": "node --experimental-strip-types --test scripts/test-archived-chat.mjs",
-    "test:mission-removal": "node --test scripts/test-mission-removal.mjs",
+    "test:mission-removal": "node --test scripts/test-mission-removal.mjs scripts/test-mission-worktree-discard.mjs scripts/test-mission-removal-ui-discard.mjs",
     "test:landing-polish": "node --experimental-strip-types --test scripts/test-landing-polish.mjs",
     "test:backlog-view": "node --experimental-strip-types --test scripts/test-backlog-view.mjs && node scripts/test-version-mission-scroll.mjs",
     "test:design-tokens": "node --experimental-strip-types --test scripts/test-design-tokens.mjs",
