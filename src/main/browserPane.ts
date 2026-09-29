@@ -140,6 +140,7 @@ import {
   type BrowserPaneDeps,
   type BrowserPaneManager,
   type BrowserPanelRect,
+  type BrowserTabFailure,
   type BrowserTabView
 } from './browserPaneContracts'
 
@@ -175,6 +176,7 @@ export type {
   BrowserPaneDeps,
   BrowserPaneManager,
   BrowserPanelRect,
+  BrowserTabFailure,
   BrowserTabView,
   MissionBrowserTab
 } from './browserPaneContracts'
@@ -216,7 +218,12 @@ const BROWSER_LOAD_TIMEOUT_MS = 20000
  *  máquina de host precisa) — uma definição só, sem espelho. */
 interface TabRecord extends BrowserHostedTab, BrowserDrivingFlag {
   ephemeralPartition?: string
-  loadFailureNotice?: BrowserNotice | null
+  /** A página DESTA aba não carregou ou caiu (o cartão de erro do chrome). Só
+   *  a próxima carga bem-sucedida dela apaga — nunca o início do ⟳. */
+  failure?: BrowserTabFailure | null
+  /** A nota da missão que esta falha levantou: a recuperação só a apaga se
+   *  ela ainda for a nota da vez (outra aba ou outro motivo pode ter vencido). */
+  failureNotice?: BrowserNotice | null
   view: BrowserViewHandle
   wc: WebContents
   disposers: (() => void)[]
@@ -322,16 +329,22 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
     emitChanged(mission.missionId)
   }
 
-  const loadFailure = (mission: MissionRecord, tab: TabRecord, text: string): void => {
-    notice(mission, 'load-failed', text)
-    tab.loadFailureNotice = mission.notice
+  /** A falha é da ABA (o cartão) e a nota é da MISSÃO (a última vence) — as
+   *  duas nascem juntas, com o mesmo texto. */
+  const tabFailure = (mission: MissionRecord, tab: TabRecord, kind: BrowserTabFailure['kind'], text: string): void => {
+    tab.failure = { kind, text }
+    notice(mission, kind, text)
+    tab.failureNotice = mission.notice
   }
-  const clearLoadFailure = (mission: MissionRecord, tab: TabRecord): void => {
-    if (tab.loadFailureNotice && mission.notice === tab.loadFailureNotice) {
+  const clearTabFailure = (mission: MissionRecord, tab: TabRecord): void => {
+    let changed = Boolean(tab.failure)
+    tab.failure = null
+    if (tab.failureNotice && mission.notice === tab.failureNotice) {
       mission.notice = null
-      emitChanged(mission.missionId)
+      changed = true
     }
-    tab.loadFailureNotice = undefined
+    tab.failureNotice = undefined
+    if (changed) emitChanged(mission.missionId)
   }
 
   // ——— A MÁQUINA DE HOST (`./browserPaneHosting`) ———
@@ -548,7 +561,7 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
     on('did-start-loading', repaint)
     on('did-stop-loading', repaint)
     on('did-navigate', () => {
-      clearLoadFailure(mission, tab)
+      clearTabFailure(mission, tab)
       repaintAndRefit()
     })
     on('did-navigate-in-page', repaint)
@@ -557,7 +570,7 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
       const [, errorCode, errorDescription, validatedURL, isMainFrame] = args
       // -3 = ERR_ABORTED: navegação interrompida (redirect, novo goto), não falha.
       if (isMainFrame === false || errorCode === -3) return
-      loadFailure(mission, tab, browserLoadFailureText(String(validatedURL), String(errorDescription || errorCode)))
+      tabFailure(mission, tab, 'load-failed', browserLoadFailureText(String(validatedURL), String(errorDescription || errorCode)))
     })
     on('render-process-gone', (...args) => {
       const details = args[1]
@@ -565,7 +578,7 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
         details && typeof details === 'object' && 'reason' in details
           ? String((details as { reason?: unknown }).reason)
           : 'desconhecido'
-      notice(mission, 'crashed', `a página caiu (${reason}) — use ⟳ para recarregar`)
+      tabFailure(mission, tab, 'crashed', `a página caiu (${reason}) — use ⟳ para recarregar`)
     })
     on('destroyed', () => {
       // A view morreu por fora (crash irrecuperável): some do state sem
@@ -635,11 +648,11 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
     })
     const load = tab.wc
       .loadURL(url)
-      .then(() => clearLoadFailure(mission, tab))
+      .then(() => clearTabFailure(mission, tab))
       .catch((error: unknown) => {
         const detail = error instanceof Error ? error.message : String(error)
         if (detail.includes('ERR_ABORTED')) return
-        loadFailure(mission, tab, browserLoadFailureText(url, detail))
+        tabFailure(mission, tab, 'load-failed', browserLoadFailureText(url, detail))
       })
     await Promise.race([load.finally(() => (settled = true)), watchdog])
   }
@@ -997,7 +1010,8 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
         canForward: tab.wc.navigationHistory.canGoForward(),
         viewport: tab.viewport,
         owner: tab.owner,
-        driving: tab.driving
+        driving: tab.driving,
+        failure: tab.failure ?? null
       }))
       const viewport = active?.viewport ?? 'auto'
       const band = mission.frameWidth > 0 ? viewportBandWidth(viewport, mission.frameWidth) : 0

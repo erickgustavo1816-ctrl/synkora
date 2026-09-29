@@ -62,12 +62,10 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
   isBrowserPopout ? (
     /* SEM `TooltipLayer` de propósito: o tooltip da casa nasce 7px ABAIXO do que
        se aponta, e nesta janela tudo aponta para logo acima da página — a view
-       nativa o engoliria. O chrome do browser já fala pela LINHA DO PÉ. */
+       nativa o engoliria. O chrome do browser fala por `title` nativo, que o
+       Windows desenha POR CIMA da página. */
     <GuiPanelErrorBoundary paneId="overlay:browser-popout" label="o browser destacado">
-      <BrowserPopout
-        missionId={query.get('missionId') ?? ''}
-        projectId={query.get('projectId') ?? ''}
-      />
+      <BrowserPopout missionId={query.get('missionId') ?? ''} />
     </GuiPanelErrorBoundary>
   ) : isProgressOverlay ? (
     <GuiPanelErrorBoundary paneId="overlay:progress" label="o painel de progresso">

@@ -3,31 +3,21 @@ import type {
   BrowserPanelState,
   BrowserRect,
   BrowserTab,
+  BrowserTabFailure,
   BrowserTabOwner,
   BrowserTabOwnerKind,
   BrowserViewportMode
 } from '../../preload/index'
 
-// MODELO DO PAINEL DE BROWSER (H3 do design de 2026-08-29) — a metade PURA do
-// `components/DockBrowser.tsx`: estado, palavras e geometria, sem um `window`
-// no meio. É ela que o gate (`test:browser-pane`) consegue rodar em node puro.
-//
-// Por que geometria mora aqui: a página do browser NÃO é desenhada pelo
-// renderer. A `WebContentsView` nativa compõe POR CIMA do DOM, no retângulo que
-// este painel reporta — então "onde o painel está" e "o painel está à vista"
-// são a interface inteira entre o React e o motor. Errar o retângulo é pintar
-// uma página em cima da tela do dono; errar o `visible` é deixá-la lá quando
-// ele já foi olhar outra coisa.
-//
-// Os tipos vêm do preload (`import type` — apagado na compilação, então o
-// módulo continua carregável fora do Electron).
+// MODELO DO BROWSER DA MISSÃO — a metade PURA do chrome (`BrowserChrome`,
+// `DockBrowser`, `BrowserPopout`): estado, palavras e geometria, sem `window`,
+// para os gates rodarem em node. A página NÃO é desenhada pelo renderer: a
+// `WebContentsView` compõe POR CIMA do DOM no retângulo reportado, então "onde"
+// e "à vista" são a interface inteira entre o React e o motor. Os tipos vêm do
+// preload por `import type` (apagado na compilação).
 
-/** Teto de abas POR MISSÃO (design H1). O `+` do chrome desabilita aqui; quem
- *  aplica a lei de verdade é o main — este número é o espelho da tela.
- *
- *  SUBIU DE 8 PARA 12 em 2026-09-01 (D5 do design das abas por identidade): 8
- *  era o teto de uma missão com UM dev. Com uma aba POR IDENTIDADE, uma frota de
- *  quatro ajudantes batia no teto antes de o dono abrir a dele. */
+/** Teto de abas POR MISSÃO — espelho da tela; quem aplica a lei é o main. 12
+ *  desde 2026-09-01: uma aba por identidade (dono + dev + frota). */
 export const BROWSER_TAB_CAP = 12
 
 /** Preload velho (app rodando sem restart) não tem `api.browser`. A tela
@@ -49,83 +39,97 @@ export const EMPTY_BROWSER_PANEL: BrowserPanelState = Object.freeze({
 
 // ————— A LARGURA QUE A PÁGINA ENXERGA (2026-08-29) —————
 //
-// A reprovação do dono, ao vivo: *"ta meio limitado o quanto consigo deixar ele
-// maior, meio que sempre vou ver o site/app com modo tablet"*. O painel é
-// estreito, então a página renderiza estreita e todo site responsivo entrega o
-// layout de celular. O motor passou a emular uma largura LÓGICA e escalar a
-// página para caber na moldura; aqui mora só o vocabulário da tela.
+// O painel é estreito e todo site responsivo entregava o layout de celular
+// ("sempre vou ver o site/app com modo tablet"). O motor emula uma largura
+// LÓGICA; aqui mora só o vocabulário do seletor do chrome.
 
-/** Os botões do seletor, na ordem em que aparecem. `'auto'` primeiro porque é o
- *  estado natural — e porque é a porta de VOLTA de qualquer emulação. */
+/** As opções do seletor, na ordem da lista. `'auto'` primeiro: é o estado
+ *  natural e a porta de VOLTA de qualquer emulação. */
 export const BROWSER_VIEWPORT_CHOICES: readonly BrowserViewportMode[] = ['auto', 375, 768, 1280]
 
-/** O rótulo do botão. Curto de propósito: o trilho tem 176px de largura útil e
- *  quatro botões numa fileira só. */
+/** O rótulo compacto do seletor ("↔ 1280 ▾"). */
 export function browserViewportLabel(mode: BrowserViewportMode): string {
   return mode === 'auto' ? 'AUTO' : String(mode)
 }
 
-/** O modo VIVO, lido com a mesma frouxidão do resto: motor antigo não manda o
- *  campo, e ausência é `'auto'` (que é a verdade de antes do seletor existir). */
+/** O modo VIVO. Motor antigo não manda o campo, e ausência é `'auto'`. */
 export function browserViewportOf(state: BrowserPanelState): BrowserViewportMode {
   return state.viewport ?? 'auto'
 }
 
-/** O agente pode pedir QUALQUER largura (`browser_viewport` com `width`). Nesse
- *  caso nenhum botão está aceso, e a tela precisa mostrar o número mesmo assim
- *  — senão o dono olha uma página emulada e vê "AUTO" apagado, sem explicação. */
+/** O agente pode pedir QUALQUER largura (`browser_viewport` com `width`): o
+ *  seletor ganha a opção dele, senão o dono veria "AUTO" numa página emulada. */
 export function browserViewportIsCustom(mode: BrowserViewportMode): boolean {
   return mode !== 'auto' && !BROWSER_VIEWPORT_CHOICES.includes(mode)
 }
 
+/** As opções da lista nativa: as da casa e, quando houver, a do agente. */
+export function browserViewportOptions(state: BrowserPanelState): BrowserViewportMode[] {
+  const mode = browserViewportOf(state)
+  return browserViewportIsCustom(mode) ? [...BROWSER_VIEWPORT_CHOICES, mode] : [...BROWSER_VIEWPORT_CHOICES]
+}
+
+function viewportKind(mode: number): string {
+  return mode >= 1024 ? 'desktop' : mode >= 700 ? 'tablet' : 'celular'
+}
+
+/** O nome de cada opção na lista aberta. */
+export function browserViewportOptionLabel(mode: BrowserViewportMode): string {
+  if (mode === 'auto') return 'AUTO · largura do painel'
+  if (browserViewportIsCustom(mode)) return `${mode} · pedido do agente`
+  return `${mode} · ${viewportKind(mode)}`
+}
+
 /**
- * A FAIXA DE UM LADO, em px de app, quando a largura pedida CABE na moldura
- * (2026-08-29). Zero = a página ocupa a moldura inteira. É o motor quem calcula
- * e centraliza a view; aqui ela só decide SE a tela desenha a faixa e o que a
- * nota escrita conta.
+ * A FAIXA DE UM LADO, em px de app, quando a largura pedida CABE na moldura.
+ * Zero = a página ocupa a moldura inteira. Quem calcula e centraliza é o motor;
+ * aqui ela só decide SE a tela desenha a faixa e o que a dica conta.
  */
 export function browserViewportBand(state: BrowserPanelState): number {
   const band = state.viewportBand
   return typeof band === 'number' && Number.isFinite(band) && band > 0 ? Math.round(band) : 0
 }
 
-/** A frase da barra de status de cada botão. A do dono, não a do agente: ela
- *  diz o que o gesto FAZ, e o preço — que desde a moldura de dispositivo tem
- *  duas metades, porque a receita NUNCA amplia: sobrando moldura, a página fica
- *  em tamanho real entre faixas do app; faltando, ela encolhe para caber. */
+/** O que cada largura faz, e o preço: a receita NUNCA amplia — sobrando
+ *  moldura, a página fica em tamanho real entre faixas do app. */
 export function browserViewportHint(mode: BrowserViewportMode): string {
   if (mode === 'auto') return 'largura real do painel · nenhuma emulação'
-  const tipo = mode >= 1024 ? 'desktop' : mode >= 700 ? 'tablet' : 'celular'
-  return `largura de ${tipo} (${mode}px) · nunca amplia: sobrando moldura, a página fica em tamanho real entre faixas do app`
+  return `largura de ${viewportKind(mode)} (${mode}px) · nunca amplia: sobrando moldura, a página fica em tamanho real entre faixas do app`
 }
 
-/**
- * O que a tela conta sobre a largura de VERDADE — dois recados que não podem
- * acontecer juntos, porque um é de cada ramo da receita:
- *
- *  · a moldura CABE (faixa > 0): a página está em tamanho REAL e centralizada, e
- *    as faixas dos lados são o APP. É a resposta à pergunta que originou a
- *    feature — *"como vou saber se ta quebrando de vdd ou é o app"* — e ela
- *    precisa estar escrita, não só desenhada: uma faixa escura ao lado de um
- *    site escuro não se explica sozinha.
- *  · a moldura NÃO cabe e o piso de 0,25× do Chromium mordeu (medido): a página
- *    recebe menos do que o botão aceso promete, e calar sobre isso seria mostrar
- *    "1280" ao lado de uma página de 1200.
- */
-export function browserViewportNote(state: BrowserPanelState): string | null {
+/** A moldura CABE: a página está em tamanho REAL e centralizada. Escrito porque
+ *  uma faixa escura ao lado de um site escuro não se explica sozinha — e SEM o
+ *  número da faixa, que muda a cada quadro de um arrasto. */
+export function browserViewportFitNote(state: BrowserPanelState): string | null {
   const mode = browserViewportOf(state)
-  if (mode === 'auto') return null
-  const band = browserViewportBand(state)
-  if (band > 0) {
-    // SEM o número da faixa de propósito: ela muda a cada quadro de um arrasto e
-    // a fotografia do motor só atravessa o IPC quando a narração VIRA de estado
-    // (o motor não repinta o painel durante o gesto — ver `fitViewport`). Um
-    // "262px" congelado enquanto o dono arrasta seria pior que não dizer.
-    return `a página está em ${mode}px REAIS, centralizada — as faixas dos lados são o app, não o site`
-  }
+  if (mode === 'auto' || browserViewportBand(state) <= 0) return null
+  return `a página está em ${mode}px REAIS, centralizada — as faixas dos lados são o app, não o site`
+}
+
+/** A moldura NÃO cabe e o piso de 0,25× do Chromium mordeu: a página recebe
+ *  menos do que o seletor promete. Situação acionável, não falha. */
+export function browserViewportShortfall(state: BrowserPanelState): string | null {
+  const mode = browserViewportOf(state)
+  if (mode === 'auto' || browserViewportBand(state) > 0) return null
   const real = state.viewportWidth
   if (typeof real !== 'number' || real <= 0 || real === mode) return null
   return `o painel é estreito demais para ${mode}px — a página está recebendo ${real}px (alargue o painel ou destaque em janela própria)`
+}
+
+/** Os dois recados de largura num só (um de cada ramo da receita, nunca
+ *  juntos) — a forma que a suíte do motor ainda lê. */
+export function browserViewportNote(state: BrowserPanelState): string | null {
+  return browserViewportFitNote(state) ?? browserViewportShortfall(state)
+}
+
+/** A dica nativa do seletor: o modo vigente explicado e, quando foi o agente
+ *  que pediu uma largura fora da lista, a saída. */
+export function browserViewportTitle(state: BrowserPanelState): string {
+  if (!state.alive) return 'abra uma página (+) antes de mudar a largura'
+  const mode = browserViewportOf(state)
+  const said = [`largura que a página enxerga · ${browserViewportFitNote(state) ?? browserViewportHint(mode)}`]
+  if (browserViewportIsCustom(mode)) said.push(`o agente pediu ${mode}px lógicos · AUTO devolve a largura do painel`)
+  return said.join('\n')
 }
 
 function str(value: unknown): string {
@@ -138,23 +142,15 @@ function bool(value: unknown): boolean {
 
 // ————— O DONO DA ABA (2026-09-01) —————
 //
-// Ordem do dono: *"queria que [os ajudantes] utilizassem o browser caso
-// quisessem, CADA UM NA SUA ABA, na sua porta"*
-// (`.synkora/reports/DESIGN_BROWSER_ABAS_POR_IDENTIDADE_2026-09-01.md`, D1/D2).
-//
-// O preço MEDIDO de não ter isto (missão 86a05c06, 01/09): o único ajudante que
-// dirigiu o browser dividiu a MESMA aba com o dev — três leituras dele caíram na
-// página do dev, e o dev o cancelou aos 20 minutos. Com uma aba por identidade,
-// a primeira pergunta que a tira precisa responder passa a ser "de quem é esta
-// aba", e a segunda "quem está dirigindo AGORA".
+// "Cada um na sua aba, na sua porta" (D1/D2 de
+// `.synkora/reports/DESIGN_BROWSER_ABAS_POR_IDENTIDADE_2026-09-01.md`): a tira
+// responde primeiro DE QUEM é a aba, depois QUEM dirige agora.
 
 function isOwnerKind(value: string): value is BrowserTabOwnerKind {
   return value === 'user' || value === 'dev' || value === 'helper' || value === 'agent'
 }
 
-/** Rótulo de socorro por ESPÉCIE. Dono sem nome não pode virar aba sem dono:
- *  uma ficha vazia leria como aba do dono, que é exatamente o engano que esta
- *  rodada existe para matar. */
+/** Rótulo de socorro por ESPÉCIE: ficha vazia leria como aba do dono. */
 const OWNER_FALLBACK_LABEL: Record<BrowserTabOwnerKind, string> = {
   user: 'dono',
   dev: 'dev',
@@ -163,16 +159,10 @@ const OWNER_FALLBACK_LABEL: Record<BrowserTabOwnerKind, string> = {
 }
 
 /**
- * O dono da aba, lido DEFENSIVAMENTE — e com a mesma lei do `host`/`viewport`:
- * só o que NÃO é o padrão é carregado.
- *
- *  · espécie que o espelho não conhece (ou `owner` que não é objeto) → SEM dono:
- *    a tela não inventa identidade a partir de payload torto;
- *  · `user` → SEM dono também, porque a AUSÊNCIA já é a aba do dono. Gravar
- *    `{kind:'user'}` criaria uma segunda grafia do mesmo estado, e aí
- *    `sameBrowserPanel` acharia diferença entre um motor velho e o de hoje
- *    contando a MESMA verdade (o mesmo erro que o `host: 'dock'` já evita);
- *  · espécie boa com rótulo vazio → a ESPÉCIE nomeia a ficha (ver acima).
+ * O dono da aba, lido DEFENSIVAMENTE, e só o que NÃO é o padrão é carregado:
+ * espécie desconhecida não vira identidade inventada, e `user` cai na AUSÊNCIA
+ * (uma segunda grafia do mesmo estado faria `sameBrowserPanel` achar diferença
+ * onde não há). Espécie boa com rótulo vazio é nomeada pela ESPÉCIE.
  */
 function readTabOwner(value: unknown): BrowserTabOwner | undefined {
   if (!value || typeof value !== 'object') return undefined
@@ -180,17 +170,16 @@ function readTabOwner(value: unknown): BrowserTabOwner | undefined {
   const kind = str(bag.kind)
   if (!isOwnerKind(kind) || kind === 'user') return undefined
   const owner: BrowserTabOwner = { kind, label: str(bag.label).trim() || OWNER_FALLBACK_LABEL[kind] }
-  // O paneId não desenha pixel nenhum (é a chave do MOTOR), mas atravessa porque
-  // o espelho o declara — e espelho pela metade vira contrato pela metade.
+  // O paneId não desenha pixel (é a chave do MOTOR), mas o espelho o declara.
   const paneId = str(bag.paneId).trim()
   if (paneId) owner.paneId = paneId
   return owner
 }
 
-/** O modo vindo do motor, lido defensivamente. Largura que não é número
- *  positivo é `'auto'`: uma escala inventada aqui viraria uma página escalada
- *  na tela do dono por causa de um payload torto. */
-function readViewportMode(value: unknown): BrowserViewportMode {
+/** O modo vindo do motor (ou da lista do seletor), lido defensivamente.
+ *  Largura que não é número positivo é `'auto'`: uma escala inventada aqui
+ *  viraria uma página escalada na tela do dono por causa de um payload torto. */
+export function readViewportMode(value: unknown): BrowserViewportMode {
   if (typeof value === 'number' && Number.isFinite(value) && value > 0) return Math.round(value)
   return 'auto'
 }
@@ -226,39 +215,31 @@ export function normalizeBrowserPanel(value: unknown): BrowserPanelState {
       canForward: bool(tab.canForward),
       viewport: readViewportMode(tab.viewport)
     }
-    // DONO e ⚡ POR ABA (2026-09-01): os dois só são escritos quando NÃO são o
-    // padrão — ausente é "aba do dono" e "não dirigindo", que é o que um motor
-    // anterior a esta rodada conta ao não mandar campo nenhum.
+    // Dono, ⚡ e falha POR ABA só são escritos quando NÃO são o padrão: é o que
+    // um motor anterior conta ao não mandar campo nenhum.
     const owner = readTabOwner(tab.owner)
     if (owner) view.owner = owner
     if (bool(tab.driving)) view.driving = true
+    const failure = readEngineWords(tab.failure)
+    if (failure) view.failure = failure
     tabs.push(view)
   }
-  // CONSERTO de uma verdade impossível: existir aba e nenhuma marcada ativa
-  // deixaria a barra de URL falando de uma página e a tira de abas de outra.
-  // A primeira assume — e a tela conta UMA história só.
+  // Aba sem nenhuma ativa deixaria a barra e a tira contando histórias
+  // diferentes: a primeira assume.
   if (tabs.length > 0 && !tabs.some((tab) => tab.active)) tabs[0].active = true
   const state: BrowserPanelState = {
     alive: bool(bag.alive) || tabs.length > 0,
     agentDriving: bool(bag.agentDriving),
     tabs
   }
-  // ONDE a página está (pop-out, 2026-08-29). Só `'popout'` é carregado: o
-  // espelho do preload declara AUSENTE = dock, e o normalizador reconstrói o
-  // objeto — um campo inventado aqui viraria uma segunda grafia de "dock".
+  // Host, largura e faixa: só o que NÃO é o padrão (dock, auto, zero) é
+  // carregado — uma segunda grafia do mesmo estado repintaria à toa.
   if (bag.host === 'popout') state.host = 'popout'
-  // A LARGURA (2026-08-29). Mesma regra: só o que NÃO é `auto` é carregado —
-  // `undefined` já significa auto no espelho, e escrever `'auto'` aqui criaria
-  // uma segunda grafia do mesmo estado (e `sameBrowserPanel` acharia diferença
-  // onde não há).
   const viewport = readViewportMode(bag.viewport)
   if (viewport !== 'auto') state.viewport = viewport
   if (typeof bag.viewportWidth === 'number' && Number.isFinite(bag.viewportWidth)) {
     state.viewportWidth = Math.round(bag.viewportWidth)
   }
-  // A FAIXA (moldura de dispositivo). Mesma regra do `viewport`: só o que é
-  // POSITIVO é carregado — `0` já significa "sem faixa" na ausência, e gravá-lo
-  // criaria uma segunda grafia do mesmo estado.
   if (
     typeof bag.viewportBand === 'number' &&
     Number.isFinite(bag.viewportBand) &&
@@ -278,14 +259,18 @@ export function browserIsPopout(state: BrowserPanelState): boolean {
   return state.host === 'popout'
 }
 
-/** A nota do motor só entra na tela se tiver TEXTO: `kind` e `at` são carimbos
- *  para o diário, e uma nota muda ocuparia uma linha dizendo nada. */
-function readBrowserNotice(value: unknown): BrowserNoticeView | null {
+/** Palavras do motor (a nota da missão, a falha de uma aba) só entram na tela
+ *  se tiverem TEXTO: uma nota muda ocuparia uma linha dizendo nada. */
+function readEngineWords(value: unknown): BrowserTabFailure | null {
   if (!value || typeof value !== 'object') return null
-  const bag = value as { kind?: unknown; text?: unknown; at?: unknown }
+  const bag = value as { kind?: unknown; text?: unknown }
   const text = str(bag.text).trim()
-  if (!text) return null
-  return { kind: str(bag.kind), text, at: str(bag.at) }
+  return text ? { kind: str(bag.kind), text } : null
+}
+
+function readBrowserNotice(value: unknown): BrowserNoticeView | null {
+  const words = readEngineWords(value)
+  return words ? { ...words, at: str((value as { at?: unknown }).at) } : null
 }
 
 /** Ack de alavanca, lido com a mesma frouxidão: `undefined` de um motor que
@@ -310,17 +295,9 @@ export function activeBrowserTab(state: BrowserPanelState): BrowserTab | null {
 export function sameBrowserPanel(a: BrowserPanelState, b: BrowserPanelState): boolean {
   if (a === b) return true
   if (a.alive !== b.alive || a.agentDriving !== b.agentDriving) return false
-  // O HOST muda a seção inteira (o painel vira recibo) e nada mais na fotografia
-  // precisa mudar junto: sem esta linha o ⧉ não repintaria o dock.
+  // Host (o ⧉ vira recibo), largura (o seletor aceso, inclusive a do agente) e
+  // faixa (as bandas nascem e morrem) mudam a tela sozinhos.
   if (a.host !== b.host) return false
-  // A LARGURA muda o botão aceso do seletor — e nada mais. Sem estas duas
-  // linhas, o modo posto pelo AGENTE não repintaria o chrome, e o dono ficaria
-  // olhando uma página emulada com o seletor mostrando AUTO.
-  //
-  // E a FAIXA entra na conta porque ela é o que faz as bandas NASCEREM e
-  // MORREREM na tela: sem esta comparação, alargar o painel até a largura pedida
-  // caber deixaria a página em tamanho real com faixa nenhuma desenhada (e a
-  // nota escrita mentindo).
   if (
     a.viewport !== b.viewport ||
     a.viewportWidth !== b.viewportWidth ||
@@ -343,15 +320,14 @@ export function sameBrowserPanel(a: BrowserPanelState, b: BrowserPanelState): bo
       tab.canBack === other.canBack &&
       tab.canForward === other.canForward &&
       tab.viewport === other.viewport &&
-      // O ⚡ PASSANDO DE UMA ABA PARA OUTRA (2026-09-01) muda a tira e mais nada:
-      // sem esta linha o raio ficaria pintado na aba de quem já parou.
       tab.driving === other.driving &&
-      // O DONO entra pela ESPÉCIE e pelo RÓTULO, que é exatamente o que a tira
-      // desenha. O `paneId` fica de fora de propósito: ele não aparece em pixel
-      // nenhum, e comparar o que não se vê repintaria o dock por nada — o
-      // `browser:changed` chega a cada passo do agente.
+      // O dono entra pelo que a tira DESENHA (espécie e rótulo); o `paneId` não
+      // aparece em pixel nenhum e repintaria o dock a cada passo do agente.
       tab.owner?.kind === other.owner?.kind &&
-      tab.owner?.label === other.owner?.label
+      tab.owner?.label === other.owner?.label &&
+      // A FALHA acende o cartão de erro na página e a marca na aba.
+      tab.failure?.kind === other.failure?.kind &&
+      tab.failure?.text === other.failure?.text
     )
   })
 }
@@ -379,32 +355,53 @@ export function browserTabLabel(tab: BrowserTab): string {
   return 'aba em branco'
 }
 
-/**
- * O TAG do dono na tira — o que a aba mostra ANTES do nome da página.
- *
- * `null` para a aba do dono (presente ou ausente a ficha): a diferença é por
- * FORMA antes de cor, e a forma do dono é a AUSÊNCIA de prefixo — ele é a régua
- * da tira, não um caso dela. `DEV` é fixo pela ESPÉCIE (o chat da missão é um
- * só); ajudante e agente entram com o próprio nome/papel, que é o que o dono
- * reconhece na lateral. A caixa alta é do CSS, para o leitor de tela continuar
- * ouvindo "inv-brand" e não "I-N-V".
- */
+/** A ficha do dono na tira, ANTES do nome da página. `null` para a aba do
+ *  dono: a forma dele é a AUSÊNCIA de prefixo (ele é a régua da tira). A caixa
+ *  alta é do CSS, para o leitor de tela ouvir "inv-brand" e não soletrar. */
 export function browserTabOwnerTag(tab: BrowserTab): string | null {
   const owner = tab.owner
   if (!owner || owner.kind === 'user') return null
   return owner.kind === 'dev' ? 'DEV' : owner.label
 }
 
-/**
- * A FRASE do dono — o que a barra de status e o leitor de tela leem.
- *
- * "aba DE x" para todo mundo de propósito: "aba do dev" leria melhor, mas "aba
- * do inv-brand" leria ERRADO. Uma regra só, que nunca sai da gramática.
- */
+/** A frase do dono. "aba DE x" para todo mundo: "aba do inv-brand" leria
+ *  ERRADO, e uma regra só nunca sai da gramática. */
 export function browserTabOwnerPhrase(tab: BrowserTab): string | null {
   const owner = tab.owner
   if (!owner || owner.kind === 'user') return null
   return `aba de ${owner.label}`
+}
+
+/** O título do cartão de erro, pela ESPÉCIE da falha (nunca pelo texto). */
+export function browserTabFailureTitle(failure: BrowserTabFailure): string {
+  if (failure.kind === 'load-failed') return 'a página não carregou'
+  if (failure.kind === 'crashed') return 'a página caiu'
+  return 'a página falhou'
+}
+
+/** A falha da aba À VISTA — é ela que troca a página nativa pelo cartão. */
+export function activeBrowserTabFailure(state: BrowserPanelState): BrowserTabFailure | null {
+  return activeBrowserTab(state)?.failure ?? null
+}
+
+/** A frase inteira da aba: de quem é, que página é, e o que a ficha e a marca
+ *  de erro dizem só por desenho. Com doze abas cortadas, é o que a identifica. */
+export function browserTabSentence(tab: BrowserTab): string {
+  const said = [browserTabOwnerPhrase(tab), browserTabLabel(tab)]
+  if (tab.driving) said.push('dirigindo agora')
+  if (tab.failure) said.push(browserTabFailureTitle(tab.failure))
+  return said.filter(Boolean).join(' · ')
+}
+
+/** A dica nativa da aba (`title`): a frase e, embaixo, o endereço inteiro. */
+export function browserTabTitle(tab: BrowserTab): string {
+  const sentence = browserTabSentence(tab)
+  return tab.url ? `${sentence}\n${tab.url}` : sentence
+}
+
+/** Alguém dirige: o ⚡ da missão OU o de uma aba (motor que só marca um). */
+export function browserAgentDriving(state: BrowserPanelState): boolean {
+  return state.agentDriving || state.tabs.some((tab) => tab.driving === true)
 }
 
 /** O RESUMO da seção — a única verdade que sobra com o painel RECOLHIDO, então
@@ -415,31 +412,20 @@ export function browserSectionSummary(
   engine: BrowserEngineState = 'ready'
 ): string {
   if (engine === 'missing') return 'motor velho'
-  // O ⚡ é POR ABA desde 2026-09-01, e a missão continua tendo o dela: qualquer
-  // um dos dois acende o raio. Ler só o `agentDriving` deixaria o sinal MUDO num
-  // motor que marca a aba e não a missão.
   const driver = state.tabs.find((tab) => tab.driving)
-  const bolt = state.agentDriving || driver ? '⚡ ' : ''
-  // DESTACADO vem antes de tudo (menos o motor velho): com a seção recolhida,
-  // "3 abas" faria o dono procurar no dock uma página que está em outra janela.
-  // O ⚡ sobrevive porque o agente segue dirigindo a página destacada.
+  const bolt = browserAgentDriving(state) ? '⚡ ' : ''
+  // Destacada, "3 abas" faria o dono procurar no dock uma página de outra janela.
   if (browserIsPopout(state)) return `${bolt}destacado`
   const tab = activeBrowserTab(state)
   if (!state.alive || !tab) return 'fechado'
-  // QUEM está dirigindo vence o nome da página: com dono + dev + frota na mesma
-  // missão, "⚡ Board" conta que ALGUÉM dirige, e o que decide se o dono precisa
-  // reabrir a seção é o NOME de quem. Driver sem dono (motor velho, aba do
-  // próprio dono) cai nas palavras de sempre — não há quem nomear.
+  // QUEM dirige vence o nome da página; driver sem dono não tem quem nomear.
   const label = driver?.owner
     ? `${driver.owner.label} dirigindo`
     : tab.loading
       ? 'carregando…'
       : browserTabLabel(tab)
   const extra = state.tabs.length > 1 ? ` · ${state.tabs.length} abas` : ''
-  // A LARGURA EMULADA entra no resumo porque ela sobrevive à seção RECOLHIDA:
-  // uma página em 1280 lógicos num painel de 400px é a diferença entre "o site
-  // quebrou" e "é o modo desktop", e o dono não pode precisar reabrir a seção
-  // para descobrir isso.
+  // A largura emulada sobrevive à seção recolhida: "quebrou" ou "é desktop"?
   const mode = browserViewportOf(state)
   const width = mode === 'auto' ? '' : ` · ${mode}`
   return `${bolt}${label}${extra}${width}`
@@ -450,6 +436,70 @@ export function browserSectionSummary(
 export function tabCapNotice(count: number): string | null {
   if (count < BROWSER_TAB_CAP) return null
   return `teto de ${BROWSER_TAB_CAP} abas nesta missão — feche uma (×) para abrir outra`
+}
+
+// ————— A FAIXA DE AVISOS (2026-09-29) —————
+//
+// Os recados moram DENTRO do corpo, entre a barra e a página, e fecham com ×
+// (`docs/mockups/browser-chrome-2026-09-29.html`). O tom diz a natureza: erro
+// (motor, gesto recusado), cinza (leitura falhou — a tela é a última
+// fotografia) e neutro (largura que não coube, situação e não falha).
+
+export type BrowserNoticeTone = 'error' | 'muted' | 'neutral'
+
+export interface BrowserNoticeRow {
+  /** identidade do recado: dispensar vale para ELE, não para os próximos */
+  key: string
+  source: 'engine' | 'read' | 'gesture' | 'viewport'
+  tone: BrowserNoticeTone
+  text: string
+  /** carga ou queda da página: a linha traz RECARREGAR */
+  reload: boolean
+}
+
+const PAGE_FAILURE_KINDS: readonly string[] = ['load-failed', 'crashed']
+
+/**
+ * As linhas da faixa, na ordem em que o dono lê. A nota de carga/queda do motor
+ * NÃO se repete quando o motor já conta a falha POR ABA — o cartão na página
+ * diz isso onde o olho está; motor anterior sem `failure` cai na faixa.
+ */
+export function browserNoticeRows(
+  state: BrowserPanelState,
+  readError: string | null,
+  gestureNotice: string | null
+): BrowserNoticeRow[] {
+  const rows: BrowserNoticeRow[] = []
+  const notice = state.notice
+  const pageFailure = notice !== undefined && PAGE_FAILURE_KINDS.includes(notice.kind)
+  if (notice && !(pageFailure && state.tabs.some((tab) => tab.failure))) {
+    const key = `engine:${notice.at || notice.text}`
+    rows.push({ key, source: 'engine', tone: 'error', text: notice.text, reload: pageFailure })
+  }
+  if (readError) {
+    rows.push({ key: `read:${readError}`, source: 'read', tone: 'muted', text: readError, reload: false })
+  }
+  if (gestureNotice) {
+    const key = `gesture:${gestureNotice}`
+    rows.push({ key, source: 'gesture', tone: 'error', text: gestureNotice, reload: false })
+  }
+  const shortfall = browserViewportShortfall(state)
+  if (shortfall) {
+    rows.push({ key: `viewport:${shortfall}`, source: 'viewport', tone: 'neutral', text: shortfall, reload: false })
+  }
+  return rows
+}
+
+/** Dispensar vale enquanto o recado EXISTE: o que sumiu e voltou é recado
+ *  novo. Devolve o MESMO conjunto quando nada caiu (sem render à toa). */
+export function liveNoticeDismissals(
+  dismissed: ReadonlySet<string>,
+  rows: readonly BrowserNoticeRow[]
+): ReadonlySet<string> {
+  if (!dismissed.size) return dismissed
+  const live = new Set(rows.map((row) => row.key))
+  const kept = [...dismissed].filter((key) => live.has(key))
+  return kept.length === dismissed.size ? dismissed : new Set(kept)
 }
 
 // ————— GEOMETRIA —————
@@ -538,54 +588,28 @@ export function clipBrowserRect(
   return rect
 }
 
-// ————— ALTURA DA PÁGINA: a FRAÇÃO do trilho —————
+// ————— ALTURA DA PÁGINA: a FRAÇÃO do trilho (trilho legado do dock) —————
 //
-// REPROVAÇÃO DO DONO (2026-08-29, olhando o painel vivo): "não gostei do
-// browser, ele não é adaptativo igual do claude code. Ele tem altura travada,
-// fora que não vai se adaptando igual."
-//
-// A altura era `clamp(180px, 34vh, 460px)` no CSS: um TETO de 460px que nenhuma
-// tela grande passava, e nenhum gesto do dono alcançava. O modelo do Claude
-// Code desktop — que ele apontou como referência desde o design de 2026-08-15
-// (§D5.1) — é outro: cada painel tem ALTURA PRÓPRIA, ajustada por uma alça
-// entre painéis, e ela é uma FATIA da coluna, não um número absoluto.
-//
-// Por isso a preferência guardada é uma FRAÇÃO, nunca pixels:
-//  · encolher a janela reescala a página junto (o "vai se adaptando");
-//  · uma tela de 4K não herda a altura escolhida num notebook;
-//  · e o clamp em pixels continua existindo, mas como PISO e TETO da conta —
-//    o piso porque abaixo de 180px não se enxerga página nenhuma, e o teto
-//    porque o trilho tem irmãs (entrega, trabalho, histórico) que não podem
-//    ficar sem um palmo de coluna.
-//
-// Tudo aqui é puro de propósito: quem prova estas contas é o `test:browser-pane`
-// em node, sem React e sem DOM. O componente só mede o trilho e obedece.
+// "Ele tem altura travada, fora que não vai se adaptando" (2026-08-29): a
+// preferência guardada é uma FRAÇÃO da coluna, nunca pixels — encolher a janela
+// reescala a página, e uma tela 4K não herda a altura de um notebook. Os pixels
+// ficam como PISO (abaixo de 180px não há QA visual) e TETO (as irmãs do trilho
+// precisam de um palmo de coluna).
 
-/** A fatia do trilho que a página ocupa quando o dono nunca arrastou nada.
- *  Um pouco mais da metade: a página é o instrumento da seção, mas as irmãs
- *  continuam à vista sem rolar. */
+/** A fatia do trilho quando o dono nunca arrastou nada. */
 export const BROWSER_PAGE_DEFAULT_FRACTION = 0.55
 
-/** Fração mínima/máxima que a preferência pode GUARDAR. Não é o limite do que
- *  se vê (isso é dos pixels abaixo) — é a higiene do que se grava: um valor
- *  torto no localStorage nunca vira uma página de 8 telas de altura. */
+/** Higiene do que se GRAVA: storage torto nunca vira uma página de 8 telas. */
 export const BROWSER_PAGE_MIN_FRACTION = 0.15
 export const BROWSER_PAGE_MAX_FRACTION = 0.9
 
-/** Piso ABSOLUTO da página em pixels. Abaixo disto não há QA visual possível:
- *  é uma fresta escura que só ocupa lugar. Ele VENCE a fração — trilho baixo
- *  com fração pequena continua entregando página. */
+/** Piso absoluto em pixels; ele VENCE a fração. */
 export const BROWSER_PAGE_MIN_HEIGHT = 180
 
-/** O palmo de trilho que a página NUNCA come. As irmãs (entrega, trabalho,
- *  histórico, frota) e o próprio chrome do browser precisam de um pedaço de
- *  coluna à vista — senão o dock inteiro vira um retângulo preto e o dono perde
- *  a referência de onde está. */
+/** O palmo de trilho que a página nunca come (fallback sem medida). */
 export const BROWSER_PAGE_RAIL_FLOOR = 160
 
-/** Passo do teclado, em PIXELS (e não em fração): a seta tem que dar o mesmo
- *  empurrão numa tela pequena e numa grande. Mesma régua do
- *  `RIGHT_RAIL_KEYBOARD_STEP`. */
+/** Passo do teclado em PIXELS: o mesmo empurrão em tela pequena e grande. */
 export const BROWSER_PAGE_KEYBOARD_STEP = 24
 
 export interface BrowserPageBounds {
@@ -597,21 +621,10 @@ export interface BrowserPageOptions {
   minHeight?: number
   railFloor?: number
   /**
-   * O RESTO MEDIDO do trilho: tudo que divide o scroller com a página
-   * (cabeçalhos das irmãs, chrome do browser, a própria alça), em pixels.
-   *
-   * BUG PAGO (2026-08-29, dono na tela viva: "eu aumento o tamanho aí some e
-   * não tem mais como diminuir"): o floor de 160px era um CHUTE do resto, e
-   * com as irmãs colapsadas o resto real passa de 220px — a página crescia
-   * além da viewport do trilho, a alça saía do quadro, e a view NATIVA come o
-   * wheel do mouse: não sobrava papel para rolar até ela. Alça inalcançável é
-   * beco sem saída, e beco sem saída é bug.
-   *
-   * Quando o componente mede e passa o resto, ele SUBSTITUI o floor: o teto
-   * vira `viewport - resto`, e o pé do painel (a alça) cabe SEMPRE dentro da
-   * viewport do scroller, com qualquer combinação de irmãs abertas/fechadas.
-   * O floor fixo fica como fallback dos contextos sem medida (primeiro
-   * quadro, harness).
+   * O RESTO MEDIDO do trilho (irmãs, chrome, alça), em pixels. Ele SUBSTITUI o
+   * floor: com o chute de 160px a página passava da viewport, a alça saía do
+   * quadro e a view nativa comia o wheel — "aumento o tamanho aí some e não
+   * tem mais como diminuir" (2026-08-29).
    */
   railRest?: number
 }
@@ -787,23 +800,11 @@ export function writeBrowserPageFraction(
 
 // ————— OVERLAYS DO HOST —————
 //
-// O padrão pago (`git show 88c49d4^`) esconde a view enquanto um overlay do
-// host está aberto: a view compõe POR CIMA do DOM, então um popover que
-// cruzasse o retângulo dela ficaria por baixo — invisível. Lá o contador
-// `hostOverlayCount` era incrementado À MÃO por cada overlay (TitleBar,
-// CommandPalette, SynVoice…).
-//
-// Aqui a costura manual não cabe: esta fatia não é dona daqueles arquivos, e
-// um contador que ninguém incrementa é uma proteção que não existe. A versão
-// FIEL e leve lê o mesmo fato pela ESTRUTURA — todo overlay da casa é um
-// portal em `document.body`, irmão da raiz do app — e só esconde quando o
-// overlay REALMENTE cruza o retângulo da página.
-//
-// O tooltip fica de FORA de propósito (`role="tooltip"`): ele nasce e morre a
-// cada hover, e escondê-lo apagaria a página inteira a cada passada de mouse
-// pelo chrome — trocaríamos um tooltip cortado por um pisca-pisca na tela.
-// A dívida está nomeada no relatório: o conserto de verdade é rotear o tooltip
-// como a era da ilha fazia, e ele mora em `Tooltip.tsx`.
+// A view compõe POR CIMA do DOM: um overlay que cruze o retângulo ficaria por
+// baixo dela, invisível. Todo overlay da casa é um portal em `document.body`,
+// irmão da raiz — o fato é lido pela ESTRUTURA, e a página só some quando o
+// overlay REALMENTE a cruza. O tooltip fica de fora: escondê-lo a cada hover
+// faria a página piscar.
 
 /** Id da raiz do app em `index.html` — o único filho PERMANENTE do body. */
 export const APP_ROOT_ID = 'root'
@@ -831,27 +832,11 @@ export function overlayHidesPage(
 
 // ————— AS IRMÃS DO TRILHO (H9, 2026-08-29) —————
 //
-// A REPROVAÇÃO: *"deixa ele mais dinamico tbm, igual funciona o claude code…
-// to achando ele meio travado hoje."*
-//
-// O que a sonda `.synkora/reports/h9/probe-h9-fluidity.mjs` MEDIU, com janela
-// de verdade e compositing ligado: quando uma seção VIZINHA do dock recolhe ou
-// expande, a página do browser MUDA DE LUGAR sem mudar de tamanho — e nenhum
-// observador de hoje enxerga isso. Nem o `ResizeObserver` do retângulo (a caixa
-// não mudou), nem o dos ancestrais que recortam (o scroller tem altura fixa),
-// nem a mutação do body (o colapso acontece lá no fundo da árvore). Sobra o
-// reconciliador de 400ms: até o TETO dele. Medido em 30 colapsos: **mediana de
-// 300ms, p95 de 384ms** — 18 a 23 quadros de página parada no lugar errado. É o
-// "pulo atrasado" que o dono sente.
-//
-// A cura é observar as IRMÃS: quando a vizinha muda de altura, a página deste
-// painel mudou de lugar. Medido depois: **0,28ms** (mesmo quadro).
-//
-// A que CONTÉM a página fica de fora, e não é economia à toa: ela cresce e
-// encolhe a cada quadro do arrasto da alça, e observá-la seria um segundo
-// relato por quadro dizendo exatamente o que o observador do retângulo já
-// disse. (Medido na sonda: observar todas triplicou os relatos deduplicados de
-// um arrasto de alça — 105 → 375 — sem mover um único milissegundo do atraso.)
+// Seção vizinha que recolhe EMPURRA a página sem mudar tamanho nenhum: sem
+// observar as irmãs, sobrava o relógio de 400ms (p95 de 384ms de página no
+// lugar errado; observando, 0,28ms — `.synkora/reports/h9/probe-h9-fluidity.mjs`).
+// A que CONTÉM a página fica de fora: ela muda a cada quadro do arrasto, e o
+// observador do retângulo já conta isso (observá-la triplicava os relatos).
 export function browserSiblingsToWatch<T>(
   children: readonly T[],
   holdsPage: (child: T) => boolean
@@ -861,34 +846,23 @@ export function browserSiblingsToWatch<T>(
 
 // ————— O PORTÃO E A BOMBA DA GEOMETRIA (H9) —————
 //
-// As duas peças que decidem QUANDO o motor ouve falar do retângulo. Elas moram
-// aqui, no módulo puro, por duas razões: os DOIS hosts do browser (o painel do
-// dock e a janela destacada) usam exatamente as mesmas — um instrumento
-// copiado vira dois instrumentos na terceira correção —, e porque disciplina de
-// quadro que não é testável é disciplina que ninguém defende.
+// QUANDO o motor ouve falar do retângulo. Moram no módulo puro porque os DOIS
+// hosts (dock e janela destacada) usam as mesmas, e disciplina de quadro que
+// não é testável ninguém defende.
 
 export interface BrowserBoundsReport {
   rect: BrowserRect
   visible: boolean
 }
 
-/**
- * O PORTÃO: o relato repetido não vai ao motor.
- *
- * A chave é o par RETÂNGULO + VISÍVEL, e a visibilidade conta tanto quanto a
- * geometria: a página que não mudou de lugar mas SAIU DE VISTA (overlay do host
- * por cima, seção recolhida) precisa que o `false` atravesse. Inverter isso
- * deixaria uma página de internet pintada por cima do chat do dono.
- */
+/** O PORTÃO: relato repetido não vai ao motor. A chave é RETÂNGULO + VISÍVEL —
+ *  a página que não mexeu mas SAIU DE VISTA precisa que o `false` atravesse. */
 export interface BrowserBoundsGate {
   /** Este relato é novidade? (e, se for, ele passa a ser o último) */
   accept(rect: BrowserRect, visible: boolean): boolean
-  /** ESQUECE o último. O próximo relato passa mesmo repetido — é a rota de
-   *  saída de quando o retângulo não mudou mas a VERDADE mudou: a view acabou
-   *  de nascer (o motor não adivinha onde ela vai), o painel voltou à vista, e
-   *  a SOLTA da alça (o render pós-gesto reclampa a altura contra a régua nova
-   *  e pode reencontrar um pixel que já passou no meio do arrasto — calar ali
-   *  deixaria a página nativa parada na altura do último quadro). */
+  /** ESQUECE o último: a rota de quando o retângulo não mudou mas a VERDADE
+   *  mudou (view recém-nascida, painel de volta à vista, solta da alça, a
+   *  página que troca pelo cartão de erro). */
   reset(): void
   last(): BrowserBoundsReport | null
 }
@@ -911,33 +885,21 @@ export function createBrowserBoundsGate(): BrowserBoundsGate {
 }
 
 /**
- * A BOMBA: duas entradas, e a diferença entre elas vale um QUADRO INTEIRO.
+ * A BOMBA: duas entradas, e a diferença entre elas vale um QUADRO INTEIRO
+ * (medido na sonda H9).
  *
- * A ordem do quadro no Chromium é a razão de existirem duas (e a sonda
- * `.synkora/reports/h9/probe-h9-fluidity.mjs` mediu cada uma):
+ *  · `hot()` — para quem corre DEPOIS do layout (o `ResizeObserver`): um rAF
+ *    pedido dali lê a geometria VELHA no quadro seguinte (2,01 → 1,03 quadros).
+ *  · `cold()` — para quem dispara em RAJADA antes da fase de rAF (`scroll`,
+ *    `resize`, mutação de portal, o relógio): ali coalescer é de graça.
  *
- *  · `hot()` — para quem já corre DEPOIS do layout do quadro, e o
- *    `ResizeObserver` é o caso que importa. Um `requestAnimationFrame` pedido
- *    de dentro dele só corre no quadro SEGUINTE, e ainda assim ANTES do
- *    `paint()` do arrasto — ou seja, lê a geometria VELHA. Medido: 2,01 quadros
- *    de atraso no arrasto da alça, 2,03 no da largura. Medindo na hora: 1,03 e
- *    1,05 — o piso físico (a view nativa só pode aterrissar na composição
- *    seguinte).
- *  · `cold()` — para quem dispara em RAJADA e já é entregue ANTES da fase de
- *    rAF: `scroll`, `resize` da janela, mutação de portal, o relógio da rede.
- *    Ali o salto já custava zero (16,3-16,8ms = 1,00 quadro nos dois
- *    caminhos), e a coalescência é proteção de graça.
- *
- * `hot()` CANCELA um quadro frio pendente: o relato dele nasceria velho, e dois
- * relatos do mesmo retângulo é trabalho que o portão descarta de qualquer jeito.
+ * `hot()` CANCELA um quadro frio pendente: o relato dele nasceria velho.
  */
 export interface BrowserBoundsPumpHost {
   /** mede e relata AGORA (quem sabe medir é o host, não a bomba) */
   measure(): void
   /** Agenda para o próximo quadro. O identificador tem de ser NÃO-ZERO — é ele
-   *  que responde "há quadro pendente?". O `requestAnimationFrame` do browser
-   *  cumpre isso por especificação (inteiro positivo); um dublê de teste
-   *  também precisa. */
+   *  que responde "há quadro pendente?" (o rAF do browser cumpre isso). */
   requestFrame(run: () => void): number
   cancelFrame(handle: number): void
 }

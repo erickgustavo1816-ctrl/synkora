@@ -130,6 +130,15 @@ export interface BrowserTabView {
   owner: BrowserTabOwner
   /** ⚡ POR ABA (D2): esta aba está sendo dirigida AGORA por quem é dona dela. */
   driving: boolean
+  /** A página desta aba não carregou ou caiu — `null` quando ela está de pé.
+   *  Nasce no `did-fail-load`/`render-process-gone` DESTA aba e some quando ela
+   *  carrega de novo. Espelho declarado do `BrowserTab.failure` do preload. */
+  failure: BrowserTabFailure | null
+}
+
+export interface BrowserTabFailure {
+  kind: 'load-failed' | 'crashed'
+  text: string
 }
 
 /** Nota legível do motor para o dono (o "evento legível" do download barrado).

@@ -918,6 +918,20 @@ export interface BrowserTab {
   /** O agente DESTA aba está dirigindo AGORA (⚡ por aba, D2); o ⚡ da missão
    *  (`agentDriving`) continua contando o fato geral. Ausente = não dirigindo. */
   driving?: boolean
+  /** A página DESTA aba não carregou ou caiu (2026-09-29, variante B do
+   *  `docs/mockups/browser-chrome-2026-09-29.html`): enquanto houver falha, o
+   *  chrome esconde a página nativa — que é só um branco mudo — e o retângulo
+   *  explica o erro com RECARREGAR. Opcional no espelho: motor anterior não
+   *  manda, e ausente = sem falha. Espelho declarado do `BrowserTabView.failure`
+   *  de `src/main/browserPaneContracts.ts` (o par). */
+  failure?: BrowserTabFailure | null
+}
+
+/** Por que a página de uma aba não está de pé. `kind` é `string` aqui pelo
+ *  mesmo motivo do `BrowserNoticeView`: o motor é o dono do vocabulário. */
+export interface BrowserTabFailure {
+  kind: string
+  text: string
 }
 
 /** Nota legível do MOTOR para o dono (download barrado, teto de abas, página

@@ -1817,6 +1817,98 @@ test('a recovered local preview clears its own load failure without erasing anot
   assert.equal(manager.state('m1').notice.kind, 'permission-denied')
 })
 
+// ————— a FALHA POR ABA (variante B do mockup de 2026-09-29) —————
+//
+// A nota é da MISSÃO e a última vence; o cartão de erro é da ABA. Sem a falha
+// por aba, o chrome não sabe QUAL página esconder — e a aba vizinha, de pé,
+// viraria um cartão de erro que não é dela.
+
+const failureOf = (manager, tabId) => manager.state('m1').tabs.find((tab) => tab.tabId === tabId).failure
+
+test('FALHA POR ABA: a página que não carrega marca SÓ a sua aba, com o texto da nota', async () => {
+  const { manager } = makeManager()
+  const first = await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
+  const second = await manager.ensureTab('m1', 'p', 'https://b.test/', OWNER_HELPER)
+  assert.equal(failureOf(manager, first.tabId), null, 'aba de pé viaja com `failure: null`, não ausente')
+
+  first.webContents.emit('did-fail-load', {}, -105, 'ERR_NAME_NOT_RESOLVED', 'https://nao.existe/', true)
+  assert.deepEqual(failureOf(manager, first.tabId), { kind: 'load-failed', text: manager.state('m1').notice.text })
+  assert.equal(failureOf(manager, second.tabId), null, 'a vizinha segue de pé')
+
+  // Aborto e iframe não são falha da página — nem na nota, nem na aba.
+  second.webContents.emit('did-fail-load', {}, -3, 'ERR_ABORTED', 'https://b.test/', true)
+  second.webContents.emit('did-fail-load', {}, -105, 'iframe', 'https://x.test/', false)
+  assert.equal(failureOf(manager, second.tabId), null)
+
+  // O outro caminho: o `loadURL` do gesto/agente que REJEITA.
+  second.webContents.loadURL = async () => {
+    throw new Error("ERR_CONNECTION_REFUSED (-102) loading 'http://127.0.0.1:8790/'")
+  }
+  await manager.ensureTab('m1', 'p', 'http://127.0.0.1:8790/', OWNER_HELPER)
+  assert.deepEqual(failureOf(manager, second.tabId), { kind: 'load-failed', text: manager.state('m1').notice.text })
+  assert.match(failureOf(manager, second.tabId).text, /8790/u)
+  assert.equal(failureOf(manager, first.tabId).kind, 'load-failed', 'a falha da primeira não é da nota: é dela')
+})
+
+test('FALHA POR ABA: só a CARGA BEM-SUCEDIDA apaga — recarregar não pisca o branco', async () => {
+  const { manager } = makeManager()
+  const opened = await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
+  opened.webContents.emit('did-fail-load', {}, -105, 'ERR_NAME_NOT_RESOLVED', 'https://a.test/', true)
+
+  // O chrome esconde a página nativa enquanto há falha: apagar no INÍCIO do ⟳
+  // mostraria o branco mudo até a resposta chegar.
+  assert.equal(manager.reload('m1'), true)
+  opened.webContents.emit('did-start-loading')
+  assert.equal(failureOf(manager, opened.tabId).kind, 'load-failed')
+
+  opened.webContents.emit('did-navigate', {}, 'https://a.test/', 200, 'OK')
+  assert.equal(failureOf(manager, opened.tabId), null)
+  assert.equal(manager.state('m1').notice, undefined, 'a nota que ela levantou vai junto')
+
+  // O `loadURL` que resolve também é carga bem-sucedida.
+  opened.webContents.emit('did-fail-load', {}, -105, 'ERR_NAME_NOT_RESOLVED', 'https://a.test/', true)
+  await manager.navigate('m1', 'https://c.test/')
+  assert.equal(failureOf(manager, opened.tabId), null)
+  assert.equal(manager.state('m1').notice, undefined)
+})
+
+test('FALHA POR ABA: a página que CAI vira `crashed` da aba, e voltar apaga a nota do crash', async () => {
+  const { manager } = makeManager()
+  const first = await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
+  const second = await manager.ensureTab('m1', 'p', 'https://b.test/', OWNER_HELPER)
+
+  second.webContents.emit('render-process-gone', {}, { reason: 'oom' })
+  const notice = manager.state('m1').notice
+  assert.equal(notice.kind, 'crashed')
+  assert.deepEqual(failureOf(manager, second.tabId), { kind: 'crashed', text: notice.text })
+  assert.match(failureOf(manager, second.tabId).text, /oom/u)
+  assert.equal(failureOf(manager, first.tabId), null, 'caiu o renderer da SEGUNDA, não o da primeira')
+
+  second.webContents.emit('did-navigate', {}, 'https://b.test/', 200, 'OK')
+  assert.equal(failureOf(manager, second.tabId), null)
+  assert.equal(manager.state('m1').notice, undefined, 'a aba de pé de novo aposenta a nota do crash')
+})
+
+test('FALHA POR ABA: voltar só apaga a nota que ELA levantou', async () => {
+  const { manager, host } = makeManager()
+  const first = await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
+  const second = await manager.ensureTab('m1', 'p', 'https://b.test/', OWNER_HELPER)
+
+  // Outra ABA levantou a nota por último: a recuperação da primeira não a toca.
+  first.webContents.emit('did-fail-load', {}, -105, 'ERR_NAME_NOT_RESOLVED', 'https://a.test/', true)
+  second.webContents.emit('render-process-gone', {}, { reason: 'crashed' })
+  first.webContents.emit('did-navigate', {}, 'https://a.test/', 200, 'OK')
+  assert.equal(failureOf(manager, first.tabId), null)
+  assert.equal(manager.state('m1').notice.kind, 'crashed', 'o crash é da segunda, e ela segue caída')
+  assert.equal(failureOf(manager, second.tabId).kind, 'crashed')
+
+  // Outro MOTIVO, na mesma aba, levantou a nota por último: ela sobrevive.
+  host.hooks.onPermissionDenied('geolocation', second.webContents.id)
+  second.webContents.emit('did-navigate', {}, 'https://b.test/', 200, 'OK')
+  assert.equal(failureOf(manager, second.tabId), null, 'a falha da aba sai mesmo com a nota sendo de outro')
+  assert.equal(manager.state('m1').notice.kind, 'permission-denied')
+})
+
 // ————— captura, ⚡ e geometria da janela —————
 
 test('GUARDA DE CAPTURA: sem browser recusa; visibilidade não substitui tentativa limitada de captura', async () => {
@@ -1904,7 +1996,9 @@ test('MOTOR: o state reflete o `webContents` de verdade, e as alavancas recusam 
     // O DONO e o ⚡ da aba (2026-09-01) — o chrome desenha os dois, e a
     // fotografia é o único canal que ele tem.
     owner: OWNER_DEV,
-    driving: false
+    driving: false,
+    // A falha POR ABA (2026-09-29): de pé, ela viaja `null` — nunca ausente.
+    failure: null
   })
 
   assert.equal(manager.goBack('m1'), true)
