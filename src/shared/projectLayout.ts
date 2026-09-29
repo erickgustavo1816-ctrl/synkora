@@ -10,7 +10,8 @@
 //
 // Quem MUDA o layout é só o main (`applyProjectLayoutOp` em
 // ./projectLayoutOps): o renderer pede uma operação e recebe o layout novo
-// por broadcast. Este arquivo é só vocabulário — nenhum import de runtime.
+// por broadcast. Este arquivo é vocabulário + CONSULTAS puras (rail e Home
+// leem o layout pelas mesmas funções) — nenhum import de runtime.
 // ————————————————————————————————————————————————————————————————————————
 
 /** Matizes fechadas da cor de grupo (mesma régua HSL do resto da casa).
@@ -84,4 +85,19 @@ export interface ProjectLayoutOpResult {
   /** preenchido quando a operação criou um grupo (combine / createGroup) —
    *  a UI abre a folha de nome já com o texto selecionado */
   createdGroupId?: string
+}
+
+/** Os grupos, na ordem do rail. */
+export function layoutGroups(layout: ProjectLayout): ProjectLayoutGroupEntry[] {
+  return layout.entries.filter((e): e is ProjectLayoutGroupEntry => e.kind === 'group')
+}
+
+/** A ordem do rail achatada: soltos e os de dentro dos grupos, de cima a baixo. */
+export function projectLayoutOrder(layout: ProjectLayout): string[] {
+  return layout.entries.flatMap((e) => (e.kind === 'project' ? [e.projectId] : e.projectIds))
+}
+
+/** O grupo que contém o universo, ou null quando ele está solto. */
+export function groupOfProject(layout: ProjectLayout, projectId: string): ProjectLayoutGroupEntry | null {
+  return layoutGroups(layout).find((g) => g.projectIds.includes(projectId)) ?? null
 }
