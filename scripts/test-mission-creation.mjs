@@ -1535,7 +1535,7 @@ test('completed mission deletion uses the same cleanup as an archived mission', 
       effects.push('closed')
     }
   } })
-  assert.equal(await handlers.get('missions:remove')({}, mission.id), true)
+  assert.deepEqual(await handlers.get('missions:remove')({}, mission.id), { ok: true })
   assert.deepEqual(effects, ['closed', 'backlog', 'removed', 'chats', 'maestro', 'events'])
 })
 
@@ -1558,7 +1558,9 @@ test(`mission deletion preserves the record and worktree with ${scenario}`, asyn
     ctx.pushAll = () => {}
     extras.guiSessions.forgetWhere = () => {}
   } })
-  assert.equal(await handlers.get('missions:remove')({}, mission.id), false)
+  const result = await handlers.get('missions:remove')({}, mission.id)
+  assert.equal(result.ok, false)
+  assert.match(result.error, scenario === 'uncommitted changes' ? /alterações locais/iu : /pasta.*missão/iu)
   assert.equal(removed, 0)
   assert.equal(readFileSync(join(mission.worktree, 'keep-changes.txt'), 'utf8'),
     scenario === 'uncommitted changes' ? 'uncommitted owner changes\n' : 'synthetic delivery\n')
@@ -1589,7 +1591,9 @@ test('mission deletion rechecks archived state after awaiting Mobile and Expo cl
   await started
   mission.status = 'ativa'
   release()
-  assert.equal(await deleting, false)
+  const result = await deleting
+  assert.equal(result.ok, false)
+  assert.match(result.error, /mudou/iu)
   assert.equal(removed, 0)
   assert.equal(existsSync(join(mission.worktree, '.git')), true)
 })

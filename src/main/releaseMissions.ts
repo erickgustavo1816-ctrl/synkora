@@ -87,7 +87,7 @@ export function buildReleaseMissions(deps: ReleaseMissionsDeps): ReleaseMissionT
         return failure('A missão está ativa. Se o dono autorizou sua exclusão, arquive com release_mission_update e releia antes de excluir.')
       try {
         const removed = await deps.lifecycle.remove(target.mission.id, () => !('error' in selected(identity, input)))
-        if (!removed) return failure('A missão foi preservada: o estado mudou ou a pasta continua ocupada/com alterações. Confira antes de repetir.')
+        if (!removed.ok) return failure(removed.error)
         audit('release-mission-removed', identity, target.mission.id)
         return JSON.stringify({ ok: true, missionId: target.mission.id, text: 'Missão excluída. Os commits já integrados ao produto foram preservados.' })
       } catch {

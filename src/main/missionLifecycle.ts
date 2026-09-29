@@ -1,6 +1,6 @@
 import { join } from 'node:path'
 import { existsSync, unlinkSync } from 'node:fs'
-import { ensureSynkoraGitExcludes, isExpectedWorktree, removeWorktreeAndBranch } from './worktree'
+import { ensureSynkoraGitExcludes, isExpectedWorktree, isWorktreeClean, removeWorktreeAndBranch } from './worktree'
 import { isGuiMissionPaneId, missionTypeOf } from './guiMissionContracts'
 import { discardAgentSkills } from './skillsAgentSync'
 import { needsMissionFinalization } from './missionFinalization'
@@ -8,6 +8,7 @@ import type { MainContext } from './mainContext'
 import type { Mission } from './missions'
 import type { MissionEngine } from './missionEngine'
 import type { GuiSessionRegistry } from './guiSessions'
+import type { MissionRemovalResult } from '../shared/missionRemoval'
 
 export interface MissionMetadataPatch {
   title?: string
@@ -129,28 +130,26 @@ export function buildMissionLifecycle(ctx: MainContext, extras: MissionLifecycle
       }
       return updated ?? null
     },
-    async remove(missionId: string, stillAuthorized: () => boolean = () => true): Promise<boolean> {
-      if (removing.has(missionId) || !stillAuthorized()) return false
+    async remove(missionId: string, stillAuthorized: () => boolean = () => true): Promise<MissionRemovalResult> {
+      if (removing.has(missionId)) return { ok: false, error: 'A exclusão desta missão já está em andamento. Aguarde o resultado.' }
+      if (!stillAuthorized()) return { ok: false, error: 'A autorização mudou. Confira a missão e confirme a exclusão novamente.' }
       removing.add(missionId)
       try {
         const mission = missions.get(missionId)
-        if (!mission || !['arquivada', 'concluida'].includes(mission.status)) return false
+        if (!mission) return { ok: false, error: 'Esta missão não foi encontrada. Atualize a lista de missões.' }
+        if (!['arquivada', 'concluida'].includes(mission.status))
+          return { ok: false, error: 'Esta missão está ativa. Arquive a missão antes de excluir.' }
         const project = projects.get(mission.projectId)
-        if (!project) return false
+        if (!project) return { ok: false, error: 'O projeto desta missão não foi encontrado. Reabra o projeto e confira a lista de missões.' }
         const removal = { projectId: mission.projectId, rootPath: project.path, worktree: mission.worktree, branch: mission.branch, status: mission.status, updatedAt: mission.updatedAt }
         try {
           ensureSynkoraGitExcludes(project.path)
-        } catch (error) {
-          hub.publish({
-            projectId: mission.projectId,
-            kind: 'error',
-            text: `não excluí a missão "${mission.title}": ${error instanceof Error ? error.message : String(error)}`,
-            actor: 'harness'
-          })
-          return false
+        } catch {
+          return { ok: false, error: 'Os arquivos internos do Synkora estão versionados neste projeto. Revise essa configuração no chat do projeto antes de excluir a missão.' }
         }
         const queued = integrationQueue.getByMission(missionId)
-        if (queued?.state === 'merging' || needsMissionFinalization(queued)) return false
+        if (queued?.state === 'merging' || needsMissionFinalization(queued))
+          return { ok: false, error: 'Esta missão tem uma integração pendente. Conclua a integração no chat da missão antes de excluir.' }
         if (queued) integrationQueue.cancel(missionId)
         stopMissionExecution(
           mission.projectId,
@@ -163,10 +162,20 @@ export function buildMissionLifecycle(ctx: MainContext, extras: MissionLifecycle
         if (!stillAuthorized() || !current || current.status !== removal.status || current.updatedAt !== removal.updatedAt || current.projectId !== removal.projectId ||
           current.worktree !== removal.worktree || current.branch !== removal.branch ||
           projects.get(removal.projectId)?.path !== removal.rootPath || integrationQueue.getByMission(missionId)?.state === 'merging' ||
-          needsMissionFinalization(integrationQueue.getByMission(missionId))) return false
+          needsMissionFinalization(integrationQueue.getByMission(missionId)))
+          return { ok: false, error: 'A missão ou sua autorização mudou durante a exclusão. Reabra a confirmação e confira o estado atual antes de tentar novamente.' }
         if (mission.worktree && existsSync(mission.worktree) &&
-          (!mission.branch || !isExpectedWorktree(project.path, mission.worktree, mission.branch))) return false
-        if (mission.branch && mission.worktree && !removeWorktreeAndBranch(project.path, mission.worktree, mission.branch)) return false
+          (!mission.branch || !isExpectedWorktree(project.path, mission.worktree, mission.branch)))
+          return { ok: false, error: 'Não consegui confirmar que a pasta pertence a esta missão. Reative a missão e confira o ambiente no chat antes de excluir.' }
+        if (mission.branch && mission.worktree && existsSync(mission.worktree)) {
+          const clean = isWorktreeClean(mission.worktree)
+          if (clean === false)
+            return { ok: false, error: 'A pasta da missão contém alterações locais. Reative a missão e peça ao agente para salvar ou revisar essas alterações antes de excluir.' }
+          if (clean === undefined)
+            return { ok: false, error: 'Não consegui verificar as alterações da missão pelo Git. Reative a missão e confira o ambiente no chat antes de excluir.' }
+        }
+        if (mission.branch && mission.worktree && !removeWorktreeAndBranch(project.path, mission.worktree, mission.branch))
+          return { ok: false, error: 'Não consegui remover a pasta ou a branch da missão. Feche os programas que usam essa pasta e tente novamente; se persistir, reative a missão e investigue no chat.' }
         backlog.releaseMissionItems(missionId)
         missions.remove(missionId)
         guiSessions.forgetWhere((paneId) => isGuiMissionPaneId(paneId, missionId))
@@ -192,7 +201,9 @@ export function buildMissionLifecycle(ctx: MainContext, extras: MissionLifecycle
         ctx.pushAll('tasks:changed', mission.projectId)
         emitMissionsChanged(mission.projectId)
         syncBoard(mission.projectId)
-        return true
+        return { ok: true }
+      } catch {
+        return { ok: false, error: 'Não consegui confirmar a exclusão. Atualize a lista de missões e tente novamente; se persistir, investigue no chat do projeto.' }
       } finally {
         removing.delete(missionId)
       }

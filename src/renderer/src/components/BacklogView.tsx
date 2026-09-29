@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import {
   useStore,
   type BacklogItem,
@@ -41,6 +42,9 @@ function MissionsPane({ projectId, versions }: { projectId: string; versions: Ve
   const [sort, setSort] = useState<'recentes' | 'antigas'>('recentes')
   const [page, setPage] = useState(0)
   const [confirmDelete, setConfirmDelete] = useState<Mission | null>(null)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+  const deletionPending = useRef(false)
   /** missão encerrada cuja conversa 2.0 o dono abriu para LER (fotografia) */
   const [chatViewer, setChatViewer] = useState<Mission | null>(null)
   const closeChatViewer = useCallback(() => setChatViewer(null), [])
@@ -97,6 +101,29 @@ function MissionsPane({ projectId, versions }: { projectId: string; versions: Ve
   function open(m: Mission): void {
     setMissionTab(projectId, m.id)
     setUniverseTab(projectId, 'board')
+  }
+
+  function closeDelete(): void {
+    if (deletionPending.current) return
+    setConfirmDelete(null)
+    setDeleteError(null)
+  }
+
+  async function confirmMissionDeletion(): Promise<void> {
+    if (!confirmDelete || deletionPending.current) return
+    deletionPending.current = true
+    setDeleting(true)
+    setDeleteError(null)
+    try {
+      const result = await deleteMission(confirmDelete.id)
+      if (result.ok) setConfirmDelete(null)
+      else setDeleteError(result.error)
+    } catch {
+      setDeleteError('Não consegui atualizar a lista após a exclusão. Reabra a lista de missões para conferir o resultado.')
+    } finally {
+      deletionPending.current = false
+      setDeleting(false)
+    }
   }
 
   return (
@@ -205,7 +232,7 @@ function MissionsPane({ projectId, versions }: { projectId: string; versions: Ve
                 <button
                   className="btn ghost tiny danger"
                   data-tip="Excluir de vez (tarefas e branch somem)"
-                  onClick={() => setConfirmDelete(m)}
+                  onClick={() => { setDeleteError(null); setConfirmDelete(m) }}
                 >
                   🗑
                 </button>
@@ -233,12 +260,12 @@ function MissionsPane({ projectId, versions }: { projectId: string; versions: Ve
         </div>
       )}
 
-      {confirmDelete && (
-        <div className="overlay" onClick={() => setConfirmDelete(null)}>
-          <div className="task-modal confirm-modal" onClick={(e) => e.stopPropagation()}>
+      {confirmDelete && createPortal(
+        <div className="overlay" onClick={closeDelete}>
+          <div className="task-modal confirm-modal" role="dialog" aria-modal="true" aria-label="Excluir missão" aria-busy={deleting} onClick={(e) => e.stopPropagation()}>
             <div className="task-modal-head">
               <span className="task-dept">🗑 excluir missão</span>
-              <button className="pane-close dark-close" onClick={() => setConfirmDelete(null)}>
+              <button className="pane-close dark-close" aria-label="Fechar confirmação" disabled={deleting} onClick={closeDelete}>
                 ×
               </button>
             </div>
@@ -257,24 +284,22 @@ function MissionsPane({ projectId, versions }: { projectId: string; versions: Ve
                 A conversa desta missão será apagada junto — arquivar guarda, excluir apaga.
               </p>
             )}
+            {deleteError && <p className="mission-modal-error" role="alert">{deleteError}</p>}
             <div className="task-modal-actions">
-              <button className="btn ghost" onClick={() => setConfirmDelete(null)}>
+              <button className="btn ghost" disabled={deleting} onClick={closeDelete}>
                 cancelar
               </button>
               <span className="task-modal-meta" />
               <button
                 className="btn danger-solid"
-                onClick={() => {
-                  const m = confirmDelete
-                  setConfirmDelete(null)
-                  void deleteMission(m.id)
-                }}
+                disabled={deleting}
+                onClick={() => void confirmMissionDeletion()}
               >
-                🗑 excluir de vez
+                {deleting ? 'excluindo…' : '🗑 excluir de vez'}
               </button>
             </div>
           </div>
-        </div>
+        </div>, document.body
       )}
 
       {chatViewer && <ArchivedMissionChat mission={chatViewer} onClose={closeChatViewer} />}

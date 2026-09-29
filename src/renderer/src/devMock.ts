@@ -571,7 +571,7 @@ export function installDevMock(): void {
       remove: async (id: string) => {
         const i = missions.findIndex((m) => m.id === id)
         if (i >= 0) missions.splice(i, 1)
-        return true
+        return { ok: true as const }
       },
       // 2.0: a conta da conversa é escolhida DENTRO da missão (card do chat
       // vazio / menu do cabeçalho). No preview o mock só carimba o seat.
