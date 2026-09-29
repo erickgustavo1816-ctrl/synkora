@@ -1146,6 +1146,8 @@ const api = {
       attachments?: GuiAttachmentDescriptor[],
       browserReferences?: GuiBrowserReference[]
     ): Promise<GuiResult> => ipcRenderer.invoke('gui:send', paneId, text, messageId, attachments, browserReferences),
+    resumeFailedTurn: (paneId: string, recoveryToken: string): Promise<GuiResult> =>
+      ipcRenderer.invoke('gui:resumeFailedTurn', paneId, recoveryToken),
     browserReferencesList: (paneId: string): Promise<GuiBrowserReferencesResult> =>
       ipcRenderer.invoke('gui:browser-references-list', paneId),
     revealBrowserReference: (paneId: string, id: string): Promise<import('../shared/guiBrowserReferences').GuiBrowserReferenceRevealResult> =>

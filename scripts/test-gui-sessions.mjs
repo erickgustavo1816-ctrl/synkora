@@ -13,6 +13,7 @@ import {
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
+import { GuiTurnRecovery } from '../.tmp/gui-sessions-test/main/guiTurnRecovery.js'
 import {
   GUI_PERMISSION_MODES,
   GUI_RING_BYTE_CAP,
@@ -563,6 +564,7 @@ test('decisões interativas entram no replay canônico com o requestId correto',
   session.answerPlanReview = () => true
   const sink = (evt) => ring.push(evt)
   gui.panes.set('p-canonico', {
+    turnRecovery: new GuiTurnRecovery(),
     spawn: {
       paneId: 'p-canonico',
       projectId: 'proj',
@@ -618,6 +620,7 @@ test('todo envio anuncia início de turno no replay antes de tocar no backend', 
   const session = { alive: true, send: (text) => sent.push(text) }
   const sink = (evt) => ring.push(evt)
   gui.panes.set('p-send', {
+    turnRecovery: new GuiTurnRecovery(),
     spawn: {
       paneId: 'p-send',
       projectId: 'proj',
@@ -677,6 +680,7 @@ test('modelo e effort mudam em voo sem respawn nem linha visual no transcript', 
     effort: 'high'
   }
   gui.panes.set(spawn.paneId, {
+    turnRecovery: new GuiTurnRecovery(),
     spawn,
     fingerprint: spawnFingerprint(spawn),
     session,
@@ -920,6 +924,7 @@ test('effort continua disponível quando o modelo usa o padrão da conta', async
     cwd: '/tmp'
   }
   gui.panes.set(spawn.paneId, {
+    turnRecovery: new GuiTurnRecovery(),
     spawn,
     fingerprint: spawnFingerprint(spawn),
     session,
@@ -963,6 +968,7 @@ test('/model usa a troca canônica e limpa effort incompatível', async () => {
   }
   const ring = new GuiEventRing()
   gui.panes.set(spawn.paneId, {
+    turnRecovery: new GuiTurnRecovery(),
     spawn,
     fingerprint: spawnFingerprint(spawn),
     session,
@@ -1015,6 +1021,7 @@ test('troca recusada ou durante turno falha fechada e conserva a escolha', async
     effort: 'high'
   }
   gui.panes.set(spawn.paneId, {
+    turnRecovery: new GuiTurnRecovery(),
     spawn,
     fingerprint: spawnFingerprint(spawn),
     session,
@@ -4118,6 +4125,7 @@ test('entrada morta preserva replay e o create abre um único processo novo', ()
   ring.push({ type: 'closed', code: 1 })
   const oldSession = { alive: false, kill: () => undefined }
   gui.panes.set(spawn.paneId, {
+    turnRecovery: new GuiTurnRecovery(),
     spawn,
     fingerprint: spawnFingerprint(spawn),
     session: oldSession,
@@ -5305,6 +5313,7 @@ function planProposalPane(gui, paneId) {
   // por isso que qualquer sessão viva serve — claude e codex reagem igual.
   const session = { alive: true, send: () => undefined }
   gui.panes.set(paneId, {
+    turnRecovery: new GuiTurnRecovery(),
     spawn: { paneId, projectId: 'proj', cli: 'claude', configDir: 'c', cwd: '/tmp' },
     fingerprint: 'teste',
     session,
@@ -5391,6 +5400,7 @@ function planApprovalPane(gui, paneId, cli = 'claude') {
   const session = { alive: true, turnActive: false, send: (text) => sent.push(text),
     answerQuestion() { throw new Error('o cartão de plano nunca usa o RPC de pergunta bloqueante') } }
   gui.panes.set(paneId, {
+    turnRecovery: new GuiTurnRecovery(),
     spawn: { paneId, projectId: 'proj', cli, configDir: 'c', cwd: '/tmp' },
     fingerprint: 'teste',
     session,

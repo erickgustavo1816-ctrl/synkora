@@ -893,6 +893,7 @@ export function installDevMock(): void {
         error: 'o padrão dos ajudantes só funciona no app'
       }),
       send: async () => ({ ok: true }),
+      resumeFailedTurn: async () => ({ ok: false, error: 'Esta conversa de demonstração não tem um turno para retomar.' }),
       deliverQueued: async () => ({ ok: true }),
       permission: async () => ({ ok: true }),
       answerQuestion: async () => ({ ok: true }),
