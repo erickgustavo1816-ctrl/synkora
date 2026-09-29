@@ -85,7 +85,7 @@ async function inspect() {
     await expectActivity('preparando a resposta')
     assert.equal(await run(`document.querySelector('.gui-pulse').dataset.action`), 'thinking')
     assert.match(await progressText(), /preparando a resposta.*leu synthetic\.ts/u)
-    assert.match(await progressText(), /sem sinal há/u, 'tool results do not replace an explanation from the agent')
+    assert.doesNotMatch(await progressText(), /sem sinal há/u, 'a visible tool receipt resets the inactivity warning')
     await writeFile(resolve('.synkora/reports/chat-agent-pulse.png'), (await win.webContents.capturePage()).toPNG())
     await run(`(() => { document.querySelector('.fixture-chat').style.width = '400px' })()`)
     await pause(100)

@@ -9,6 +9,7 @@ import type { GuiSessionEvent } from '../../src/renderer/src/guiApi'
 installDevMock()
 const paneId = 'gui-synthetic-recovery'
 const scenario = new URLSearchParams(window.location.search).get('scenario') ?? 'failed'
+const activityScenario = scenario === 'activity'
 const ready: GuiSessionEvent = { type: 'ready', caps: { models: [{ value: 'gpt-6.1-sol',
   displayName: 'GPT-6.1 Sol', supportedEffortLevels: ['high'] }], commands: [] } }
 const events: GuiSessionEvent[] = [ready,
@@ -19,7 +20,7 @@ const events: GuiSessionEvent[] = [ready,
   { type: 'tool', name: 'Read', toolUseId: 'synthetic-completed-tool', input: { file_path: 'src/main/missionLifecycle.ts' } },
   { type: 'tool-result', toolUseId: 'synthetic-completed-tool', text: 'Recibo sintético: leitura concluída.', isError: false, outcome: 'completed' },
   { type: 'text', text: 'Encontrei alterações locais na missão. Vou conferir a proteção de exclusão.' },
-  scenario === 'retrying'
+  activityScenario ? { type: 'thinking' } : scenario === 'retrying'
     ? { type: 'turn-retry', turnId: 'synthetic-turn', text: 'O serviço interrompeu a resposta e está tentando novamente.' }
     : { type: 'result', turnId: 'synthetic-turn', isError: true, outcome: 'failed',
       recoveryToken: 'synthetic-recovery-token', errorText: 'Selected model is at capacity. Please try a different model.' }
@@ -44,12 +45,26 @@ window.synkora.gui.resumeFailedTurn = async (id, token) => {
   snapshot: () => {
     const pane = useStore.getState().guiPanes[paneId]
     return { calls, model: pane?.executorModel, sessionId: pane?.sessionId,
+      publicSilenceSince: pane?.publicSilenceSince, status: pane?.status, turnActive: pane?.turnActive,
       userMessages: pane?.items.filter(item => item.kind === 'user').length,
       tools: pane?.items.filter(item => item.kind === 'tool').map(item => item.result?.status) }
   }
 }
 createRoot(document.getElementById('root')!).render(
-  <div className="fixture-chat">
+  <div className="fixture-chat" style={activityScenario ? { flexDirection: 'column' } : undefined}>
+    {activityScenario && <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, padding: 8 }}>
+      <button id="fixture-silence" onClick={() => useStore.setState(state => ({ guiPanes: {
+        ...state.guiPanes, [paneId]: { ...state.guiPanes[paneId], publicSilenceSince: Date.now() - 480_000 }
+      } }))}>Simular oito minutos sem sinal</button>
+      <button id="fixture-tool" onClick={() => useStore.getState().handleGuiLive(paneId, {
+        type: 'tool', name: 'mcp__synkora__lsp_diagnostics', toolUseId: 'synthetic-activity-tool',
+        input: { files: ['src/synthetic.ts'] }
+      })}>Iniciar LSP sintético</button>
+      <button id="fixture-receipt" onClick={() => useStore.getState().handleGuiLive(paneId, {
+        type: 'tool-result', toolUseId: 'synthetic-activity-tool', text: 'Recibo sintético: diagnóstico concluído.',
+        isError: false, outcome: 'completed'
+      })}>Concluir LSP sintético</button>
+    </div>}
     <GuiPane paneId={paneId} projectId="synthetic" cli="codex" configDir="synthetic"
       cwd="synthetic" model="gpt-6.1-sol" effort="high" permissionMode="default" showHeader={false} />
   </div>
