@@ -189,28 +189,29 @@
     gap: 5px;
     flex-shrink: 0;
   }
-  .rail-folder {
-    background: var(--panel-2);
-    box-shadow: inset 0 0 0 1px var(--panel-line);
-  }
-  .rail-folder.has-hue { background: hsl(var(--g-hue) 24% 22%); box-shadow: inset 0 0 0 1px hsl(var(--g-hue) 30% 32%); }
+  /* a pasta é só um fundo um tom acima do painel, sem contorno (como no Discord) */
+  .rail-folder { background: #34312a; }
+  .rail-folder.has-hue { background: hsl(var(--g-hue) 22% 24%); }
   .rail-folder.attn { box-shadow: 0 0 0 2px var(--accent); }
+  /* GEOMETRIA DO DISCORD (medida no recorte do dono, 2026-09-29): miniaturas
+     grandes e REDONDAS (canto ~40%), vão fino de 2px e ~4px de respiro até a
+     borda. Quadradinho de canto quase reto lia como grade de ladrilhos. */
   .rf-grid {
     display: grid;
-    grid-template-columns: repeat(2, 17px);
-    grid-template-rows: repeat(2, 17px);
-    gap: 3px;
+    grid-template-columns: repeat(2, 18px);
+    grid-template-rows: repeat(2, 18px);
+    gap: 2px;
   }
   .rf-mini {
     display: grid;
     place-items: center;
-    border-radius: 5px;
+    border-radius: 7px;
     background: hsl(var(--card-hue, 30) 32% 36%);
     color: var(--panel-ink);
     font: 700 8px/1 var(--mono);
   }
   .rf-mini.is-active { box-shadow: 0 0 0 1.5px var(--accent); }
-  .rf-mini.more { background: rgba(239, 232, 216, 0.1); color: var(--panel-ink-2); font-size: 8.5px; }
+  .rf-mini.more { background: rgba(239, 232, 216, 0.1); color: var(--panel-ink-2); font-size: 8px; }
   .rf-mini.is-missing { filter: grayscale(0.7); opacity: 0.6; }
 
   .rail-group-name {
@@ -511,7 +512,7 @@
     border-radius: 4px; background: var(--paper-2); box-shadow: inset 0 0 0 1px var(--line-strong);
   }
   .hb-tab .tab-glyph.has-hue { background: hsl(var(--g-hue) 46% 86%); box-shadow: inset 0 0 0 1px hsl(var(--g-hue) 34% 62%); }
-  .hb-tab .tab-glyph i { border-radius: 1.5px; background: hsl(var(--card-hue, 30) 38% 48%); }
+  .hb-tab .tab-glyph i { border-radius: 2px; background: hsl(var(--card-hue, 30) 38% 48%); }
   .hb-tab.zero .tab-glyph { opacity: 0.45; }
 
   /* filtros ativos: só existem quando existem */
@@ -623,7 +624,7 @@
     border: 1px solid var(--line-strong); border-radius: 6px; background: var(--paper-2);
   }
   .hg-folder.has-hue { border-color: hsl(var(--g-hue) 34% 62%); background: hsl(var(--g-hue) 46% 86%); }
-  .hg-folder i { border-radius: 2px; background: hsl(var(--card-hue, 30) 38% 48%); }
+  .hg-folder i { border-radius: 3px; background: hsl(var(--card-hue, 30) 38% 48%); }
   .hg-folder.loose { background: transparent; border-style: dashed; }
   .hg-folder.loose i { background: var(--line-strong); }
   .hg-name {
@@ -813,13 +814,13 @@
   }
   .gs-top { display: flex; flex-direction: column; align-items: center; gap: 12px; }
   .gs-folder {
-    width: 64px; height: 64px; border-radius: 18px;
+    width: 64px; height: 64px; border-radius: 20px;
     display: grid; place-items: center;
-    background: var(--panel-2);
+    background: #34312a;
   }
   .gs-folder.has-hue { background: hsl(var(--g-hue) 24% 22%); }
-  .gs-folder .rf-grid { grid-template-columns: repeat(2, 24px); grid-template-rows: repeat(2, 24px); gap: 4px; }
-  .gs-folder .rf-mini { border-radius: 7px; font-size: 10px; }
+  .gs-folder .rf-grid { grid-template-columns: repeat(2, 26px); grid-template-rows: repeat(2, 26px); gap: 3px; }
+  .gs-folder .rf-mini { border-radius: 10px; font-size: 11px; }
   .gs-name {
     width: 100%;
     padding: 6px 8px;
@@ -1286,12 +1287,10 @@ function showTip(el) {
     const p = P[el.dataset.pid]
     const g = groupOf(p.id)
     const state = { running: 'missão rodando', paused: 'missão em pausa', attn: 'um agente está esperando você', missing: 'pasta não encontrada', idle: 'sem missão ativa' }[p.status]
-    html = `<b>${esc(p.name)}</b><span class="dim">${state}${g ? `\ngrupo ${esc(g.name)}` : ''}\nclique direito: foto e grupo</span>`
+    html = `<b>${esc(p.name)}</b><span class="dim">${state}</span>`
   } else if (el.dataset.folder || el.dataset.head) {
-    const g = getGroup(el.dataset.folder || el.dataset.head)
-    const names = g.items.slice(0, 6).map((id) => P[id].name)
-    if (g.items.length > 6) names.push(`+${g.items.length - 6}`)
-    html = `<b>${esc(g.name.toUpperCase())}</b><span class="dim">${esc(names.join(', '))}\n${g.open ? 'clique: fechar' : 'clique: abrir'} · clique direito: renomear</span>`
+    // só o nome do grupo (pedido do dono, 2026-09-29: o resto era poluição)
+    html = `<b>${esc(getGroup(el.dataset.folder || el.dataset.head).name.toUpperCase())}</b>`
   } else return
   tip.innerHTML = html
   const r = el.getBoundingClientRect()
