@@ -261,14 +261,14 @@
   flex-shrink: 0;
 }
 
-/* A LUZ DO DISCORD (medida no recorte do dono): o fundo da pasta é MAIS
-   CLARO que as miniaturas — o vão entre elas vira um contorno claro. */
+/* a pasta é um tom acima do painel — a mesma distância que o Discord guarda
+   entre a pasta e o fundo (medida no desenho do dono, 2026-09-29) */
 .rail-item.rail-folder {
-  background: #413d35;
+  background: #33312c;
 }
 
 .rail-item.rail-folder.has-hue {
-  background: hsl(var(--g-hue) 18% 28%);
+  background: hsl(var(--g-hue) 16% 20%);
 }
 
 /* pasta fechada que guarda o universo aberto: pílula mais curta (Discord) */
@@ -290,6 +290,11 @@
    │ miniaturas mora SÓ neste bloco (e em RailMini/RailFolderGrid, em      │
    │ RailGroupFolder.tsx). Nenhum comportamento depende destas regras.     │
    └──────────────────────────────────────────────────────────────────────┘ */
+/* GEOMETRIA DO DISCORD (medida pixel a pixel no desenho do dono): as quatro
+   miniaturas desenham JUNTAS o contorno da pasta — o canto de FORA de cada
+   uma é concêntrico com a curva da pasta (raio 16 − respiro 4 ≈ 11) e os
+   três de dentro são quase retos. A miniatura é o ícone do universo em
+   escala: mesma cor (ou a foto) do botão grande do rail. */
 .rf-grid {
   display: grid;
   grid-template-columns: repeat(2, 18px);
@@ -301,11 +306,16 @@
   display: grid;
   place-items: center;
   overflow: hidden;
-  border-radius: 7px;
-  background: hsl(var(--card-hue, 30) 30% 18%);
+  border-radius: 3px;
+  background: hsl(var(--card-hue, 30) 30% 26%);
   color: var(--panel-ink);
   font: 700 8px/1 var(--mono);
 }
+
+.rf-mini:nth-child(1) { border-top-left-radius: 11px; }
+.rf-mini:nth-child(2) { border-top-right-radius: 11px; }
+.rf-mini:nth-child(3) { border-bottom-left-radius: 11px; }
+.rf-mini:nth-child(4) { border-bottom-right-radius: 11px; }
 
 .rf-mini img {
   width: 100%;
@@ -319,7 +329,7 @@
 }
 
 .rf-mini.more {
-  background: rgba(20, 18, 15, 0.55);
+  background: rgba(239, 232, 216, 0.08);
   color: var(--panel-ink-2);
 }
 
@@ -378,8 +388,17 @@
   color: hsl(var(--g-hue) 62% 70%);
 }
 
+/* hover do cabeçalho = o do Discord (recorte do dono, 2026-09-29): um
+   quadrado arredondado do tamanho do botão, UM tom acima da cápsula — sem
+   pulo e sem trocar o raio; a dica sai à direita (data-tip-side) */
 .rail-item.rail-group-head:hover {
-  background: rgba(239, 232, 216, 0.06);
+  background: rgba(239, 232, 216, 0.05);
+  border-radius: 16px;
+  transform: none;
+}
+
+.rail-group.has-hue .rail-item.rail-group-head:hover {
+  background: hsl(var(--g-hue) 20% 25%);
 }
 
 .rail-group-head svg {
@@ -632,11 +651,11 @@ body.rail-dragging * {
   border-radius: 20px;
   display: grid;
   place-items: center;
-  background: #413d35;
+  background: #33312c;
 }
 
 .rail-gs-folder.has-hue {
-  background: hsl(var(--g-hue) 18% 28%);
+  background: hsl(var(--g-hue) 16% 20%);
 }
 
 /* a grade da folha é a do rail, maior */
@@ -647,9 +666,14 @@ body.rail-dragging * {
 }
 
 .rail-gs-folder .rf-mini {
-  border-radius: 10px;
+  border-radius: 4px;
   font-size: 11px;
 }
+
+.rail-gs-folder .rf-mini:nth-child(1) { border-top-left-radius: 15px; }
+.rail-gs-folder .rf-mini:nth-child(2) { border-top-right-radius: 15px; }
+.rail-gs-folder .rf-mini:nth-child(3) { border-bottom-left-radius: 15px; }
+.rail-gs-folder .rf-mini:nth-child(4) { border-bottom-right-radius: 15px; }
 
 .rail-gs-name {
   width: 100%;

@@ -161,7 +161,7 @@ export function RailGroupFolder({
         aria-expanded={false}
         aria-label={`Grupo ${group.name}, ${universesLabel(group.projectIds.length)}${signal ? ` — ${SIGNAL_LABEL[signal]}` : ''}`}
         // hover da pasta = SÓ o nome do grupo (pedido do dono, 2026-09-29)
-        data-tip={tipsOff ? undefined : group.name.toLocaleUpperCase('pt-BR')}
+        data-tip-side="right" data-tip={tipsOff ? undefined : group.name.toLocaleUpperCase('pt-BR')}
         onClick={() => onOpen(group.id)}
       >
         <RailFolderGrid projectIds={group.projectIds} activeProjectId={activeProjectId} />
@@ -210,7 +210,7 @@ export function RailGroupCapsule({
           data-head={group.id}
           aria-expanded={true}
           aria-label={`Grupo ${group.name}, ${universesLabel(group.projectIds.length)} — fechar`}
-          data-tip={tipsOff ? undefined : group.name.toLocaleUpperCase('pt-BR')}
+          data-tip-side="right" data-tip={tipsOff ? undefined : group.name.toLocaleUpperCase('pt-BR')}
           onClick={() => onClose(group.id)}
         >
           {FOLDER_ICON}

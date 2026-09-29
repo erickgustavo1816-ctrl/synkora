@@ -74,7 +74,7 @@ function RailItem({ projectId, groupId, tipsOff, isDragging, dropCombine }: Rail
       data-gid={groupId ?? undefined}
       data-pid={project.id}
       aria-label={`${project.name} — ${missing ? 'pasta não encontrada' : activityLabel}`}
-      data-tip={tipsOff ? undefined : railProjectTip({ name: project.name, missing, attention, activityLabel })}
+      data-tip-side="right" data-tip={tipsOff ? undefined : railProjectTip({ name: project.name, missing, attention, activityLabel })}
       // pasta morta: abrir o universo só geraria panes quebrados — vai para a
       // Home, onde o card oferece a relocação
       onClick={() => openProject(missing ? null : project.id)}
@@ -85,17 +85,17 @@ function RailItem({ projectId, groupId, tipsOff, isDragging, dropCombine }: Rail
         <span className="rail-initials">{initialsOf(project.name)}</span>
       )}
       {attention && !missing && !activity && (
-        <span className="rail-ask-dot" data-tip={tipsOff ? undefined : 'Um agente precisa de você'} />
+        <span className="rail-ask-dot" data-tip-side="right" data-tip={tipsOff ? undefined : 'Um agente precisa de você'} />
       )}
       {activity && !missing && (
         <span
           className="rail-mission-dot"
           data-activity={activity}
-          data-tip={tipsOff ? undefined : activityLabel}
+          data-tip-side="right" data-tip={tipsOff ? undefined : activityLabel}
           aria-hidden="true"
         />
       )}
-      {missing && <span className="rail-warn-dot" data-tip={tipsOff ? undefined : 'Pasta não encontrada'} />}
+      {missing && <span className="rail-warn-dot" data-tip-side="right" data-tip={tipsOff ? undefined : 'Pasta não encontrada'} />}
     </button>
   )
 }
@@ -345,7 +345,7 @@ export default function ProjectRail(): React.JSX.Element {
       <button
         type="button"
         className={`rail-item rail-home${appPage === 'workspace' && openProjectId === null ? ' active' : ''}`}
-        data-tip="Home — universos"
+        data-tip-side="right" data-tip="Home — universos"
         aria-label="Home — universos"
         onClick={() => openProject(null)}
       >
@@ -406,7 +406,7 @@ export default function ProjectRail(): React.JSX.Element {
         <button
           type="button"
           className={`rail-item rail-add${adding ? ' busy' : ''}`}
-          data-tip={'Novo universo\npasta do projeto · link do GitHub opcional'}
+          data-tip-side="right" data-tip={'Novo universo\npasta do projeto · link do GitHub opcional'}
           aria-label="Novo universo"
           onClick={() => setAdding(true)}
         >

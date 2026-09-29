@@ -14,6 +14,9 @@ import { createPortal } from 'react-dom'
 interface TipState {
   text: string
   anchor: DOMRect
+  /** `data-tip-side="right"`: ao lado (o rail, como no Discord — embaixo a
+   *  dica cobriria o nome escrito sob a pasta); o padrão é embaixo/em cima */
+  side: 'right' | 'auto'
 }
 
 const SHOW_DELAY = 350
@@ -59,7 +62,7 @@ export default function TooltipLayer(): React.JSX.Element | null {
           })
           return
         }
-        setTip({ text, anchor })
+        setTip({ text, anchor, side: el.getAttribute('data-tip-side') === 'right' ? 'right' : 'auto' })
       }, SHOW_DELAY)
     }
     const onOut = (e: MouseEvent): void => {
@@ -106,6 +109,15 @@ export default function TooltipLayer(): React.JSX.Element | null {
     const w = el.offsetWidth
     const h = el.offsetHeight
     const margin = 8
+    if (tip.side === 'right') {
+      const y = Math.max(margin, Math.min(anchor.top + anchor.height / 2 - h / 2, window.innerHeight - h - margin))
+      el.style.left = `${Math.round(anchor.right + 10)}px`
+      el.style.top = `${Math.round(y)}px`
+      el.dataset.place = 'right'
+      const arrowY = anchor.top + anchor.height / 2 - y
+      el.style.setProperty('--tip-arrow-y', `${Math.round(Math.max(8, Math.min(arrowY, h - 8)))}px`)
+      return
+    }
     let x = anchor.left + anchor.width / 2 - w / 2
     x = Math.max(margin, Math.min(x, window.innerWidth - w - margin))
     const below = anchor.bottom + 7

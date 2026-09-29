@@ -27,14 +27,22 @@ svg.hb-ico {
   z-index: 5;
   margin: 0 -40px;
   padding: 12px 40px 0;
-  transition:
-    background var(--motion-base) ease,
-    box-shadow var(--motion-base) ease;
+  /* SEM transição de fundo: a cor interpolava de transparente a papel e, na
+     altura exata em que a barra gruda, o card de baixo aparecia através dela
+     (o clarão do vídeo do dono, 2026-09-29) */
+  transition: box-shadow var(--motion-base) ease;
 }
 
 /* papel e filete SÓ quando gruda (sem blur, sem vidro) */
+/* grudada, a faixa usa o MESMO papel da Home (.home-paper em global.css:
+   papel + os dois focos) preso à viewport — papel liso virava uma tira de
+   outro tom sobre o degradê (pedido do dono, 2026-09-29) */
 .hb.stuck {
-  background: var(--paper);
+  background:
+    radial-gradient(1100px 620px at 18% -10%, rgba(217, 108, 63, 0.05), transparent 65%),
+    radial-gradient(900px 560px at 92% 108%, rgba(38, 32, 25, 0.045), transparent 62%),
+    var(--paper);
+  background-attachment: fixed;
   box-shadow: 0 1px 0 var(--line);
 }
 
