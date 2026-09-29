@@ -356,21 +356,26 @@
   .home-scroll { position: absolute; inset: 0; overflow-y: auto; scrollbar-gutter: stable; }
   .home-inner { max-width: 1180px; margin: 0 auto; padding: 34px 40px 80px; }
 
-  .home-hero { display: flex; align-items: center; gap: 14px; margin-bottom: 30px; }
+  /* hero: cópia fiel de global.css (.home-hero / .hero-sigil / .brand / .hero-vitals) */
+  .home-hero { display: flex; align-items: center; gap: 20px; margin-bottom: 36px; }
   .hero-sigil {
-    width: 44px; height: 44px; display: grid; place-items: center;
-    border: 1.5px solid var(--ink); border-radius: 12px; color: var(--accent);
+    display: grid; place-items: center; width: 46px; height: 46px; flex: none;
+    border-radius: 9px; color: var(--accent); background: var(--panel); border: 1px solid #1c1a16;
   }
-  .hero-sigil svg { width: 22px; height: 22px; }
-  .brand { font-size: 20px; font-weight: 700; letter-spacing: 0.34em; }
-  .brand-sub { font-size: 10.5px; color: var(--ink-2); letter-spacing: 0.08em; }
-  .hero-vitals { margin-left: auto; display: flex; }
+  .brand { font-size: 30px; font-weight: 700; letter-spacing: 0.34em; line-height: 1.1; color: var(--ink); }
+  .brand-sub { color: var(--ink-3); font-size: 11.5px; margin-top: 5px; letter-spacing: 0.08em; }
+  .hero-vitals {
+    display: flex; align-items: stretch; margin-left: auto;
+    border: 1px solid var(--line-strong); border-radius: 12px;
+    background: rgba(246, 241, 230, 0.72); overflow: hidden;
+  }
   .vital {
-    display: flex; align-items: baseline; gap: 7px; padding: 6px 16px;
-    border-left: 1px solid var(--line-strong); font-size: 10.5px; color: var(--ink-2);
+    display: flex; flex-direction: column; align-items: flex-start; gap: 3px;
+    min-width: 118px; padding: 11px 16px; border-left: 1px solid var(--line);
   }
-  .vital:first-child { border-left: 0; }
-  .vital b { font-size: 18px; color: var(--ink); font-variant-numeric: tabular-nums; }
+  .vital:first-child { border-left: none; }
+  .vital b { font-size: 19px; line-height: 1; color: var(--ink); }
+  .vital span { font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-3); }
 
   .section-label {
     font-size: 10.5px;
@@ -379,141 +384,226 @@
     color: var(--ink-3);
   }
 
-  /* ---------- NOVO: a barra de filtros ----------
-     Uma linha de controles + uma linha de facetas. Controles nativos (select,
-     input) vestidos de papel: ferramenta, não fantasia. */
-  .hb { position: sticky; top: 0; z-index: 5; margin: 0 -40px; padding: 14px 40px 12px; background: color-mix(in srgb, var(--paper) 92%, transparent); backdrop-filter: blur(6px); border-bottom: 1px solid transparent; transition: border-color var(--motion-base) ease; }
-  .hb.stuck { border-bottom-color: var(--line); }
-  .hb-top { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; }
-  .hb-top .hb-groups { color: var(--ink-3); font-size: 10.5px; letter-spacing: 0.08em; }
-  .hb-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  /* ---------- NOVO: o índice (busca · filtrar · ordem · abas de grupo) ----------
+     UM campo e três controles no idioma de botão da casa; as abas dos grupos
+     sentam numa régua que substitui o rótulo "universos · N". Estado e data
+     moram dentro de FILTRAR — o que está ativo vira etiqueta removível, e só
+     então aparece. Sem caixa rotulada, sem sopa de pílulas. */
+  .hb {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    margin: 0 -40px;
+    padding: 12px 40px 0;
+    transition: background var(--motion-base) ease, box-shadow var(--motion-base) ease;
+  }
+  .hb.stuck { background: var(--paper); box-shadow: 0 1px 0 var(--line); }
+  .hb-row { display: flex; align-items: center; gap: 8px; }
 
   .hb-search {
-    flex: 1 1 280px;
-    max-width: 440px;
+    flex: 1;
+    min-width: 0;
     display: flex;
     align-items: center;
-    gap: 8px;
-    height: 34px;
-    padding: 0 8px 0 11px;
+    gap: 9px;
+    height: 36px;
+    padding: 0 8px 0 12px;
     border: 1.5px solid var(--line-strong);
     border-radius: 7px;
     background: var(--card);
     color: var(--ink-3);
-    transition: border-color var(--motion-fast) ease, box-shadow var(--motion-fast) ease;
+    transition: border-color var(--motion-fast) ease;
   }
-  .hb-search:focus-within { border-color: var(--ink); box-shadow: 0 0 0 3px rgba(217, 108, 63, 0.16); color: var(--ink-2); }
+  .hb-search:hover { border-color: var(--ink-3); }
+  .hb-search:focus-within { border-color: var(--ink); color: var(--ink-2); }
   .hb-search input {
     flex: 1; min-width: 0; border: 0; outline: none; background: transparent;
-    color: var(--ink); font-size: 12px;
+    color: var(--ink); font-size: 12.5px;
   }
   .hb-search input::placeholder { color: var(--ink-3); }
+  .hb-search input::-webkit-search-cancel-button { display: none; }
   .hb-kbd {
-    flex: none; min-width: 18px; height: 18px; display: grid; place-items: center;
-    border: 1px solid var(--line-strong); border-radius: 4px; font-size: 10px; color: var(--ink-3);
+    flex: none; min-width: 20px; height: 20px; display: grid; place-items: center;
+    border: 1px solid var(--line-strong); border-radius: 4px; font-size: 10.5px; color: var(--ink-3);
   }
   .hb-clear {
-    flex: none; width: 22px; height: 22px; display: grid; place-items: center;
+    flex: none; width: 24px; height: 24px; display: grid; place-items: center;
     border: 0; border-radius: 5px; background: transparent; color: var(--ink-2); cursor: pointer;
   }
   .hb-clear:hover { background: var(--paper-2); color: var(--ink); }
 
-  .hb-field {
-    display: inline-flex;
-    align-items: center;
-    height: 34px;
-    border: 1.5px solid var(--line-strong);
-    border-radius: 7px;
-    background: var(--card);
-    transition: border-color var(--motion-fast) ease;
+  .hb-ctl { height: 36px; flex: none; }
+  .hb-ctl .v { color: var(--ink); }
+  .hb-ctl[aria-expanded='true'] { border-color: var(--ink); color: var(--ink); }
+  .hb-ctl .chev { transition: rotate var(--motion-base) var(--ease-out); }
+  .hb-ctl[aria-expanded='true'] .chev { rotate: 180deg; }
+  .hb-badge {
+    min-width: 17px; height: 17px; padding: 0 4px; border-radius: 999px;
+    display: grid; place-items: center;
+    background: var(--accent); color: #fff; font-size: 10px; letter-spacing: 0;
   }
-  .hb-field:focus-within { border-color: var(--ink); }
-  .hb-field > span {
-    padding: 0 2px 0 10px;
-    font-size: 9px;
-    font-weight: 700;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-    color: var(--ink-3);
+  .hb-seg {
+    display: inline-flex; flex: none; height: 36px;
+    border: 1.5px solid var(--line-strong); border-radius: 6px; overflow: hidden;
   }
-  .hb-field select {
-    height: 100%;
-    border: 0;
-    outline: none;
-    background: transparent url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M3 4.5 6 7.5 9 4.5' fill='none' stroke='%235f574a' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat right 8px center / 12px;
-    padding: 0 28px 0 6px;
-    color: var(--ink);
-    font-size: 11.5px;
-    appearance: none;
-    cursor: pointer;
+  .hb-seg button {
+    width: 36px; display: grid; place-items: center;
+    border: 0; background: transparent; color: var(--ink-3); cursor: pointer;
+    transition: background var(--motion-fast) ease, color var(--motion-fast) ease;
   }
-  .hb-field.set { border-color: var(--ink-2); }
+  .hb-seg button + button { border-left: 1px solid var(--line-strong); }
+  .hb-seg button:hover { color: var(--ink); }
+  .hb-seg button[aria-pressed='true'] { background: var(--ink); color: var(--paper); }
+  .hb-seg svg.i { width: 15px; height: 15px; }
 
-  .hb-switch {
+  /* as abas: tinta apagada em repouso, tinta cheia + filete de acento na
+     escolhida. A régua é o inset do próprio trilho (overflow-x corta filho
+     que pendura para fora); o filete da aba escolhida cobre a régua. */
+  .hb-tabs-wrap { margin-top: 16px; }
+  .hb-tabs {
+    display: flex;
+    gap: 28px;
+    overflow-x: auto;
+    scrollbar-width: none;
+    box-shadow: inset 0 -1px 0 var(--line-strong);
+  }
+  .hb-tabs::-webkit-scrollbar { display: none; }
+  .hb-tabs-wrap.fade-r .hb-tabs { mask-image: linear-gradient(to right, #000 calc(100% - 40px), transparent); }
+  .hb-tabs-wrap.fade-l .hb-tabs { mask-image: linear-gradient(to right, transparent, #000 40px); }
+  .hb-tabs-wrap.fade-l.fade-r .hb-tabs { mask-image: linear-gradient(to right, transparent, #000 40px, #000 calc(100% - 40px), transparent); }
+  .hb-tab {
+    position: relative;
+    flex: none;
     display: inline-flex;
     align-items: center;
     gap: 8px;
-    height: 34px;
-    padding: 0 12px 0 9px;
-    border: 1.5px solid var(--line-strong);
-    border-radius: 7px;
-    background: var(--card);
-    color: var(--ink-2);
-    font-size: 11px;
+    padding: 10px 0 13px;
+    border: 0;
+    background: none;
+    color: var(--ink-3);
+    font: 700 10.5px/1 var(--mono);
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    white-space: nowrap;
     cursor: pointer;
+    transition: color var(--motion-fast) ease;
   }
-  .hb-switch i {
-    position: relative; width: 26px; height: 15px; border-radius: 999px;
-    background: var(--line-strong); transition: background var(--motion-fast) ease;
+  .hb-tab:hover { color: var(--ink-2); }
+  .hb-tab[aria-selected='true'] { color: var(--ink); }
+  .hb-tab[aria-selected='true']::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 2px;
+    border-radius: 2px 2px 0 0;
+    background: var(--accent);
   }
-  .hb-switch i::after {
-    content: ''; position: absolute; top: 2px; left: 2px; width: 11px; height: 11px; border-radius: 50%;
-    background: var(--card); transition: translate var(--motion-base) var(--ease-out);
+  .hb-tab .n { font-weight: 400; letter-spacing: 0.04em; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+  .hb-tab.zero { color: var(--line-strong); }
+  .hb-tab.zero .n { color: var(--line-strong); }
+  .hb-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+  .hb-tab .tab-glyph {
+    width: 14px; height: 14px; flex: none;
+    display: grid; grid-template-columns: repeat(2, 5px); grid-template-rows: repeat(2, 5px); gap: 1.5px;
+    place-content: center;
+    border-radius: 4px; background: var(--paper-2); box-shadow: inset 0 0 0 1px var(--line-strong);
   }
-  .hb-switch[aria-checked='true'] { color: var(--ink); border-color: var(--ink-2); }
-  .hb-switch[aria-checked='true'] i { background: var(--ink); }
-  .hb-switch[aria-checked='true'] i::after { translate: 11px 0; }
-  .hb-switch:focus-visible, .chip:focus-visible, .hg-name:focus-visible, .hg-caret:focus-visible, .uc-menu-trigger:focus-visible, .hb-clear:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .hb-tab .tab-glyph.has-hue { background: hsl(var(--g-hue) 46% 86%); box-shadow: inset 0 0 0 1px hsl(var(--g-hue) 34% 62%); }
+  .hb-tab .tab-glyph i { border-radius: 1.5px; background: hsl(var(--card-hue, 30) 38% 48%); }
+  .hb-tab.zero .tab-glyph { opacity: 0.45; }
 
-  .hb-chips { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
-  .hb-div { width: 1px; height: 18px; margin: 0 6px; background: var(--line-strong); }
-  .chip {
-    display: inline-flex;
+  /* filtros ativos: só existem quando existem */
+  .hb-active {
+    display: flex;
     align-items: center;
     gap: 6px;
-    height: 26px;
-    padding: 0 10px;
-    border: 1px solid var(--line-strong);
-    border-radius: 999px;
-    background: transparent;
-    color: var(--ink-2);
+    flex-wrap: wrap;
+    padding: 11px 0 1px;
     font-size: 10.5px;
-    letter-spacing: 0.02em;
-    cursor: pointer;
-    transition: background var(--motion-fast) ease, color var(--motion-fast) ease, border-color var(--motion-fast) ease;
+    color: var(--ink-2);
   }
-  .chip:hover { border-color: var(--ink-2); color: var(--ink); }
-  .chip[aria-pressed='true'], .chip[aria-checked='true'] { background: var(--ink); border-color: var(--ink); color: var(--paper); }
-  .chip .n { color: var(--ink-3); font-variant-numeric: tabular-nums; }
-  .chip[aria-pressed='true'] .n, .chip[aria-checked='true'] .n { color: var(--panel-ink-2); }
-  .chip .sw { width: 8px; height: 8px; border-radius: 2.5px; background: var(--ink-3); }
-  .chip .sw.hue { background: hsl(var(--g-hue) 46% 50%); }
-  .chip .sw.none { background: transparent; border: 1px dashed var(--ink-3); }
-  .chip .dot { width: 7px; height: 7px; border-radius: 50%; }
+  .tok {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 24px;
+    padding: 0 3px 0 9px;
+    border: 1px solid var(--line-strong);
+    border-radius: 5px;
+    background: var(--card);
+    color: var(--ink);
+    font-size: 10.5px;
+  }
+  .tok .dot { width: 6px; height: 6px; border-radius: 50%; }
+  .tok button {
+    width: 18px; height: 18px; display: grid; place-items: center;
+    border: 0; border-radius: 4px; background: none; color: var(--ink-3); cursor: pointer;
+  }
+  .tok button:hover { background: var(--paper-2); color: var(--ink); }
+  .tok button svg.i { width: 11px; height: 11px; }
+  .hb-active .sum { margin-left: auto; white-space: nowrap; }
+  .hb-active .sum b { color: var(--ink); }
   .dot.run { background: var(--ok); }
   .dot.attn { background: var(--accent); }
   .dot.active { background: var(--ink-2); }
   .dot.miss { background: var(--err); }
-
-  .hb-result {
-    display: flex; align-items: center; gap: 10px; margin-top: 10px;
-    font-size: 10.5px; color: var(--ink-2);
-  }
-  .hb-result b { color: var(--ink); }
   .linkish {
     border: 0; background: none; padding: 0; color: var(--accent-deep);
     font-size: 10.5px; text-decoration: underline; text-underline-offset: 3px; cursor: pointer;
   }
+
+  /* o popover de FILTRAR / ORDEM: papel com borda de tinta, como o menu do card */
+  .pop {
+    position: fixed;
+    z-index: 300;
+    width: 262px;
+    padding: 5px;
+    border: 1.5px solid var(--ink);
+    border-radius: 8px;
+    background: var(--card);
+    box-shadow: var(--shadow);
+    font-size: 11.5px;
+    animation: pop-in 140ms var(--ease-out) both;
+  }
+  .pop-label {
+    padding: 8px 9px 5px;
+    font-size: 8.5px;
+    font-weight: 700;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+  .pop-label + .pop-opt { margin-top: 0; }
+  .pop-opt {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 6px 9px;
+    border: 0;
+    border-radius: 5px;
+    background: transparent;
+    color: var(--ink);
+    font-size: 11.5px;
+    text-align: left;
+    cursor: pointer;
+  }
+  .pop-opt:hover, .pop-opt:focus-visible { background: var(--paper-2); outline: none; }
+  .pop-opt .box {
+    width: 13px; height: 13px; flex: none; display: grid; place-items: center;
+    border: 1.5px solid var(--ink-3); border-radius: 3px; color: var(--paper);
+  }
+  .pop-opt .box svg { width: 9px; height: 9px; opacity: 0; }
+  .pop-opt[aria-checked='true'] .box { background: var(--ink); border-color: var(--ink); }
+  .pop-opt[aria-checked='true'] .box svg { opacity: 1; }
+  .pop-opt .box.radio { border-radius: 50%; }
+  .pop-opt[aria-checked='true'] .box.radio { background: transparent; border-color: var(--ink); box-shadow: inset 0 0 0 2.5px var(--card), inset 0 0 0 7px var(--ink); }
+  .pop-opt .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+  .pop-opt .n { margin-left: auto; color: var(--ink-3); font-size: 10px; font-variant-numeric: tabular-nums; }
+  .pop-sep { height: 1px; margin: 5px 4px; background: var(--line); }
+  .pop-foot { display: flex; align-items: center; justify-content: space-between; padding: 6px 5px 3px; }
 
   /* ---------- NOVO: seções por grupo ---------- */
   .hg { margin-top: 26px; }
@@ -820,7 +910,7 @@
 <div class="app">
   <nav class="project-rail" id="rail" aria-label="Universos">
     <button class="rail-item rail-home" id="railHome" aria-label="Home — universos">
-      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="3.2"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/></svg>
+      <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><ellipse cx="12" cy="12" rx="10.5" ry="5.2" transform="rotate(-28 12 12)" fill="none" stroke="currentColor" stroke-width="1.1" opacity="0.55"/><path d="M12 3.2c.55 4.2 1.9 6.05 6.1 6.6-4.2.55-5.55 2.4-6.1 6.6-.55-4.2-1.9-6.05-6.1-6.6 4.2-.55 5.55-2.4 6.1-6.6Z" fill="currentColor" transform="translate(0 2.2)"/></svg>
     </button>
     <div class="rail-sep"></div>
     <div class="rail-list" id="railList"></div>
@@ -832,56 +922,48 @@
     <div class="home-scroll" id="homeScroll">
       <div class="home-inner">
         <header class="home-hero">
-          <span class="hero-sigil"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="3.2"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/></svg></span>
+          <span class="hero-sigil"><svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><ellipse cx="12" cy="12" rx="10.5" ry="5.2" transform="rotate(-28 12 12)" fill="none" stroke="currentColor" stroke-width="1.1" opacity="0.55"/><path d="M12 3.2c.55 4.2 1.9 6.05 6.1 6.6-4.2.55-5.55 2.4-6.1 6.6-.55-4.2-1.9-6.05-6.1-6.6 4.2-.55 5.55-2.4 6.1-6.6Z" fill="currentColor" transform="translate(0 2.2)"/></svg></span>
           <div>
             <div class="brand">SYNKORA</div>
             <div class="brand-sub">ambiente de desenvolvimento agêntico</div>
           </div>
           <div class="hero-vitals">
-            <span class="vital"><b id="vUniverses">14</b> universos</span>
-            <span class="vital"><b>3</b> contas</span>
-            <span class="vital"><b>6</b> painéis vivos em 2 universos</span>
+            <span class="vital"><b>14</b><span>universos</span></span>
+            <span class="vital"><b>3</b><span>contas</span></span>
+            <span class="vital"><b>6</b><span>painéis vivos em 2 universos</span></span>
           </div>
         </header>
 
         <div class="hb" id="hb">
-          <div class="hb-top">
-            <span class="section-label" id="hbTitle">universos · 14</span>
-            <span class="hb-groups" id="hbGroups"></span>
-          </div>
           <div class="hb-row">
             <label class="hb-search">
               <svg class="i" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.6"/><path d="m10.4 10.4 3.4 3.4"/></svg>
-              <input id="q" type="search" placeholder="buscar por nome, pasta ou grupo" autocomplete="off" aria-label="Buscar universo">
-              <button class="hb-clear" id="qClear" aria-label="Limpar busca" hidden><svg class="i" viewBox="0 0 16 16"><path d="m4.5 4.5 7 7M11.5 4.5l-7 7"/></svg></button>
+              <input id="q" type="search" placeholder="buscar universo, pasta ou grupo" autocomplete="off" aria-label="Buscar universo">
+              <button class="hb-clear" id="qClear" type="button" aria-label="Limpar busca" hidden><svg class="i" viewBox="0 0 16 16"><path d="m4.5 4.5 7 7M11.5 4.5l-7 7"/></svg></button>
               <span class="hb-kbd" id="qKbd" aria-hidden="true">/</span>
             </label>
-            <label class="hb-field" id="fPeriod"><span>criados</span>
-              <select id="period" aria-label="Criados em">
-                <option value="any">em qualquer data</option>
-                <option value="7">nos últimos 7 dias</option>
-                <option value="30">nos últimos 30 dias</option>
-                <option value="90">nos últimos 90 dias</option>
-                <option value="year">em 2026</option>
-              </select>
-            </label>
-            <label class="hb-field" id="fSort"><span>ordem</span>
-              <select id="sort" aria-label="Ordenar por">
-                <option value="rail">a do rail</option>
-                <option value="activity">atividade recente</option>
-                <option value="newest">mais novos primeiro</option>
-                <option value="oldest">mais antigos primeiro</option>
-                <option value="name">nome (A–Z)</option>
-              </select>
-            </label>
-            <button class="hb-switch" id="grouped" role="switch" aria-checked="true"><i></i>separar por grupo</button>
+            <button class="btn ghost hb-ctl" id="btnFilter" type="button" aria-haspopup="dialog" aria-expanded="false">
+              <svg class="i" viewBox="0 0 16 16"><path d="M2.5 4h11M4.5 8h7M6.5 12h3"/></svg>
+              filtrar
+              <span class="hb-badge" id="filterBadge" hidden></span>
+            </button>
+            <button class="btn ghost hb-ctl" id="btnSort" type="button" aria-haspopup="menu" aria-expanded="false">
+              ordem <span class="v" id="sortLabel">do rail</span>
+              <svg class="i chev" viewBox="0 0 16 16"><path d="m4 6 4 4 4-4"/></svg>
+            </button>
+            <div class="hb-seg" role="group" aria-label="Visualização">
+              <button id="viewGrouped" type="button" aria-pressed="true" aria-label="Separar por grupo" title="Separar por grupo">
+                <svg class="i" viewBox="0 0 16 16"><path d="M2.5 3h4M2.5 5.5h11M2.5 8h11M2.5 10.5h4M2.5 13h11"/></svg>
+              </button>
+              <button id="viewFlat" type="button" aria-pressed="false" aria-label="Todos juntos" title="Todos juntos">
+                <svg class="i" viewBox="0 0 16 16"><rect x="2.5" y="2.5" width="4.5" height="4.5" rx="1"/><rect x="9" y="2.5" width="4.5" height="4.5" rx="1"/><rect x="2.5" y="9" width="4.5" height="4.5" rx="1"/><rect x="9" y="9" width="4.5" height="4.5" rx="1"/></svg>
+              </button>
+            </div>
           </div>
-          <div class="hb-chips">
-            <div class="hb-facet" id="facetGroups" role="radiogroup" aria-label="Grupo" style="display:contents"></div>
-            <span class="hb-div" aria-hidden="true"></span>
-            <div class="hb-facet" id="facetStates" aria-label="Estado" style="display:contents"></div>
+          <div class="hb-tabs-wrap" id="tabsWrap">
+            <div class="hb-tabs" id="tabs" role="tablist" aria-label="Grupos"></div>
           </div>
-          <div class="hb-result" id="hbResult" hidden></div>
+          <div class="hb-active" id="hbActive" hidden></div>
         </div>
 
         <div id="homeBody"></div>
@@ -898,15 +980,19 @@
       <li><b>Arraste um universo para fora</b> da cápsula (abaixo dela) para tirá-lo do grupo. O grupo só some quando fica vazio.</li>
       <li><b>Clique direito</b> na pasta: renomear, cor, desfazer grupo.</li>
       <li><b>Clique direito num universo</b>: definir foto e mover para um grupo sem arrastar.</li>
-      <li>Na Home, tecle <b>/</b> para buscar; combine grupo, estado, data e ordem. Clique no <b>nome de uma seção</b> para renomear o grupo ali mesmo.</li>
+      <li>Na Home, tecle <b>/</b> para buscar. As <b>abas</b> escolhem o grupo (clique direito numa aba abre o menu do grupo); <b>FILTRAR</b> guarda estado e data de criação; <b>ORDEM</b> ordena. O que estiver ativo vira etiqueta removível.</li>
+      <li>Clique no <b>nome de uma seção</b> para renomear o grupo ali mesmo.</li>
     </ol>
     <h2>Para você decidir</h2>
     <ul>
       <li><b>Nome sob a pasta</b> no rail (toggle lá em cima): ligado por padrão? Vira uma opção em Ajustes.</li>
-      <li><b>Cor por grupo</b> (7 opções, incluindo neutra): quer, ou só o nome basta?</li>
-      <li><b>Clique direito no rail</b> vira menu. Hoje ele já abre a troca de foto direto; a foto passa a ser um item do menu.</li>
       <li>Na Home, mover de grupo é pelo <b>··· do card</b>; arrastar cards na Home fica para uma próxima.</li>
-      <li>Filtros, ordem e "separar por grupo" são <b>lembrados</b> entre sessões; o texto da busca não.</li>
+      <li>Aba, filtros, ordem e visão são <b>lembrados</b> entre sessões; o texto da busca não.</li>
+    </ul>
+    <h2>Já decidido</h2>
+    <ul>
+      <li><b>Cor opcional</b> por grupo (neutra por padrão).</li>
+      <li><b>Clique direito</b> no rail vira menu (foto, mover para grupo, tirar do grupo).</li>
     </ul>
     <h2>Fora do mockup</h2>
     <ul>
@@ -1596,7 +1682,7 @@ function closeSheet() {
 }
 
 // ————————————————————————————————————————————————————————————————
-// HOME — filtros e seções
+// HOME — o índice: busca, filtrar, ordem, abas de grupo e seções
 // ————————————————————————————————————————————————————————————————
 const STATES = [
   { id: 'running', label: 'rodando agora', dot: 'run', test: (p) => p.status === 'running' },
@@ -1604,6 +1690,22 @@ const STATES = [
   { id: 'active', label: 'com missão ativa', dot: 'active', test: (p) => p.missions > 0 },
   { id: 'missing', label: 'pasta sumida', dot: 'miss', test: (p) => p.status === 'missing' }
 ]
+const PERIODS = [
+  { id: 'any', label: 'em qualquer data' },
+  { id: '7', label: 'nos últimos 7 dias' },
+  { id: '30', label: 'nos últimos 30 dias' },
+  { id: '90', label: 'nos últimos 90 dias' },
+  { id: 'year', label: 'em 2026' }
+]
+const SORTS = [
+  { id: 'rail', label: 'a do rail', short: 'do rail' },
+  { id: 'activity', label: 'atividade recente', short: 'atividade' },
+  { id: 'newest', label: 'mais novos primeiro', short: 'mais novos' },
+  { id: 'oldest', label: 'mais antigos primeiro', short: 'mais antigos' },
+  { id: 'name', label: 'nome (A–Z)', short: 'a–z' }
+]
+const CHECK_SVG = '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m2.5 6.2 2.3 2.3 4.7-5"/></svg>'
+const X_SVG = '<svg class="i" viewBox="0 0 16 16"><path d="m4.5 4.5 7 7M11.5 4.5l-7 7"/></svg>'
 
 function matchesPeriod(p) {
   if (filters.period === 'any') return true
@@ -1612,20 +1714,20 @@ function matchesPeriod(p) {
   return (TODAY - created) / 86400000 <= Number(filters.period)
 }
 
-function passes(p) {
+/** tudo MENOS a aba de grupo — é daqui que saem as contagens das abas */
+function passesBase(p) {
   if (filters.q) {
     const g = groupOf(p.id)
-    const hay = fold(`${p.name} ${p.path} ${g ? g.name : ''}`)
-    if (!hay.includes(fold(filters.q))) return false
+    if (!fold(`${p.name} ${p.path} ${g ? g.name : ''}`).includes(fold(filters.q))) return false
   }
-  if (filters.group !== 'all') {
-    const g = groupOf(p.id)
-    if (filters.group === 'none' ? g : !g || g.id !== filters.group) return false
-  }
-  if (filters.states.size) {
-    if (!STATES.some((s) => filters.states.has(s.id) && s.test(p))) return false
-  }
+  if (filters.states.size && !STATES.some((s) => filters.states.has(s.id) && s.test(p))) return false
   return matchesPeriod(p)
+}
+
+function inTab(p) {
+  if (filters.group === 'all') return true
+  const g = groupOf(p.id)
+  return filters.group === 'none' ? !g : !!g && g.id === filters.group
 }
 
 function sorter() {
@@ -1700,11 +1802,13 @@ function cardHTML(p, showGroup) {
   </article>`
 }
 
+function glyphHTML(g, cls) {
+  if (!g) return `<span class="${cls} loose" aria-hidden="true"><i></i><i></i><i></i><i></i></span>`
+  return `<span class="${cls}${g.hue != null ? ' has-hue' : ''}" style="${hueVar(g.hue)}" aria-hidden="true">${g.items.slice(0, 4).map((id) => `<i style="--card-hue:${P[id].hue}"></i>`).join('')}</span>`
+}
+
 function sectionHTML(key, g, items) {
   const shut = shutSections.has(key)
-  const folder = g
-    ? `<span class="hg-folder${g.hue != null ? ' has-hue' : ''}" style="${hueVar(g.hue)}" aria-hidden="true">${g.items.slice(0, 4).map((id) => `<i style="--card-hue:${P[id].hue}"></i>`).join('')}</span>`
-    : '<span class="hg-folder loose" aria-hidden="true"><i></i><i></i><i></i><i></i></span>'
   const name = g
     ? `<button class="hg-name" data-rename="${g.id}" aria-label="Renomear grupo ${esc(g.name)}">${esc(g.name)}</button>`
     : '<span class="hg-name static">sem grupo</span>'
@@ -1713,7 +1817,7 @@ function sectionHTML(key, g, items) {
   return `<section class="hg${shut ? ' shut' : ''}" data-section="${key}">
     <div class="hg-head">
       <button class="hg-caret" data-caret="${key}" aria-expanded="${!shut}" aria-label="${shut ? 'Mostrar' : 'Esconder'} ${g ? esc(g.name) : 'sem grupo'}">${CARET_SVG}</button>
-      ${folder}${name}
+      ${glyphHTML(g, 'hg-folder')}${name}
       <span class="hg-count">${count}</span>
       <span class="hg-rule"></span>
       ${g ? `<button class="uc-menu-trigger" data-gmenu="${g.id}" aria-label="Ações do grupo ${esc(g.name)}" aria-haspopup="menu">···</button>` : ''}
@@ -1722,49 +1826,84 @@ function sectionHTML(key, g, items) {
   </section>`
 }
 
-function anyFilter() {
-  return !!filters.q || filters.group !== 'all' || filters.states.size > 0 || filters.period !== 'any'
+function renderTabs(base) {
+  const loose = layout.some((e) => e.k === 'p')
+  const tabs = [{ key: 'all', label: 'todos', n: base.length, glyph: '' }]
+  for (const g of groups()) {
+    tabs.push({ key: g.id, label: g.name, n: base.filter((p) => g.items.includes(p.id)).length, glyph: glyphHTML(g, 'tab-glyph') })
+  }
+  if (loose) tabs.push({ key: 'none', label: 'sem grupo', n: base.filter((p) => !groupOf(p.id)).length, glyph: '' })
+  const tabsEl = $('#tabs')
+  const keep = tabsEl.scrollLeft
+  tabsEl.innerHTML = tabs.map((t) => {
+    const on = filters.group === t.key
+    const zero = t.key !== 'all' && t.n === 0 && !on
+    return `<button class="hb-tab${zero ? ' zero' : ''}" role="tab" aria-selected="${on}" tabindex="${on ? 0 : -1}" data-tab="${t.key}">${t.glyph}${esc(t.label)}<span class="n">${t.n}</span></button>`
+  }).join('')
+  tabsEl.scrollLeft = keep
+  measureTabs()
 }
 
-function renderFacets() {
-  const loose = layout.filter((e) => e.k === 'p').length
-  const chips = [
-    `<button class="chip" role="radio" aria-checked="${filters.group === 'all'}" data-group="all">todos <span class="n">${PROJECTS.length}</span></button>`,
-    ...groups().map((g) => `<button class="chip" role="radio" aria-checked="${filters.group === g.id}" data-group="${g.id}"><span class="sw${g.hue != null ? ' hue' : ''}" style="${hueVar(g.hue)}"></span>${esc(g.name)} <span class="n">${g.items.length}</span></button>`),
-    loose ? `<button class="chip" role="radio" aria-checked="${filters.group === 'none'}" data-group="none"><span class="sw none"></span>sem grupo <span class="n">${loose}</span></button>` : ''
-  ]
-  $('#facetGroups').innerHTML = chips.join('')
-  $('#facetStates').innerHTML = STATES.map((s) => {
-    const n = PROJECTS.filter(s.test).length
-    return `<button class="chip" aria-pressed="${filters.states.has(s.id)}" data-state="${s.id}"><span class="dot ${s.dot}"></span>${s.label} <span class="n">${n}</span></button>`
-  }).join('')
-  const gcount = groups().length
-  $('#hbTitle').textContent = `universos · ${PROJECTS.length}`
-  $('#hbGroups').textContent = gcount ? `em ${gcount} ${gcount === 1 ? 'grupo' : 'grupos'} + ${loose} ${loose === 1 ? 'solto' : 'soltos'}` : ''
-  $('#fPeriod').classList.toggle('set', filters.period !== 'any')
-  $('#fSort').classList.toggle('set', filters.sort !== 'rail')
+function measureTabs() {
+  const t = $('#tabs')
+  const w = $('#tabsWrap')
+  w.classList.toggle('fade-l', t.scrollLeft > 1)
+  w.classList.toggle('fade-r', t.scrollLeft + t.clientWidth < t.scrollWidth - 1)
+}
+
+function activeTokens() {
+  const toks = []
+  if (filters.q) toks.push({ html: `busca “${esc(filters.q)}”`, clear: () => { setQuery('') } })
+  for (const s of STATES) {
+    if (filters.states.has(s.id)) toks.push({ html: `<span class="dot ${s.dot}"></span>${s.label}`, clear: () => filters.states.delete(s.id) })
+  }
+  if (filters.period !== 'any') {
+    toks.push({ html: `criados ${PERIODS.find((x) => x.id === filters.period).label}`, clear: () => { filters.period = 'any' } })
+  }
+  return toks
+}
+
+let tokenClears = []
+function renderActive(shownCount) {
+  const el = $('#hbActive')
+  const toks = activeTokens()
+  tokenClears = toks.map((t) => t.clear)
+  if (!toks.length) { el.hidden = true; el.innerHTML = ''; return }
+  el.hidden = false
+  el.innerHTML =
+    toks.map((t, i) => `<span class="tok">${t.html}<button type="button" data-tok="${i}" aria-label="Remover filtro">${X_SVG}</button></span>`).join('') +
+    `<span class="sum">mostrando <b>${shownCount}</b> de ${PROJECTS.length} · <button class="linkish" type="button" data-clear>limpar tudo</button></span>`
+}
+
+function renderControls() {
+  const n = filters.states.size + (filters.period !== 'any' ? 1 : 0)
+  const badge = $('#filterBadge')
+  badge.hidden = n === 0
+  badge.textContent = String(n)
+  $('#sortLabel').textContent = SORTS.find((s) => s.id === filters.sort).short
+  $('#viewGrouped').setAttribute('aria-pressed', String(filters.grouped))
+  $('#viewFlat').setAttribute('aria-pressed', String(!filters.grouped))
 }
 
 function renderHome() {
   if (filters.group !== 'all' && filters.group !== 'none' && !getGroup(filters.group)) filters.group = 'all'
-  renderFacets()
-  const shown = PROJECTS.filter(passes).sort(sorter())
-  const res = $('#hbResult')
-  if (anyFilter()) {
-    res.hidden = false
-    res.innerHTML = `<span>mostrando <b>${shown.length}</b> de ${PROJECTS.length} universos</span><button class="linkish" data-clear>limpar filtros</button>`
-  } else {
-    res.hidden = true
-    res.innerHTML = ''
-  }
+  if (filters.group === 'none' && !layout.some((e) => e.k === 'p')) filters.group = 'all'
+  const base = PROJECTS.filter(passesBase)
+  const shown = base.filter(inTab).sort(sorter())
+  renderTabs(base)
+  renderActive(shown.length)
+  renderControls()
+  if (popEl) popRefresh?.()
 
   const body = $('#homeBody')
   if (shown.length === 0) {
-    body.innerHTML = `<div class="home-empty"><strong>nenhum universo com esses filtros</strong><p>${filters.q ? `nada com “${esc(filters.q)}” no nome, na pasta ou no grupo.` : 'tente afrouxar um filtro.'}</p><button class="btn ghost tiny" data-clear>limpar filtros</button></div>`
+    const where = filters.group === 'all' ? '' : filters.group === 'none' ? ' sem grupo' : ` em ${esc(getGroup(filters.group).name)}`
+    body.innerHTML = `<div class="home-empty"><strong>nenhum universo${where} com esses filtros</strong><p>${filters.q ? `nada com “${esc(filters.q)}” no nome, na pasta ou no grupo.` : 'tente afrouxar um filtro.'}</p><button class="btn ghost tiny" data-clear>limpar filtros</button></div>`
     return
   }
-  if (!filters.grouped) {
-    body.innerHTML = `<div class="universe-grid" style="margin-top:18px">${shown.map((p) => cardHTML(p, true)).join('')}</div>`
+  // uma aba de grupo escolhida já diz o grupo: a grade vem sem cabeçalho
+  if (!filters.grouped || filters.group !== 'all') {
+    body.innerHTML = `<div class="universe-grid" style="margin-top:22px">${shown.map((p) => cardHTML(p, !filters.grouped && filters.group === 'all')).join('')}</div>`
     return
   }
   const html = []
@@ -1782,52 +1921,149 @@ function renderAll() {
   renderHome()
 }
 
-// ————— eventos da Home —————
-const q = $('#q')
-q.addEventListener('input', () => {
-  filters.q = q.value.trim()
-  $('#qClear').hidden = !q.value
-  $('#qKbd').hidden = !!q.value
+// ————— popovers FILTRAR / ORDEM —————
+let popEl = null
+let popBtn = null
+let popRefresh = null
+function closePop(focusBack) {
+  if (!popEl) return
+  popEl.remove()
+  popEl = null
+  popRefresh = null
+  popBtn.setAttribute('aria-expanded', 'false')
+  if (focusBack) popBtn.focus()
+  popBtn = null
+}
+function openPop(btn, draw, onPick) {
+  if (popBtn === btn) { closePop(); return }
+  closePop()
+  closeMenu()
+  const el = document.createElement('div')
+  el.className = 'pop'
+  document.body.appendChild(el)
+  popEl = el
+  popBtn = btn
+  btn.setAttribute('aria-expanded', 'true')
+  popRefresh = () => {
+    const focused = document.activeElement?.dataset?.key
+    draw(el)
+    if (focused) el.querySelector(`[data-key="${focused}"]`)?.focus()
+  }
+  draw(el)
+  const r = btn.getBoundingClientRect()
+  el.style.top = `${r.bottom + 6}px`
+  el.style.left = `${Math.max(8, Math.min(r.right - el.offsetWidth, innerWidth - el.offsetWidth - 8))}px`
+  el.addEventListener('click', (e) => onPick(e.target.closest('[data-key], [data-act]')))
+  el.addEventListener('keydown', (e) => {
+    const items = [...el.querySelectorAll('.pop-opt')]
+    const i = items.indexOf(document.activeElement)
+    if (e.key === 'ArrowDown') { e.preventDefault(); items[(i + 1) % items.length]?.focus() }
+    if (e.key === 'ArrowUp') { e.preventDefault(); items[(i - 1 + items.length) % items.length]?.focus() }
+    if (e.key === 'Escape') closePop(true)
+  })
+  el.querySelector('[aria-checked="true"], .pop-opt')?.focus()
+}
+window.addEventListener('pointerdown', (e) => {
+  if (popEl && !popEl.contains(e.target) && !popBtn.contains(e.target)) closePop()
+}, true)
+
+function drawFilterPop(el) {
+  el.setAttribute('role', 'dialog')
+  el.setAttribute('aria-label', 'Filtrar universos')
+  el.innerHTML =
+    '<div class="pop-label">estado</div>' +
+    STATES.map((s) => `<button class="pop-opt" type="button" role="menuitemcheckbox" aria-checked="${filters.states.has(s.id)}" data-key="s:${s.id}"><span class="box">${CHECK_SVG}</span><span class="dot ${s.dot}"></span>${s.label}<span class="n">${PROJECTS.filter(s.test).length}</span></button>`).join('') +
+    '<div class="pop-sep"></div><div class="pop-label">criado</div>' +
+    PERIODS.map((x) => `<button class="pop-opt" type="button" role="menuitemradio" aria-checked="${filters.period === x.id}" data-key="p:${x.id}"><span class="box radio"></span>${x.label}</button>`).join('') +
+    '<div class="pop-sep"></div><div class="pop-foot"><button class="linkish" type="button" data-act="reset">limpar estado e data</button><button class="btn tiny" type="button" data-act="done">pronto</button></div>'
+}
+function pickFilter(t) {
+  if (!t) return
+  if (t.dataset.act === 'done') { closePop(true); return }
+  if (t.dataset.act === 'reset') { filters.states.clear(); filters.period = 'any'; renderHome(); return }
+  const [kind, id] = t.dataset.key.split(':')
+  if (kind === 's') filters.states.has(id) ? filters.states.delete(id) : filters.states.add(id)
+  else filters.period = id
   renderHome()
+}
+
+function drawSortPop(el) {
+  el.setAttribute('role', 'menu')
+  el.setAttribute('aria-label', 'Ordenar universos')
+  el.style.width = '230px'
+  el.innerHTML = '<div class="pop-label">ordenar por</div>' +
+    SORTS.map((s) => `<button class="pop-opt" type="button" role="menuitemradio" aria-checked="${filters.sort === s.id}" data-key="o:${s.id}"><span class="box radio"></span>${s.label}</button>`).join('')
+}
+function pickSort(t) {
+  if (!t?.dataset.key) return
+  filters.sort = t.dataset.key.slice(2)
+  closePop(true)
+  renderHome()
+}
+
+$('#btnFilter').addEventListener('click', (e) => openPop(e.currentTarget, drawFilterPop, pickFilter))
+$('#btnSort').addEventListener('click', (e) => openPop(e.currentTarget, drawSortPop, pickSort))
+$('#viewGrouped').addEventListener('click', () => { filters.grouped = true; renderHome() })
+$('#viewFlat').addEventListener('click', () => { filters.grouped = false; renderHome() })
+
+// ————— abas —————
+const tabsEl = $('#tabs')
+tabsEl.addEventListener('scroll', measureTabs, { passive: true })
+window.addEventListener('resize', measureTabs)
+tabsEl.addEventListener('click', (e) => {
+  const t = e.target.closest('[data-tab]')
+  if (!t) return
+  filters.group = t.dataset.tab
+  renderHome()
+  $(`[data-tab="${filters.group}"]`)?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
 })
-q.addEventListener('keydown', (e) => { if (e.key === 'Escape') { q.value = ''; q.dispatchEvent(new Event('input')); q.blur() } })
-$('#qClear').addEventListener('click', (e) => { e.preventDefault(); q.value = ''; q.dispatchEvent(new Event('input')); q.focus() })
+tabsEl.addEventListener('keydown', (e) => {
+  if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return
+  const all = [...tabsEl.querySelectorAll('[data-tab]')]
+  const i = all.indexOf(document.activeElement)
+  const next = all[(i + (e.key === 'ArrowRight' ? 1 : -1) + all.length) % all.length]
+  next?.click()
+  $(`[data-tab="${next?.dataset.tab}"]`)?.focus()
+})
+tabsEl.addEventListener('contextmenu', (e) => {
+  const t = e.target.closest('[data-tab]')
+  if (!t || !getGroup(t.dataset.tab)) return
+  e.preventDefault()
+  groupMenu(t.dataset.tab, e.clientX, e.clientY)
+})
+
+// ————— busca e etiquetas —————
+const q = $('#q')
+function setQuery(v) {
+  q.value = v
+  filters.q = v.trim()
+  $('#qClear').hidden = !v
+  $('#qKbd').hidden = !!v
+}
+q.addEventListener('input', () => { setQuery(q.value); renderHome() })
+q.addEventListener('keydown', (e) => { if (e.key === 'Escape') { setQuery(''); renderHome(); q.blur() } })
+$('#qClear').addEventListener('click', (e) => { e.preventDefault(); setQuery(''); renderHome(); q.focus() })
 window.addEventListener('keydown', (e) => {
   const typing = /^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement?.tagName ?? '')
   if (e.key === '/' && !typing) { e.preventDefault(); q.focus() }
 })
-$('#period').addEventListener('change', (e) => { filters.period = e.target.value; renderHome() })
-$('#sort').addEventListener('change', (e) => { filters.sort = e.target.value; renderHome() })
-$('#grouped').addEventListener('click', (e) => {
-  filters.grouped = !filters.grouped
-  e.currentTarget.setAttribute('aria-checked', String(filters.grouped))
+$('#hbActive').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-tok]')
+  if (!b) return
+  tokenClears[Number(b.dataset.tok)]?.()
   renderHome()
-})
-$('.hb-chips').addEventListener('click', (e) => {
-  const gc = e.target.closest('[data-group]')
-  if (gc) { filters.group = filters.group === gc.dataset.group && gc.dataset.group !== 'all' ? 'all' : gc.dataset.group; renderHome(); return }
-  const sc = e.target.closest('[data-state]')
-  if (sc) {
-    const id = sc.dataset.state
-    filters.states.has(id) ? filters.states.delete(id) : filters.states.add(id)
-    renderHome()
-  }
 })
 
 function clearFilters() {
-  filters.q = ''
+  setQuery('')
   filters.group = 'all'
   filters.states.clear()
   filters.period = 'any'
-  q.value = ''
-  $('#qClear').hidden = true
-  $('#qKbd').hidden = false
-  $('#period').value = 'any'
   renderHome()
 }
 
 document.addEventListener('click', (e) => {
-  if (e.target.closest('[data-clear]')) { clearFilters(); return }
+  if (e.target.closest('[data-clear]')) clearFilters()
 })
 
 $('#homeBody').addEventListener('click', (e) => {
@@ -1871,7 +2107,7 @@ function inlineRename(btn) {
     g.name = keep && input.value.trim() ? input.value.trim() : original
     renderAll()
   }
-  input.addEventListener('input', () => { g.name = input.value; renderRail(); renderFacets() })
+  input.addEventListener('input', () => { g.name = input.value; renderRail(); renderTabs(PROJECTS.filter(passesBase)) })
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') commit(true)
     if (e.key === 'Escape') commit(false)
@@ -1879,9 +2115,11 @@ function inlineRename(btn) {
   input.addEventListener('blur', () => commit(true))
 }
 
-// barra de filtros "gruda" com filete quando a lista rola por baixo
+// o índice "gruda" com filete quando a lista rola por baixo
 $('#homeScroll').addEventListener('scroll', (e) => {
-  $('#hb').classList.toggle('stuck', e.target.scrollTop > $('.home-hero').offsetHeight + 20)
+  const hero = $('.home-hero')
+  $('#hb').classList.toggle('stuck', e.target.scrollTop > hero.offsetTop + hero.offsetHeight + 24)
+  closePop()
 }, { passive: true })
 
 // ————— moldura do mockup —————
@@ -1898,8 +2136,7 @@ function reset() {
   shutSections.clear()
   filters.sort = 'rail'
   filters.grouped = true
-  $('#sort').value = 'rail'
-  $('#grouped').setAttribute('aria-checked', 'true')
+  closePop()
   clearFilters()
   renderAll()
 }
