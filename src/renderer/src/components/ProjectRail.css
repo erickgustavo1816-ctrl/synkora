@@ -341,20 +341,30 @@
 
 /* line-height folgado: com 1 e overflow escondido, o acento de "TRIBUTÁRIO"
    era cortado; as margens negativas devolvem o espaçamento do mockup */
+/* o nome NUNCA some (pedido do dono, 2026-09-29: "LABORATÓRI…" cortado):
+   8px com espaçamento curto cabe 11–12 letras numa linha; nome mais longo
+   quebra em até duas linhas centralizadas antes de qualquer corte */
 .rail-group-name {
-  max-width: 62px;
-  margin: -2px 0 -1px;
-  font: 700 8.5px/1.35 var(--mono);
-  letter-spacing: 0.08em;
+  max-width: 64px;
+  margin: 0 0 -1px;
+  font: 700 8px/1.3 var(--mono);
+  letter-spacing: 0.02em;
   text-transform: uppercase;
+  text-align: center;
   color: var(--panel-ink-2);
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   overflow: hidden;
-  text-overflow: ellipsis;
   pointer-events: none;
 }
 
-/* ---------- o grupo aberto (a cápsula) ---------- */
+/* ---------- o grupo aberto (a cápsula) ----------
+   Medida no print do dono (Discord, 2026-09-29): a cápsula tem a MESMA cor da
+   pasta fechada, um contorno de 1px um tom acima, e o botão do topo fica
+   recuado 6px no topo e dos lados — o quadrado do hover nunca encosta na
+   borda. Raio concêntrico: 16 do botão + 6 de recuo. */
 .rail-group {
   width: 58px;
   flex-shrink: 0;
@@ -362,20 +372,27 @@
   flex-direction: column;
   align-items: center;
   gap: 10px;
-  padding: 0 0 8px;
-  border-radius: 18px;
-  background: rgba(239, 232, 216, 0.055);
+  padding: 6px 0 8px;
+  border-radius: 22px;
+  background: #33312c;
+  box-shadow: inset 0 0 0 1px rgba(239, 232, 216, 0.035);
 }
 
 .rail-group.has-hue {
-  background: hsl(var(--g-hue) 22% 20%);
+  background: hsl(var(--g-hue) 16% 20%);
 }
 
+/* dentro da cápsula o nome respeita as bordas dela (58px − respiro) */
+.rail-group .rail-group-name {
+  max-width: 56px;
+}
+
+/* o nome fica a 6px do quadrado do hover (encostado lia como parte dele) */
 .rail-group-headwrap {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 2px;
+  gap: 6px;
   padding-bottom: 2px;
 }
 
@@ -392,13 +409,13 @@
    quadrado arredondado do tamanho do botão, UM tom acima da cápsula — sem
    pulo e sem trocar o raio; a dica sai à direita (data-tip-side) */
 .rail-item.rail-group-head:hover {
-  background: rgba(239, 232, 216, 0.05);
+  background: #3e3b35;
   border-radius: 16px;
   transform: none;
 }
 
 .rail-group.has-hue .rail-item.rail-group-head:hover {
-  background: hsl(var(--g-hue) 20% 25%);
+  background: hsl(var(--g-hue) 16% 25%);
 }
 
 .rail-group-head svg {
