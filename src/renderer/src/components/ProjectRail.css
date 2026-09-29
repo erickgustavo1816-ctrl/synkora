@@ -775,3 +775,9 @@ body.rail-dragging * {
     animation: none;
   }
 }
+
+/* o nome na folha do grupo: a borda de acento do campo já é o foco (sem o
+   contorno laranja do destino do SynVoice por cima; o ditado segue valendo) */
+.rail-gsheet input.rail-gs-name.synvoice-target:not([type='password']) {
+  outline: none;
+}
