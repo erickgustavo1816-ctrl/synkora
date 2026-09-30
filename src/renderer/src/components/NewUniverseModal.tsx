@@ -45,10 +45,19 @@ export default function NewUniverseModal({
       return
     }
     setBusy(true)
-    const aviso = await createProject(name.trim() || 'universo', path, gitUrl.trim() || undefined)
+    const outcome = await createProject({
+      name: name.trim() || 'universo',
+      path,
+      gitUrl: gitUrl.trim() || undefined,
+      versioning: 'git'
+    })
     setBusy(false)
-    if (aviso) {
-      setWarning(aviso)
+    if (!outcome.ok) {
+      setError(outcome.error)
+      return
+    }
+    if (outcome.warning) {
+      setWarning(outcome.warning)
       return
     }
     onClose()

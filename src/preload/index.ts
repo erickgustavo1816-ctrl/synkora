@@ -2,6 +2,11 @@ import type { GuiInterruptOrigin } from '../shared/guiInterrupt'
 import type { MissionRemovalConfirmation, MissionRemovalResult } from '../shared/missionRemoval'
 import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron'
 import type { DirectReleaseInput, DirectReleaseResult } from '../shared/directRelease'
+import type {
+  MissionFinishResult,
+  ProjectFolderInspection,
+  ProjectVersioning
+} from '../shared/projectVersioning'
 import type { ProjectLayout, ProjectLayoutOp, ProjectLayoutOpResult } from '../shared/projectLayout'
 import type { MobileApi, MobilePhoneApi, MobileVideoDelivery } from '../shared/mobileSimulator'
 export type { MobileApi, MobileAction, MobileFrame, MobileSession, MobileState, MobileVideoPacket } from '../shared/mobileSimulator'
@@ -200,6 +205,9 @@ export interface Project {
   /** COMPUTADO na listagem: a pasta não existe mais (renomeada/movida fora
    *  do app) — a Home oferece "alterar pasta" */
   missing?: boolean
+  /** Modalidade gravada no nascimento (definitiva). Ausente = 'git'. Leia por
+   *  `projectVersioning()` de shared/projectVersioning. */
+  versioning?: ProjectVersioning
 }
 
 /**
@@ -1015,8 +1023,17 @@ const api = {
     /** `gitUrl` (2.0, onda D): pasta vazia CLONA o repositório; pasta com
      *  conteúdo ganha `origin` + push best-effort. Push recusado NÃO impede a
      *  criação — o aviso PT-BR volta em `gitWarning` para a UI mostrar. */
-    create: (name: string, path: string, gitUrl?: string): Promise<ProjectCreateResult> =>
-      ipcRenderer.invoke('projects:create', name, path, gitUrl),
+    create: (
+      name: string,
+      path: string,
+      gitUrl?: string,
+      versioning?: ProjectVersioning
+    ): Promise<ProjectCreateResult> =>
+      ipcRenderer.invoke('projects:create', name, path, gitUrl, versioning),
+    /** PROJETO SEM VERSIONAMENTO: fotografia da pasta escolhida no modal —
+     *  `hasGit` trava o interruptor em "versionado". Leitura pura, sem Git. */
+    inspectFolder: (path: string): Promise<ProjectFolderInspection> =>
+      ipcRenderer.invoke('projects:inspectFolder', path),
     remove: (id: string): Promise<void> => ipcRenderer.invoke('projects:remove', id),
     rename: (id: string, name: string): Promise<Project | null> =>
       ipcRenderer.invoke('projects:rename', id, name),
@@ -1383,6 +1400,11 @@ const api = {
     ): Promise<Mission | null> => ipcRenderer.invoke('missions:update', id, patch),
     integrate: (missionId: string): Promise<string> =>
       ipcRenderer.invoke('missions:integrate', missionId),
+    /** PROJETO SEM VERSIONAMENTO: o FINALIZAR — encerra o chat, os ajudantes e
+     *  os terminais da missão e a grava como concluída. Nada de merge: as
+     *  edições já estão na pasta. Projeto versionado recusa (lá é o ⇪). */
+    finish: (missionId: string): Promise<MissionFinishResult> =>
+      ipcRenderer.invoke('missions:finish', missionId),
     remove: (missionId: string, confirmation?: MissionRemovalConfirmation): Promise<MissionRemovalResult> =>
       confirmation === undefined ? ipcRenderer.invoke('missions:remove', missionId)
         : ipcRenderer.invoke('missions:remove', missionId, confirmation),

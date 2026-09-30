@@ -578,6 +578,13 @@ export function installDevMock(): void {
         missions.push(m)
         return m
       },
+      finish: async (missionId: string) => {
+        const m = missions.find((x) => x.id === missionId)
+        if (!m) return { ok: false as const, error: 'missão não encontrada' }
+        m.status = 'concluida'
+        m.completedAt = new Date().toISOString()
+        return { ok: true as const }
+      },
       update: async (id, patch) => {
         const m = missions.find((x) => x.id === id)
         if (m) Object.assign(m, patch, { updatedAt: new Date().toISOString() })
@@ -766,12 +773,19 @@ export function installDevMock(): void {
     },
     projects: {
       list: async () => [...projects],
-      create: async (name: string, path: string) => {
-        const p = { id: `mock-${Date.now()}`, name, path, createdAt: new Date().toISOString() }
+      create: async (name: string, path: string, _gitUrl?: string, versioning?: 'git' | 'none') => {
+        const p = {
+          id: `mock-${Date.now()}`,
+          name,
+          path,
+          createdAt: new Date().toISOString(),
+          ...(versioning === 'none' ? { versioning } : {})
+        }
         projects.push(p)
         syncMockLayout()
         return p
       },
+      inspectFolder: async () => ({ exists: true, hasGit: false, empty: false }),
       remove: async (id: string) => {
         const i = projects.findIndex((p) => p.id === id)
         if (i >= 0) projects.splice(i, 1)

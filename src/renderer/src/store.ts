@@ -1,5 +1,6 @@
 import type { GuiInterruptOrigin } from '../../shared/guiInterrupt'
 import type { MissionRemovalConfirmation, MissionRemovalResult } from '../../shared/missionRemoval'
+import type { MissionFinishResult, ProjectVersioning } from '../../shared/projectVersioning'
 import { create } from 'zustand'
 import { isGuiBrowserReferenceList, type GuiBrowserReference } from '../../shared/guiBrowserReferences'
 import { guiParentTurnActivity } from './guiParentTurnActivity'
@@ -119,7 +120,25 @@ export interface Project {
   photo?: string
   /** pasta não existe mais (renomeada/movida fora do app) — computado no main */
   missing?: boolean
+  /** Modalidade gravada no nascimento (definitiva). Ausente = 'git'. Espelho de
+   *  `Project` em src/preload/index.ts; leia por `projectVersioning()`. */
+  versioning?: ProjectVersioning
 }
+
+/** O pedido do modal de projeto novo. */
+export interface NewProjectInput {
+  name: string
+  path: string
+  /** só projeto versionado — o main recusa link em projeto sem versionamento */
+  gitUrl?: string
+  versioning: ProjectVersioning
+}
+
+/** Desfecho da criação. `warning` = o projeto NASCEU mas o GitHub não fechou
+ *  (push/auth) — aviso nunca cancela a criação. `ok: false` = não nasceu. */
+export type ProjectCreateOutcome =
+  | { ok: true; projectId: string; warning: string | null }
+  | { ok: false; error: string }
 
 export type SeatCli = 'claude' | 'codex'
 export type SeatStatus = 'logado' | 'pendente' | 'expirado'
@@ -1955,6 +1974,9 @@ interface SynkoraState {
    *  plano/ fica no repo e a aba do plano segue no mapa (o main guarda a porta:
    *  'concluida' por aqui só entra em missão de PLANEJAMENTO). */
   concludePlanningMission: (id: string) => Promise<void>
+  /** PROJETO SEM VERSIONAMENTO: finaliza a missão aberta (o main encerra chat,
+   *  ajudantes e terminais). Ao dar certo, a aba volta para o Início. */
+  finishMission: (id: string) => Promise<MissionFinishResult>
   deleteMission: (id: string, confirmation?: MissionRemovalConfirmation) => Promise<MissionRemovalResult>
   /** A SAÍDA DA SUBIDA: arquiva e exclui num gesto só (ver releaseRailPresentation). */
   discardRelease: (id: string) => Promise<void>
@@ -1977,9 +1999,10 @@ interface SynkoraState {
 
   loadProjects: () => Promise<void>
   /** cria o universo. `gitUrl` (onda D) conecta o repositório no nascimento;
-   *  devolve o AVISO em PT-BR quando o main criou o projeto mas o GitHub não
-   *  fechou (auth/push) — null = tudo certo. Aviso nunca cancela a criação. */
-  createProject: (name: string, path: string, gitUrl?: string) => Promise<string | null>
+   *  `versioning` escolhe a modalidade (definitiva). Nunca lança: recusa do
+   *  main (pasta inválida, clone falho, pasta com Git em projeto sem
+   *  versionamento) volta como `{ ok: false, error }`. */
+  createProject: (input: NewProjectInput) => Promise<ProjectCreateOutcome>
   removeProject: (id: string) => Promise<void>
   setProjectPhoto: (id: string) => Promise<void>
   removeProjectPhoto: (id: string) => Promise<void>
@@ -2175,10 +2198,17 @@ const KIND_LABEL: Record<PaneKind, string> = {
 /** Aviso PT-BR devolvido pelo `projects:create` quando o universo nasceu mas o
  *  GitHub não fechou (onda D). Lê defensivamente: o motor é o dono do nome do
  *  campo e um payload sem aviso nenhum vale como sucesso. */
+/** Mensagem PT-BR de um `ipcRenderer.invoke` rejeitado — o Electron embrulha o
+ *  erro do handler em "Error invoking remote method '<canal>': Error: <msg>". */
+function ipcErrorMessage(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err)
+  return raw.replace(/^Error invoking remote method '[^']+':\s*(?:Error:\s*)?/, '').trim() || raw
+}
+
 function projectCreateWarning(res: unknown): string | null {
   if (!res || typeof res !== 'object') return null
   const bag = res as Record<string, unknown>
-  for (const key of ['warning', 'aviso', 'msg']) {
+  for (const key of ['gitWarning', 'warning', 'aviso', 'msg']) {
     const value = bag[key]
     if (typeof value === 'string' && value.trim()) return value.trim()
   }
@@ -2254,6 +2284,23 @@ export const useStore = create<SynkoraState>((set, get) => ({
     await window.synkora.missions.update(id, { status: archived ? 'arquivada' : 'ativa' })
     const pid = get().openProjectId
     if (pid) await get().loadMissions(pid)
+  },
+  finishMission: async (id) => {
+    if (!window.synkora.missions?.finish) {
+      return { ok: false, error: 'reinicie o app (npm run dev) para finalizar missões' }
+    }
+    let result: MissionFinishResult
+    try {
+      result = await window.synkora.missions.finish(id)
+    } catch (err) {
+      result = { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+    const pid = get().openProjectId
+    if (pid) {
+      await get().loadMissions(pid)
+      if (result.ok) get().setMissionTab(pid, null)
+    }
+    return result
   },
   concludePlanningMission: async (id) => {
     if (!window.synkora.missions) return
@@ -2333,19 +2380,17 @@ export const useStore = create<SynkoraState>((set, get) => ({
     set({ projects })
   },
 
-  createProject: async (name, path, gitUrl) => {
-    // TODO(onda D, motor): `projects:create` ganha o 3º parâmetro (gitUrl) e
-    // passa a devolver o aviso do GitHub. Enquanto o preload não publica a
-    // assinatura nova, o cast estreito mora AQUI — main antigo simplesmente
-    // ignora o argumento extra e nunca devolve aviso.
-    const create = window.synkora.projects.create as (
-      name: string,
-      path: string,
-      gitUrl?: string
-    ) => Promise<unknown>
-    const res = await create(name, path, gitUrl)
+  createProject: async ({ name, path, gitUrl, versioning }) => {
+    let res: Awaited<ReturnType<typeof window.synkora.projects.create>>
+    try {
+      res = await window.synkora.projects.create(name, path, gitUrl, versioning)
+    } catch (err) {
+      // o main LANÇA nas recusas (caminho inválido, clone falho, pasta com
+      // Git): sem este catch o modal ficava preso em "criando" para sempre
+      return { ok: false, error: ipcErrorMessage(err) }
+    }
     await get().loadProjects()
-    return projectCreateWarning(res)
+    return { ok: true, projectId: res.id, warning: projectCreateWarning(res) }
   },
 
   removeProject: async (id) => {
