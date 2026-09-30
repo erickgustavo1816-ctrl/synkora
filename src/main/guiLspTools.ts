@@ -125,6 +125,7 @@ export interface GuiLspLogEntry {
 }
 
 export interface GuiLspToolsDeps {
+  projectVersioning?: (projectId: string) => import('../shared/projectVersioning').ProjectVersioning
   manager: LspManagerLike
   /**
    * Os arquivos MODIFICADOS de uma raiz, relativos a ela — o alvo do
@@ -255,6 +256,9 @@ export function buildGuiLspTools(deps: GuiLspToolsDeps): GuiLspToolkit {
 
   return {
     async diagnostics(id, files) {
+      if (!files?.length && deps.projectVersioning?.(id.projectId) === 'none') {
+        return 'Este projeto trabalha direto na pasta. Passe `files` em lsp_diagnostics com os caminhos relativos dos arquivos que deseja verificar.'
+      }
       const root = rootOf(id)
       if (!root) {
         note(ids(id, '', 'lsp-diagnostics', { asked: files?.length ?? 0 }, NO_ROOT))

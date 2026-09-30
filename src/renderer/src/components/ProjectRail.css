@@ -230,3 +230,554 @@
   .rail-version-sheet { animation: none; }
   .rail-version-bar > i { transition: none; }
 }
+
+/* ================= GRUPOS NO RAIL (2026-09-29) =================
+   Pastas estilo Discord (fechada = grade de miniaturas; aberta = cápsula),
+   arrastar para agrupar/reordenar, menu de clique direito e a folha de nome
+   e cor à la iPhone. Contrato visual: docs/mockups/grupos-universos-2026-09-29.html.
+   A FORMA diz "grupo" antes da cor; a cor do grupo só tinge o fundo — é
+   identificação pessoal, nunca estado. Movimento só como sinal. */
+
+.project-rail {
+  user-select: none;
+}
+
+/* a linha de soltar é posicionada dentro do conteúdo da lista */
+.rail-list {
+  position: relative;
+}
+
+.rail-item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+/* ---------- o grupo fechado (a pasta) ---------- */
+.rail-slot-folder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+}
+
+/* a pasta é um tom acima do painel — a mesma distância que o Discord guarda
+   entre a pasta e o fundo (medida no desenho do dono, 2026-09-29) */
+.rail-item.rail-folder {
+  background: #33312c;
+}
+
+.rail-item.rail-folder.has-hue {
+  background: hsl(var(--g-hue) 16% 20%);
+}
+
+/* pasta fechada que guarda o universo aberto: pílula mais curta (Discord) */
+.rail-folder.holds-active::before {
+  content: '';
+  position: absolute;
+  left: -11px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 4px;
+  height: 16px;
+  border-radius: 0 4px 4px 0;
+  background: var(--accent);
+}
+
+/* ┌──────────────────────────────────────────────────────────────────────┐
+   │ A GRADE DE MINIATURAS DA PASTA — bloco VISUAL isolado (2026-09-29).   │
+   │ O dono ainda está redesenhando o miolo da pasta fechada: a forma das  │
+   │ miniaturas mora SÓ neste bloco (e em RailMini/RailFolderGrid, em      │
+   │ RailGroupFolder.tsx). Nenhum comportamento depende destas regras.     │
+   └──────────────────────────────────────────────────────────────────────┘ */
+/* GEOMETRIA DO DISCORD (medida pixel a pixel no desenho do dono): as quatro
+   miniaturas desenham JUNTAS o contorno da pasta — o canto de FORA de cada
+   uma é concêntrico com a curva da pasta (raio 16 − respiro 4 ≈ 11) e os
+   três de dentro são quase retos. A miniatura é o ícone do universo em
+   escala: mesma cor (ou a foto) do botão grande do rail. */
+.rf-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 18px);
+  grid-template-rows: repeat(2, 18px);
+  gap: 2px;
+}
+
+.rf-mini {
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 3px;
+  background: hsl(var(--card-hue, 30) 30% 26%);
+  color: var(--panel-ink);
+  font: 700 8px/1 var(--mono);
+}
+
+.rf-mini:nth-child(1) { border-top-left-radius: 11px; }
+.rf-mini:nth-child(2) { border-top-right-radius: 11px; }
+.rf-mini:nth-child(3) { border-bottom-left-radius: 11px; }
+.rf-mini:nth-child(4) { border-bottom-right-radius: 11px; }
+
+.rf-mini img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: inherit;
+}
+
+.rf-mini.is-active {
+  box-shadow: 0 0 0 1.5px var(--accent);
+}
+
+.rf-mini.more {
+  background: rgba(239, 232, 216, 0.08);
+  color: var(--panel-ink-2);
+}
+
+.rf-mini.is-missing {
+  filter: grayscale(0.7);
+  opacity: 0.6;
+}
+/* └─────────────────────── fim do bloco da grade ───────────────────────┘ */
+
+/* line-height folgado: com 1 e overflow escondido, o acento de "TRIBUTÁRIO"
+   era cortado; as margens negativas devolvem o espaçamento do mockup */
+/* o nome NUNCA some (pedido do dono, 2026-09-29: "LABORATÓRI…" cortado):
+   8px com espaçamento curto cabe 11–12 letras numa linha; nome mais longo
+   quebra em até duas linhas centralizadas antes de qualquer corte */
+.rail-group-name {
+  max-width: 64px;
+  margin: 0 0 -1px;
+  font: 700 8px/1.3 var(--mono);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  text-align: center;
+  color: var(--panel-ink-2);
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+/* ---------- o grupo aberto (a cápsula) ----------
+   Medida no print do dono (Discord, 2026-09-29): a cápsula tem a MESMA cor da
+   pasta fechada, um contorno de 1px um tom acima, e o botão do topo fica
+   recuado 6px no topo e dos lados — o quadrado do hover nunca encosta na
+   borda. Raio concêntrico: 16 do botão + 6 de recuo. */
+.rail-group {
+  width: 58px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0 8px;
+  border-radius: 22px;
+  background: #33312c;
+  box-shadow: inset 0 0 0 1px rgba(239, 232, 216, 0.035);
+}
+
+.rail-group.has-hue {
+  background: hsl(var(--g-hue) 16% 20%);
+}
+
+/* dentro da cápsula o nome respeita as bordas dela (58px − respiro) */
+.rail-group .rail-group-name {
+  max-width: 56px;
+}
+
+/* o nome fica a 6px do quadrado do hover (encostado lia como parte dele) */
+.rail-group-headwrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding-bottom: 2px;
+}
+
+.rail-item.rail-group-head {
+  background: transparent;
+  color: var(--panel-ink-2);
+}
+
+.rail-group.has-hue .rail-item.rail-group-head {
+  color: hsl(var(--g-hue) 62% 70%);
+}
+
+/* hover do cabeçalho = o do Discord (recorte do dono, 2026-09-29): um
+   quadrado arredondado do tamanho do botão, UM tom acima da cápsula — sem
+   pulo e sem trocar o raio; a dica sai à direita (data-tip-side) */
+.rail-item.rail-group-head:hover {
+  background: #3e3b35;
+  border-radius: 16px;
+  transform: none;
+}
+
+.rail-group.has-hue .rail-item.rail-group-head:hover {
+  background: hsl(var(--g-hue) 16% 25%);
+}
+
+.rail-group-head svg {
+  width: 22px;
+  height: 22px;
+  fill: currentColor;
+  stroke: none;
+}
+
+/* abrir: os universos entram de cima, escalonados (sinal de "abriu aqui") */
+.rail-group.just-opened > .rail-item {
+  animation: rail-group-child-in 200ms var(--ease-out) both;
+}
+.rail-group.just-opened > .rail-item:nth-child(3) { animation-delay: 30ms; }
+.rail-group.just-opened > .rail-item:nth-child(4) { animation-delay: 60ms; }
+.rail-group.just-opened > .rail-item:nth-child(n + 5) { animation-delay: 90ms; }
+
+@keyframes rail-group-child-in {
+  from { opacity: 0; translate: 0 -8px; }
+  to { opacity: 1; translate: 0 0; }
+}
+
+/* a pasta que acabou de nascer (ou de receber alguém) dá um "pop" */
+.rail-item.rail-folder.just-made {
+  animation: rail-folder-made 260ms var(--ease-pop) both;
+}
+
+@keyframes rail-folder-made {
+  from { scale: 0.72; }
+  to { scale: 1; }
+}
+
+/* ---------- arrastar ---------- */
+.rail-item.is-dragging,
+.rail-group.is-dragging,
+.rail-slot-folder.is-dragging {
+  opacity: 0.22;
+}
+
+.rail-item.drop-combine,
+.rail-item.rail-folder.drop-into {
+  border-radius: 12px;
+  transform: scale(1.1);
+  box-shadow: 0 0 0 2px var(--accent), 0 0 0 6px rgba(217, 108, 63, 0.18);
+}
+
+.rail-drop-line {
+  position: absolute;
+  left: 50%;
+  width: 46px;
+  height: 3px;
+  border-radius: 3px;
+  background: var(--accent);
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.rail-drop-line.inset {
+  width: 38px;
+}
+
+.rail-item.rail-ghost {
+  position: fixed;
+  z-index: 1250;
+  left: 0;
+  top: 0;
+  margin: 0;
+  pointer-events: none;
+  opacity: 0.94;
+  transform: scale(1.06) rotate(-2deg);
+  box-shadow: 0 14px 26px -10px rgba(0, 0, 0, 0.6);
+  transition: none;
+}
+
+body.rail-dragging,
+body.rail-dragging * {
+  cursor: grabbing !important;
+}
+
+.rail-drag-hint {
+  position: fixed;
+  z-index: 1251;
+  left: 78px;
+  top: 0;
+  padding: 4px 9px;
+  border: 1.5px solid var(--ink);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--ink);
+  font: 700 10.5px/1.4 var(--mono);
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  pointer-events: none;
+  transform: translateY(-50%);
+  visibility: hidden;
+}
+
+.rail-drag-hint.on {
+  visibility: visible;
+}
+
+.rail-drag-hint em {
+  font-style: normal;
+  color: var(--accent-deep);
+}
+
+/* ---------- o menu do rail (papel, como o .ctx do mockup) ---------- */
+.rail-ctx {
+  position: fixed;
+  z-index: 1200;
+  min-width: 210px;
+  max-width: min(300px, calc(100vw - 16px));
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+  padding: 5px;
+  border: 1.5px solid var(--ink);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--ink);
+  box-shadow: var(--shadow);
+  font: 11.5px/1.4 var(--mono);
+  animation: rail-pop-in 140ms var(--ease-out) both;
+}
+
+@keyframes rail-pop-in {
+  from { opacity: 0; translate: 0 4px; }
+  to { opacity: 1; translate: 0 0; }
+}
+
+.rail-ctx-label {
+  padding: 7px 9px 4px;
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.rail-ctx button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 9px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.rail-ctx button:hover,
+.rail-ctx button:focus-visible {
+  background: var(--paper-2);
+  outline: none;
+}
+
+.rail-ctx button:disabled {
+  color: var(--ink-3);
+  background: transparent;
+  cursor: default;
+}
+
+.rail-ctx button.danger {
+  color: var(--err);
+}
+
+.rail-ctx-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rail-ctx-sw {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 2.5px;
+  background: var(--ink-3);
+}
+
+.rail-ctx-sw.hue {
+  background: hsl(var(--g-hue) 46% 50%);
+}
+
+.rail-ctx-tail {
+  margin-left: auto;
+  padding-left: 10px;
+  color: var(--ink-3);
+  font-size: 10px;
+}
+
+.rail-ctx hr {
+  border: 0;
+  border-top: 1px solid var(--line);
+  margin: 5px 4px;
+}
+
+/* ---------- a folha do grupo (nome à la iPhone + cor) ---------- */
+.rail-gsheet-catch {
+  position: fixed;
+  inset: 0;
+  z-index: 1190;
+}
+
+.rail-gsheet {
+  position: fixed;
+  z-index: 1200;
+  left: 80px;
+  top: 80px;
+  width: 300px;
+  max-width: calc(100vw - 96px);
+  padding: 18px 18px 14px;
+  border: 1.5px solid var(--ink);
+  border-radius: 12px;
+  background: var(--card);
+  color: var(--ink);
+  box-shadow: var(--shadow);
+  font: 12px/1.45 var(--mono);
+  animation: rail-pop-in 160ms var(--ease-out) both;
+}
+
+/* o bico aponta para a pasta no rail */
+.rail-gsheet::before {
+  content: '';
+  position: absolute;
+  left: -8px;
+  top: var(--nib, 30px);
+  width: 13px;
+  height: 13px;
+  border-left: 1.5px solid var(--ink);
+  border-bottom: 1.5px solid var(--ink);
+  background: var(--card);
+  rotate: 45deg;
+}
+
+.rail-gs-top {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.rail-gs-folder {
+  width: 64px;
+  height: 64px;
+  border-radius: 20px;
+  display: grid;
+  place-items: center;
+  background: #33312c;
+}
+
+.rail-gs-folder.has-hue {
+  background: hsl(var(--g-hue) 16% 20%);
+}
+
+/* a grade da folha é a do rail, maior */
+.rail-gs-folder .rf-grid {
+  grid-template-columns: repeat(2, 26px);
+  grid-template-rows: repeat(2, 26px);
+  gap: 3px;
+}
+
+.rail-gs-folder .rf-mini {
+  border-radius: 4px;
+  font-size: 11px;
+}
+
+.rail-gs-folder .rf-mini:nth-child(1) { border-top-left-radius: 15px; }
+.rail-gs-folder .rf-mini:nth-child(2) { border-top-right-radius: 15px; }
+.rail-gs-folder .rf-mini:nth-child(3) { border-bottom-left-radius: 15px; }
+.rail-gs-folder .rf-mini:nth-child(4) { border-bottom-right-radius: 15px; }
+
+.rail-gs-name {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink);
+  outline: none;
+  text-align: center;
+  font: 700 18px/1.3 var(--mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.rail-gs-name:hover {
+  border-color: var(--line-strong);
+}
+
+.rail-gs-name:focus {
+  border-color: var(--accent);
+  background: #fffdf6;
+}
+
+.rail-gs-label {
+  margin: 14px 0 7px;
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.rail-gs-hues {
+  display: flex;
+  gap: 7px;
+}
+
+.rail-gs-hue {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1.5px solid transparent;
+  border-radius: 8px;
+  background: hsl(var(--g-hue) 46% 50%);
+  box-shadow: inset 0 0 0 2px var(--card);
+  cursor: pointer;
+}
+
+.rail-gs-hue.none {
+  background: var(--panel-2);
+}
+
+.rail-gs-hue[aria-checked='true'] {
+  border-color: var(--ink);
+}
+
+.rail-gs-hue:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.rail-gs-members {
+  margin-top: 12px;
+  font-size: 10.5px;
+  color: var(--ink-2);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.rail-gs-actions {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 14px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rail-group.just-opened > .rail-item,
+  .rail-item.rail-folder.just-made,
+  .rail-ctx,
+  .rail-gsheet {
+    animation: none;
+  }
+}
+
+/* o nome na folha do grupo: a borda de acento do campo já é o foco (sem o
+   contorno laranja do destino do SynVoice por cima; o ditado segue valendo) */
+.rail-gsheet input.rail-gs-name.synvoice-target:not([type='password']) {
+  outline: none;
+}

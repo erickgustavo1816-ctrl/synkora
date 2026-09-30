@@ -21,11 +21,11 @@ const {
   parseFileActionName,
   parseFileActionRelativePath,
   resolveFileActionRoot
-} = require('../.tmp/file-actions-test/fileActions.js')
+} = require('../.tmp/file-actions-test/main/fileActions.js')
 const {
   archiveDirectoryOffMain,
   archiveDirectoryToNewFileOffMain
-} = require('../.tmp/file-actions-test/fileArchiveAsync.js')
+} = require('../.tmp/file-actions-test/main/fileArchiveAsync.js')
 const AdmZip = require('adm-zip')
 
 function safeCleanup(t, directory) {

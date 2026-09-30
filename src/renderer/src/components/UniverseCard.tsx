@@ -1,6 +1,14 @@
-import { useState } from 'react'
+import { useState, type CSSProperties } from 'react'
 import { useStore, type Pane } from '../store'
 import { hueOf, initialsOf } from '../util'
+import { useProjectLayout } from '../projectLayoutStore'
+import { groupOfProject, layoutGroups } from '../../../shared/projectLayout'
+import { highlightMatch } from '../homeIndexModel'
+import { isUnversionedProject } from '../../../shared/projectVersioning'
+import { projectNameWithMode, soloActivityLine } from '../unversionedPresentation'
+import { HomePopover } from './HomeIndexBar'
+import UnversionedFolderSeal, { UnversionedModeTag } from './UnversionedFolderSeal'
+import './UniverseCard.css'
 
 // ————————————————————————————————————————————————————————————————————————
 // O CARD DE UM UNIVERSO — a mesma anatomia do núcleo do mapa (.map-core), de
@@ -19,9 +27,43 @@ interface Props {
   index: number
   /** registra a caixa do card como âncora de gravidade do campo de partículas */
   anchor: (key: string, el: HTMLElement | null) => void
+  /** a busca do índice da Home: o trecho achado ganha <mark> no nome e na pasta */
+  query?: string
+  /** a etiqueta do grupo na linha de meta (visão "todos juntos") */
+  showGroup?: boolean
+  /** a data da linha de meta: "criado 24 set 2026" ou "aberto há 2 h" */
+  dateLabel?: string | null
 }
 
-export default function UniverseCard({ projectId, index, anchor }: Props): React.JSX.Element | null {
+interface CardMenu {
+  trigger: HTMLElement
+  /** o card é o DONO do menu: apertar dentro dele é assunto da cortina
+   *  `.uc-menu-dismiss`, que fecha sem deixar o clique abrir o universo */
+  card: HTMLElement | null
+  focus: 'first' | 'last'
+}
+
+/** O texto com o trecho da busca marcado (sem busca, o texto puro). */
+function Marked({ text, query }: { text: string; query: string }): React.JSX.Element {
+  const parts = highlightMatch(text, query)
+  if (!parts) return <>{text}</>
+  return (
+    <>
+      {parts.before}
+      <mark>{parts.match}</mark>
+      {parts.after}
+    </>
+  )
+}
+
+export default function UniverseCard({
+  projectId,
+  index,
+  anchor,
+  query = '',
+  showGroup = false,
+  dateLabel = null
+}: Props): React.JSX.Element | null {
   const project = useStore((s) => s.projects.find((p) => p.id === projectId))
   const stats = useStore((s) => s.homeStats[projectId])
   const panes = useStore((s) => s.panesByProject[projectId]) ?? NO_PANES
@@ -34,21 +76,33 @@ export default function UniverseCard({ projectId, index, anchor }: Props): React
   const renameProject = useStore((s) => s.renameProject)
   const setProjectPhoto = useStore((s) => s.setProjectPhoto)
   const relocateProject = useStore((s) => s.relocateProject)
+  const layout = useProjectLayout((s) => s.layout)
+  const applyLayout = useProjectLayout((s) => s.apply)
+  const openGroupSheet = useProjectLayout((s) => s.openGroupSheet)
 
   const [relocError, setRelocError] = useState<string | null>(null)
   const [relocating, setRelocating] = useState(false)
   const [renaming, setRenaming] = useState(false)
   const [draft, setDraft] = useState('')
   const [confirmDel, setConfirmDel] = useState(false)
-  const [actionsOpen, setActionsOpen] = useState(false)
+  // o menu ··· sai do card por portal: com "mover para grupo" ele passa da
+  // altura da ficha, e a ficha (overflow: hidden) cortaria o que transborda
+  const [menu, setMenu] = useState<CardMenu | null>(null)
+  const actionsOpen = menu !== null
 
   if (!project) return null
 
   const missing = project.missing === true
+  // SEM VERSIONAMENTO (2026-09-30): o card diz a missão aberta (é ela que o
+  // dono procura) e leva o selo de pasta; não há versão, chip ◈ nem barra.
+  const unversioned = isUnversionedProject(project)
   const vivos = panes.filter((p) => paneActivity[p.id] !== 'dead')
   const rodando = vivos.filter((p) => paneActivity[p.id] === 'run').length
   const pedindo = vivos.filter((p) => paneAttention[p.id]).length
   const hue = hueOf(project.name)
+  const groups = layout ? layoutGroups(layout) : []
+  const currentGroup = layout ? groupOfProject(layout, projectId) : null
+  const groupTag = showGroup ? currentGroup : null
 
   async function relocate(): Promise<void> {
     if (relocating) return
@@ -66,6 +120,22 @@ export default function UniverseCard({ projectId, index, anchor }: Props): React
     if (draft.trim() && draft.trim() !== project?.name) void renameProject(projectId, draft.trim())
   }
 
+  function openMenu(trigger: HTMLElement, focus: CardMenu['focus']): void {
+    setMenu({ trigger, card: trigger.closest<HTMLElement>('.universe-card'), focus })
+  }
+
+  /** fecha o menu e executa a escolha */
+  const pick = (run: () => void) => (): void => {
+    setMenu(null)
+    run()
+  }
+
+  async function newGroup(): Promise<void> {
+    const result = await applyLayout({ op: 'createGroup', projectId })
+    // nasce "grupo N" e a folha de nome abre com o texto selecionado (iPhone)
+    if (result?.createdGroupId) openGroupSheet(result.createdGroupId, true)
+  }
+
   const state = missing ? 'missing' : pedindo > 0 ? 'needs-perm' : rodando > 0 ? 'live' : ''
   // Atividade = o agregado das versões EM DESENVOLVIMENTO (decisão do usuário,
   // 2026-07-29): somar a história inteira do projeto vira ruído — a cada
@@ -80,6 +150,7 @@ export default function UniverseCard({ projectId, index, anchor }: Props): React
     }),
     { missoesFeitas: 0, missoesTotal: 0 }
   )
+  const solo = unversioned && stats?.solo ? soloActivityLine(stats.solo) : null
   const activitySummary = !stats
     ? 'lendo atividade…'
     : [
@@ -94,7 +165,7 @@ export default function UniverseCard({ projectId, index, anchor }: Props): React
   return (
     <article
       ref={(el) => anchor(`project:${projectId}`, el)}
-      className={`universe-card ${state}${actionsOpen ? ' menu-open' : ''}`}
+      className={`universe-card ${state}`}
       style={{
         ['--card-hue' as string]: hue,
         animationDelay: `${Math.min(index * 55, 500)}ms`
@@ -105,7 +176,11 @@ export default function UniverseCard({ projectId, index, anchor }: Props): React
       <button
         type="button"
         className="uc-open-hit"
-        aria-label={missing ? `Relocar pasta do universo ${project.name}` : `Abrir universo ${project.name}`}
+        aria-label={
+          missing
+            ? `Relocar pasta do universo ${projectNameWithMode(project.name, unversioned)}`
+            : `Abrir universo ${projectNameWithMode(project.name, unversioned)}`
+        }
         disabled={renaming || confirmDel || relocating || actionsOpen}
         onClick={() => {
           // pasta sumiu: o clique vira relocação — abrir levaria a um universo
@@ -122,17 +197,21 @@ export default function UniverseCard({ projectId, index, anchor }: Props): React
           onPointerDown={(e) => {
             e.preventDefault()
             e.stopPropagation()
-            setActionsOpen(false)
+            setMenu(null)
           }}
         />
       )}
 
       <div className="uc-head">
-        {project.photo ? (
-          <img className="core-photo" src={project.photo} alt="" draggable={false} />
-        ) : (
-          <i className="core-photo ph">{initialsOf(project.name)}</i>
-        )}
+        {/* a foto pode ser <img> (sem filhos): o selo senta na moldura dela */}
+        <span className="uc-photo">
+          {project.photo ? (
+            <img className="core-photo" src={project.photo} alt="" draggable={false} />
+          ) : (
+            <i className="core-photo ph">{initialsOf(project.name)}</i>
+          )}
+          {unversioned && <UnversionedFolderSeal size="card" />}
+        </span>
 
         <div className="uc-identity">
           {renaming ? (
@@ -150,113 +229,143 @@ export default function UniverseCard({ projectId, index, anchor }: Props): React
               }}
             />
           ) : (
-            <span className="core-name" title={project.name}>{project.name}</span>
+            <span className="core-name" title={project.name}>
+              <Marked text={project.name} query={query} />
+            </span>
           )}
-          <div className="uc-path" title={project.path}>{project.path}</div>
+          <div className="uc-path" title={project.path}>
+            <Marked text={project.path} query={query} />
+          </div>
+          {(groupTag || dateLabel) && (
+            <div className="uc-meta">
+              {groupTag && (
+                <span className="uc-group">
+                  <span
+                    className={`sw${groupTag.hue !== null ? ' hue' : ''}`}
+                    style={groupTag.hue !== null ? ({ '--g-hue': groupTag.hue } as CSSProperties) : undefined}
+                    aria-hidden="true"
+                  />
+                  <span>{groupTag.name}</span>
+                </span>
+              )}
+              {dateLabel && <span className="uc-date">{dateLabel}</span>}
+            </div>
+          )}
         </div>
 
-        <div
-          className={`uc-menu${actionsOpen ? ' open' : ''}`}
-          onClick={(e) => e.stopPropagation()}
-          onKeyDown={(e) => {
-            if (e.key === 'Escape' && actionsOpen) {
-              e.preventDefault()
-              setActionsOpen(false)
-              e.currentTarget.querySelector<HTMLButtonElement>('.uc-menu-trigger')?.focus()
-              return
-            }
-
-            if (!actionsOpen || (e.key !== 'ArrowDown' && e.key !== 'ArrowUp')) return
-            const items = Array.from(
-              e.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')
-            )
-            if (items.length === 0) return
-            e.preventDefault()
-            const active = items.indexOf(document.activeElement as HTMLButtonElement)
-            const direction = e.key === 'ArrowDown' ? 1 : -1
-            const next = active < 0 ? (direction > 0 ? 0 : items.length - 1) : (active + direction + items.length) % items.length
-            items[next]?.focus()
-          }}
-          onBlur={(e) => {
-            if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setActionsOpen(false)
-          }}
-        >
+        <div className={`uc-menu${actionsOpen ? ' open' : ''}`} onClick={(e) => e.stopPropagation()}>
           <button
             type="button"
             className="uc-menu-trigger"
             aria-label={`Ações do universo ${project.name}`}
             aria-haspopup="menu"
             aria-expanded={actionsOpen}
-            onClick={() => setActionsOpen((open) => !open)}
+            onClick={(e) => (actionsOpen ? setMenu(null) : openMenu(e.currentTarget, 'first'))}
             onKeyDown={(e) => {
               if (actionsOpen || (e.key !== 'ArrowDown' && e.key !== 'ArrowUp')) return
               e.preventDefault()
-              const menu = e.currentTarget.parentElement
-              setActionsOpen(true)
-              window.requestAnimationFrame(() => {
-                const items = menu?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')
-                items?.[e.key === 'ArrowUp' ? items.length - 1 : 0]?.focus()
-              })
+              openMenu(e.currentTarget, e.key === 'ArrowUp' ? 'last' : 'first')
             }}
           >
             ···
           </button>
-          {actionsOpen && (
-            <div className="uc-menu-pop" role="menu" aria-label={`Ações do universo ${project.name}`}>
+          {menu && (
+            <HomePopover
+              anchor={menu.trigger}
+              owner={menu.card}
+              className="uc-menu-pop is-floating"
+              role="menu"
+              label={`Ações do universo ${project.name}`}
+              itemSelector='[role="menuitem"]'
+              initialFocus={menu.focus}
+              gap={4}
+              onClose={() => setMenu(null)}
+            >
               <button
                 type="button"
                 role="menuitem"
-                onClick={() => {
-                  setActionsOpen(false)
+                onClick={pick(() => {
                   setDraft(project.name)
                   setRenaming(true)
-                }}
+                })}
               >
                 renomear
               </button>
-              <button
-                type="button"
-                role="menuitem"
-                onClick={() => {
-                  setActionsOpen(false)
-                  void setProjectPhoto(projectId)
-                }}
-              >
+              <button type="button" role="menuitem" onClick={pick(() => void setProjectPhoto(projectId))}>
                 trocar imagem
               </button>
-              <button
-                type="button"
-                role="menuitem"
-                disabled={relocating}
-                onClick={() => {
-                  setActionsOpen(false)
-                  void relocate()
-                }}
-              >
+              <button type="button" role="menuitem" disabled={relocating} onClick={pick(() => void relocate())}>
                 alterar pasta
               </button>
-              <button
-                type="button"
-                role="menuitem"
-                className="danger"
-                onClick={() => {
-                  setActionsOpen(false)
-                  setConfirmDel(true)
-                }}
-              >
+              {layout && (
+                <>
+                  <div className="uc-menu-sep" role="separator" />
+                  <div className="uc-menu-label" aria-hidden="true">
+                    mover para grupo
+                  </div>
+                  {groups.map((g) => {
+                    const here = g.id === currentGroup?.id
+                    return (
+                      <button
+                        key={g.id}
+                        type="button"
+                        role="menuitem"
+                        className="uc-menu-group"
+                        aria-label={here ? `${g.name} (grupo atual)` : `Mover para ${g.name}`}
+                        disabled={here}
+                        onClick={pick(() => void applyLayout({ op: 'moveToGroup', projectId, groupId: g.id }))}
+                      >
+                        <span
+                          className={`sw${g.hue !== null ? ' hue' : ''}`}
+                          style={g.hue !== null ? ({ '--g-hue': g.hue } as CSSProperties) : undefined}
+                          aria-hidden="true"
+                        />
+                        <span className="name">{g.name}</span>
+                        <span className="tail">{here ? 'aqui' : g.projectIds.length}</span>
+                      </button>
+                    )
+                  })}
+                  <button type="button" role="menuitem" onClick={pick(() => void newGroup())}>
+                    + novo grupo…
+                  </button>
+                  {currentGroup && (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="uc-menu-group"
+                      onClick={pick(() => void applyLayout({ op: 'removeFromGroup', projectId }))}
+                    >
+                      <span className="name">tirar de {currentGroup.name}</span>
+                    </button>
+                  )}
+                  <div className="uc-menu-sep" role="separator" />
+                </>
+              )}
+              <button type="button" role="menuitem" className="danger" onClick={pick(() => setConfirmDel(true))}>
                 remover da lista
               </button>
-            </div>
+            </HomePopover>
           )}
         </div>
       </div>
 
       <div className="uc-work">
-        <span className="uc-work-label">atividade</span>
-        <span className={`uc-work-text${stats ? '' : ' loading'}`}>{activitySummary}</span>
+        <span className="uc-work-label">{unversioned ? 'missão' : 'atividade'}</span>
+        {solo?.kind === 'open' ? (
+          <span className="uc-work-text uc-solo" title={solo.title}>
+            {/* o ponto do turno: anima só com trabalho rodando (sinal) */}
+            <i className={`dot${rodando > 0 ? ' run' : ''}`} aria-hidden="true" />
+            <span>{solo.title}</span>
+          </span>
+        ) : solo ? (
+          <span className="uc-work-text uc-idle">{solo.text}</span>
+        ) : (
+          <span className={`uc-work-text${stats ? '' : ' loading'}`}>{activitySummary}</span>
+        )}
         {/* A barra mede MISSÕES entregues. Media tarefas quando havia card;
-            eles morreram na purga F6 (2026-08-17) e a missão virou a unidade. */}
-        {stats && agg.missoesTotal > 0 && (
+            eles morreram na purga F6 (2026-08-17) e a missão virou a unidade.
+            Sem versão não há barra: vazia, ela mentiria. */}
+        {stats && !unversioned && agg.missoesTotal > 0 && (
           <div
             className="uc-progress"
             data-tip={
@@ -295,7 +404,10 @@ export default function UniverseCard({ projectId, index, anchor }: Props): React
           <span>sessão fechada</span>
         )}
         <span className="uc-tele-end">
-          {versoes.length > 0 && (
+          {unversioned && (
+            <UnversionedModeTag title="Uma missão por vez; as edições vão direto para a pasta" />
+          )}
+          {!unversioned && versoes.length > 0 && (
             <span
               className={`uc-version ${versoes[0].lancada ? 'live' : ''}`}
               data-tip={

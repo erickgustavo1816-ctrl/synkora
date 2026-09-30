@@ -4,10 +4,10 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
-import { buildProjectContextTools } from '../.tmp/project-context-test/projectContextTools.js'
-import { ProjectContextStore } from '../.tmp/project-context-test/projectContextStore.js'
-import { projectContextSnapshot } from '../.tmp/project-context-test/projectContextGit.js'
-import { registerProjectContextKit, withProjectContextNotice } from '../.tmp/project-context-test/projectContextKit.js'
+import { buildProjectContextTools } from '../.tmp/project-context-test/main/projectContextTools.js'
+import { ProjectContextStore } from '../.tmp/project-context-test/main/projectContextStore.js'
+import { projectContextSnapshot } from '../.tmp/project-context-test/main/projectContextGit.js'
+import { registerProjectContextKit, withProjectContextNotice } from '../.tmp/project-context-test/main/projectContextKit.js'
 
 const OLD = 'a'.repeat(40)
 const NEW = 'b'.repeat(40)

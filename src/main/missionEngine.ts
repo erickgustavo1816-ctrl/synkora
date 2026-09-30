@@ -90,6 +90,8 @@ import {
 } from 'fs'
 import { type Version } from './backlog'
 import { type MainContext } from './mainContext'
+import { isUnversionedProject, openSoloMission, unversionedRefusal } from '../shared/projectVersioning'
+import { soloMissionIsStopping } from './soloMission'
 
 /**
  * Dependências do closure do index que o domínio de missões consome e que
@@ -218,6 +220,7 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
   function missionsWithIntegration(projectId: string): Array<
     Mission & { integration?: ReturnType<typeof integrationQueueView> }
   > {
+    if (isUnversionedProject(projects.get(projectId))) return missions.list(projectId)
     // A closed process is not a completed release. Corrections/publication can
     // remain pending across restarts; only release_done closes the conversation.
     // Reading the board must preserve that durable state, even without a live pane.
@@ -241,6 +244,9 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     projectPath: string,
     mission: Mission
   ): Promise<string | undefined> {
+    const project = projects.get(mission.projectId)
+    if (isUnversionedProject(project))
+      return Promise.resolve(mission.status === 'ativa' && !soloMissionIsStopping(missions, mission.projectId) ? project?.path : undefined)
     return gitOff(
       'resolveMissionWorkspace',
       projectPath,
@@ -267,6 +273,7 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     if (missionTypeOf(mission) === 'planejamento') return mission
     const project = projects.get(mission.projectId)
     if (!project) return mission
+    if (isUnversionedProject(project)) return mission
     const projectPath = project.path
     // Git now yields to the UI. Closing, moving or retargeting a mission while
     // checkout is pending must never revive it or attach stale metadata.
@@ -453,6 +460,7 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     if (!versionId) return undefined
     const project = projects.get(projectId)
     if (!project) return undefined
+    if (isUnversionedProject(project)) return undefined
     const version = backlog.getVersion(versionId)
     if (!version || version.projectId !== projectId) return undefined
     // Versão SEM isolamento ainda não tem base para atrasar: o worktree dela
@@ -559,6 +567,19 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
   ): Promise<Mission | null> {
     const project = projects.get(projectId)
     if (!project || !input.title.trim()) return null
+    if (isUnversionedProject(project)) {
+      const type = missionTypeOf(input)
+      if (type !== 'dev') throw new Error(unversionedRefusal(type === 'release' ? 'release' : 'planning'))
+      if (openSoloMission(missions.list(projectId), projectId) || soloMissionIsStopping(missions, projectId))
+        throw new Error(unversionedRefusal('second-mission'))
+      // Synchronous check + persistence, before the first await: the record
+      // itself reserves the folder for every concurrent creation request.
+      const mission = missions.create(projectId, {
+        ...input, title: input.title.trim(), direct: true, versionId: undefined, pendingOrchestrator: undefined
+      }, reservedId)
+      emitMissionsChanged(projectId)
+      return mission
+    }
     const planning = missionTypeOf(input) === 'planejamento'
     const versionChoices = backlog.missionVersionChoices(projectId)
     const selectedVersion = input.versionId
@@ -617,6 +638,7 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     projectId: string,
     input?: { id?: string; name?: string; theme?: string; goal?: string }
   ): { versionId?: string; name?: string; error?: string } {
+    if (isUnversionedProject(projects.get(projectId))) return { error: unversionedRefusal('versions') }
     if (!input?.id && !input?.name?.trim()) return {}
     const byId = input.id ? backlog.getVersion(input.id) : undefined
     const name = input.name?.trim()
@@ -670,6 +692,7 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     missionId: string,
     fallbackOutcome: string
   ): { ok: boolean; doneItems: number } {
+    if (isUnversionedProject(projects.get(projectId))) return { ok: true, doneItems: 0 }
     const mission = missions.get(missionId)
     if (!mission || mission.projectId !== projectId || mission.status !== 'concluida') {
       return { ok: false, doneItems: 0 }
@@ -783,6 +806,7 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     project: { id: string; path: string },
     mission: Mission
   ): Promise<MissionIntegrationTarget | undefined> {
+    if (isUnversionedProject(projects.get(project.id))) return undefined
     const version = mission.versionId ? backlog.getVersion(mission.versionId) : undefined
     if (mission.versionId && (!version || version.projectId !== mission.projectId)) return undefined
     if (!version) {
@@ -980,6 +1004,7 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
    * agente reencontrar com integration_status.
    */
   function restimulateIntegrationOnOpen(paneId: string, projectId: string): void {
+    if (isUnversionedProject(projects.get(projectId))) return
     if (guiMissionRoleOf(paneId) !== 'dev') return
     const ticket = integrationQueue
       .listPending(projectId)
@@ -997,6 +1022,7 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
    * `integration_run` chamado pelo agente.
    */
   function advanceIntegrationQueue(projectId: string): void {
+    if (isUnversionedProject(projects.get(projectId))) return
     // Uma execução em voo já cuida do próprio avanço no fim (ver runMission-
     // Integration): entrar aqui no meio dela estimularia a cabeça que está
     // exatamente sendo mesclada.
@@ -1038,6 +1064,7 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
    * juntos, todos ganham posição antes de qualquer estímulo sair.
    */
   function scheduleIntegrationDrain(projectId: string): void {
+    if (isUnversionedProject(projects.get(projectId))) return
     if (integrationDrainTimers.has(projectId) || integrationDraining.has(projectId)) return
     const timer = setTimeout(() => {
       integrationDrainTimers.delete(projectId)
@@ -1060,6 +1087,7 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     if (!mission) return 'missão não encontrada'
     const project = projects.get(mission.projectId)
     if (!project) return 'projeto não encontrado'
+    if (isUnversionedProject(project)) return unversionedRefusal('integration')
     const missionProjectId = mission.projectId
     const missionTitle = mission.title
     // Bloqueio de integração NUNCA é mudo (2026-08-10: o clique do dono no ⇪
@@ -1327,6 +1355,7 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     const project = projects.get(projectId)
     if (!mission || !project || mission.projectId !== projectId)
       return 'não encontrei esta missão neste universo — nada a informar sobre a fila.'
+    if (isUnversionedProject(project)) return unversionedRefusal('integration')
     const lane = integrationQueue.listPending(projectId)
     const header =
       lane.length === 0
@@ -1396,6 +1425,7 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     const found = missions.get(missionId)
     if (!found || !project || found.projectId !== projectId)
       return 'não encontrei esta missão neste universo — nada foi integrado.'
+    if (isUnversionedProject(project)) return unversionedRefusal('integration')
     if (integrationDraining.has(projectId))
       return 'já existe uma integração em andamento neste universo agora. Espere o desfecho e chame integration_status; a fila é serial de propósito.'
     const opening = integrationQueue.getByMission(missionId)
@@ -2242,6 +2272,7 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
   async function recoverMissionIntegrationIntents(projectId: string, onlyMissionId?: string, keepPaneId?: string): Promise<void> {
     const project = projects.get(projectId)
     if (!project) return
+    if (isUnversionedProject(project)) return
     try {
       await gitOff('ensureSynkoraGitExcludes', project.path)
     } catch {
@@ -2907,7 +2938,7 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
       ctx.livePaneSpecs.delete(pane.paneId)
       ctx.pushAll('panes:closeById', projectId, pane.paneId)
     }
-    syncBoard(projectId)
+    if (!isUnversionedProject(projects.get(projectId))) syncBoard(projectId)
   }
 
   return {

@@ -495,9 +495,13 @@ export type SessionEvent =
     }
   | { type: 'command-completed'; isError: boolean; continues: boolean; errorText?: string }
   | { type: 'limit'; text: string }
+  | { type: 'turn-retry'; turnId: string; text: string }
   | {
       type: 'result'
       isError: boolean
+      /** Mirrored in renderer/guiApi.ts; recovery authority belongs to the registry. */
+      turnId?: string
+      recoveryToken?: string
       outcome?: 'completed' | 'failed' | 'cancelled'
       /**
        * R7-E (2026-08-18) — INTERROMPIDO NÃO É "FALHOU ERRO SEM DETALHE".

@@ -18,7 +18,8 @@ import { ensureSynkoraGitExcludes, hasGitCommit, repairWorktrees } from '../work
 import { gitOff } from '../gitAsync'
 import { ensureProjectSecurityBaseline } from '../projectSecurityBaseline'
 import { cpSync, existsSync } from 'fs'
-import { isEffectivelyEmptyProject } from '../projectFolder'
+import { inspectProjectFolder, isEffectivelyEmptyProject } from '../projectFolder'
+import { isUnversionedProject, openSoloMission, unversionedRefusal, type ProjectVersioning } from '../../shared/projectVersioning'
 import {
   guiPlanningFirstPrompt,
   guiPlanningPaneId,
@@ -46,6 +47,11 @@ export interface ProjectsIpcExtras {
   guiSessions: GuiSessionRegistry
   /** 2.0: encerra o chat de PLANEJAMENTO do projeto (fonte única no index). */
   killProjectGuiPanes(projectId: string): void | Promise<void>
+  /** Grupos (2026-09-29): reconcilia o layout do rail com a lista de
+   *  universos e espalha `projectLayout:changed` quando ele mudou. */
+  syncProjectLayout(): void
+  /** Stops writers in the permanent project folder before changing its cwd. */
+  stopSoloMission(missionId: string, afterStop?: () => void): Promise<void>
 }
 
 /** Resposta do `projects:planningGuiSpec` (2.0, onda C). */
@@ -71,7 +77,8 @@ export function registerProjectsIpc(ctx: MainContext, extras: ProjectsIpcExtras)
     killMaestroSession,
     ensureBypassAccepted,
     guiSessions,
-    killProjectGuiPanes
+    killProjectGuiPanes,
+    syncProjectLayout
   } = extras
   // `missing` é COMPUTADO na listagem (nunca persistido): pasta renomeada ou
   // movida fora do app → a UI mostra o estado quebrado e oferece relocação.
@@ -86,22 +93,32 @@ export function registerProjectsIpc(ctx: MainContext, extras: ProjectsIpcExtras)
     projects.list().map((p) => ({ ...p, missing: !existsSync(p.path) }))
   )
 
-  ipcMain.handle('projects:create', async (_e, name: string, path: string, gitUrl?: string) => {
+  const validateProjectPath = (path: string): void => {
     // GUARDA DE PATH (CHECK 12, 2026-08-07): um path RELATIVO/amassado vira
     // pasta fantasma no cwd do app (caso real: o driver E2E perdeu as barras
     // no escape e "C:\Users\Erick\.synkora-e2e\p1" materializou como
     // "UsersErick.synkora-e2ep1" DENTRO do repo do Synkora, com scaffold
     // completo). Projeto só nasce de path absoluto e nunca dentro do
     // diretório do próprio app.
-    if (!isAbsolute(path)) {
+    if (typeof path !== 'string' || !isAbsolute(path)) {
       throw new Error(
-        `caminho inválido (não é absoluto): "${path.slice(0, 120)}" — provavelmente perdeu as barras no transporte (escape); use forward slashes`
+        'caminho inválido (não é absoluto) — escolha uma pasta com caminho absoluto'
       )
     }
     const appRoot = app.getAppPath().replace(/\\/g, '/').toLowerCase()
     if (path.replace(/\\/g, '/').toLowerCase().startsWith(appRoot)) {
       throw new Error('caminho recusado: a pasta cairia dentro do diretório do próprio Synkora')
     }
+  }
+  ipcMain.handle('projects:inspectFolder', (_e, path: string) => {
+    validateProjectPath(path)
+    return inspectProjectFolder(path)
+  })
+  ipcMain.handle('projects:create', async (_e, name: string, path: string, gitUrl?: string, versioning: ProjectVersioning = 'git') => {
+    validateProjectPath(path)
+    const solo = isUnversionedProject({ versioning })
+    if (solo && gitUrl?.trim()) throw new Error(unversionedRefusal('git-remote'))
+    if (solo && inspectProjectFolder(path).hasGit) throw new Error(unversionedRefusal('git-folder'))
     // GITHUB NO NASCIMENTO (2.0, onda D, item 6): o link é OPCIONAL e decide
     // dois caminhos opostos — pasta vazia CLONA (o universo é o repositório
     // remoto), pasta com conteúdo PUBLICA (init + origin + push). Tudo pelo
@@ -127,9 +144,9 @@ export function registerProjectsIpc(ctx: MainContext, extras: ProjectsIpcExtras)
     // semeadura de um PROJECT_PLAN.json vazio em todo universo novo, que era
     // exatamente o que fazia o dono abrir um projeto recém-criado e encontrar
     // uma segunda aba de plano mostrando zero.
-    const project = projects.create(name, path)
+    const project = projects.create(name, path, versioning)
     try {
-      ensureSynkoraGitExcludes(path)
+      if (!solo) ensureSynkoraGitExcludes(path)
       // `installRepositoryAdapters: false` é o caminho NÃO-INVASIVO que já
       // valia para todo universo com conteúdo: nenhum arquivo do repositório
       // do dono é alterado no cadastro. Se o baseline de segurança quiser
@@ -144,6 +161,7 @@ export function registerProjectsIpc(ctx: MainContext, extras: ProjectsIpcExtras)
       // repositório é alterado para forçar uma migração.
     }
     scheduleProgressSnapshot()
+    syncProjectLayout()
     // O aviso viaja NO projeto (campo extra, nunca persistido): o renderer
     // mostra e segue — a criação já aconteceu.
     return gitWarning ? { ...project, gitWarning } : project
@@ -168,6 +186,7 @@ export function registerProjectsIpc(ctx: MainContext, extras: ProjectsIpcExtras)
       (paneId, record) => record?.projectId === id || isGuiPlanningPaneId(paneId, id)
     )
     scheduleProgressSnapshot()
+    syncProjectLayout()
   })
 
   ipcMain.handle('projects:rename', (_e, id: string, name: string) => {
@@ -238,10 +257,20 @@ export function registerProjectsIpc(ctx: MainContext, extras: ProjectsIpcExtras)
       ctx.pushAll('panes:closeById', id, pane.paneId)
     }
     // 2. caminho novo no store (única fonte de verdade do path)
-    projects.setPath(id, newPath)
+    const soloMission = isUnversionedProject(project) ? openSoloMission(ctx.missions.list(id), id) : undefined
+    if (soloMission) {
+      try {
+        await extras.stopSoloMission(soloMission.id, () => {
+          if (projects.get(id)?.path !== oldPath) throw new Error('project relocated during teardown')
+          projects.setPath(id, newPath)
+        })
+      } catch {
+        return { ok: false, error: 'Não consegui encerrar os processos para mudar a pasta. Reabra o projeto e tente relocalizar novamente.' }
+      }
+    } else projects.setPath(id, newPath)
     // 3. git: o .git dos worktrees (userData/worktrees) aponta p/ o repo no
     // caminho antigo — repair rodado do caminho novo reescreve os ponteiros
-    if (hasGitCommit(newPath)) repairWorktrees(newPath)
+    if (!isUnversionedProject(project) && hasGitCommit(newPath)) repairWorktrees(newPath)
     // 4. sessões claude: copia o dir de conversas do slug antigo p/ o novo em
     // todos os seats + trust do cwd novo (senão o TUI trava no "trust folder")
     const slugOf = (cwd: string): string => cwd.replace(/[^A-Za-z0-9]/g, '-')
@@ -299,6 +328,7 @@ export function registerProjectsIpc(ctx: MainContext, extras: ProjectsIpcExtras)
     (_e, projectId: string, permissionMode?: GuiPermissionMode): PlanningGuiSpecResult => {
     const project = projects.get(projectId)
     if (!project) return { ok: false, error: 'projeto não encontrado' }
+    if (isUnversionedProject(project)) return { ok: false, error: unversionedRefusal('planning') }
     if (!existsSync(project.path))
       return { ok: false, error: 'a pasta do projeto não existe mais — relocalize o universo' }
     if (permissionMode !== undefined && !isGuiPermissionMode(permissionMode))

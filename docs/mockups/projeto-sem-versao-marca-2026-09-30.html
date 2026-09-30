@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mockup · Marca do universo sem versionamento (2026-09-30)</title>
+<style>
+  /* Complemento de projeto-sem-versao-2026-09-30.html: o dono aprovou o mockup
+     inteiro menos a ORELHA ("parece um documento"). Esta página compara
+     alternativas de marca do modo, cada uma nos três lugares onde o avatar
+     mora (rail, cabeçalho do universo, card da Home), sempre ao lado de um
+     universo versionado para contraste. Tokens copiados de global.css. */
+  :root {
+    --paper: #efe9dc; --paper-2: #e8e1d0; --card: #f6f1e6;
+    --ink: #262019; --ink-2: #5f574a; --line: #d9d1bd; --line-strong: #b8ae95;
+    --accent: #d96c3f; --ok: #3e9b5f;
+    --panel: #26241f; --panel-2: #2e2b25; --panel-ink: #efe8d6; --panel-ink-2: #b3aa93;
+    --mono: 'Cascadia Code', Consolas, 'Courier New', monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--paper); color: var(--ink); font: 13px/1.5 var(--mono); }
+  .mk-bar { background: var(--panel); color: var(--panel-ink); padding: 14px 24px; }
+  .mk-bar b { font-size: 13px; }
+  .mk-bar p { margin: 4px 0 0; color: var(--panel-ink-2); font-size: 11.5px; }
+  main { padding: 18px 24px 40px; display: grid; gap: 14px; max-width: 1180px; }
+  .opt { display: grid; grid-template-columns: 250px 92px 300px minmax(0, 1fr); gap: 18px; align-items: center;
+    padding: 14px 16px; border: 1.5px solid var(--line-strong); border-radius: 12px; background: var(--card); }
+  .opt h2 { margin: 0; font-size: 13px; letter-spacing: .08em; text-transform: uppercase; }
+  .opt h2 small { display: block; margin-top: 2px; font-size: 10px; letter-spacing: .12em; color: var(--accent); }
+  .opt p { margin: 6px 0 0; font-size: 11px; color: var(--ink-2); }
+  .opt.rec { border-color: var(--accent); }
+
+  /* rail de projetos (fica como é) */
+  .rail { background: var(--panel); border-radius: 10px; padding: 10px 0; display: flex; flex-direction: column; align-items: center; gap: 9px; }
+  .ri { position: relative; width: 46px; height: 46px; border-radius: 16px; display: grid; place-items: center;
+    background: hsl(var(--h) 30% 26%); color: var(--panel-ink); font: 700 14px/1 var(--mono); }
+  .ri.active { border-radius: 12px; box-shadow: 0 0 0 2px var(--accent); }
+  .ri .dot { position: absolute; right: -3px; bottom: -3px; box-sizing: content-box; width: 9px; height: 9px; border: 3px solid var(--panel); border-radius: 50%; background: var(--ok); }
+
+  /* cabeçalho do universo + card da Home */
+  .ctx { display: grid; gap: 12px; }
+  .hdr { display: flex; align-items: center; gap: 9px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); }
+  .wa { position: relative; flex: none; width: 26px; height: 26px; border-radius: 8px; display: grid; place-items: center;
+    font: 700 10px/1 var(--mono); color: hsl(var(--h) 45% 28%); background: hsl(var(--h) 45% 86%); border: 1px solid hsl(var(--h) 40% 70%); }
+  .hdr b { font-size: 12.5px; }
+  .card { display: flex; align-items: center; gap: 11px; padding: 11px 12px; border: 1.5px solid var(--line-strong); border-radius: 12px; background: var(--card); }
+  .cp { position: relative; flex: none; width: 42px; height: 42px; border-radius: 10px; display: grid; place-items: center;
+    font: 700 13px/1 var(--mono); color: hsl(var(--h) 45% 28%); background: hsl(var(--h) 45% 86%); border: 1px solid hsl(var(--h) 40% 72%); }
+  .card b { font-size: 12.5px; letter-spacing: .12em; }
+  .card small { display: block; font-size: 9.5px; color: var(--ink-2); }
+  .tag { margin-left: auto; height: 18px; padding: 0 6px; display: inline-flex; align-items: center; border: 1px solid var(--line-strong); border-radius: 3px;
+    font-size: 8.5px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-2); white-space: nowrap; }
+  .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+  /* ——— A · CÍRCULO: o universo sem versionamento é redondo; o versionado
+     segue quadrado. Só forma, zero ícone. */
+  .m-circle.ri, .m-circle.ri.active, .m-circle.wa, .m-circle.cp { border-radius: 50%; }
+
+  /* ——— B · SELO DE PASTA: "edita direto na pasta" — um selo com a pasta no
+     canto de baixo à esquerda (o direito é do ponto da missão no rail). */
+  .m-folder .badge { position: absolute; left: -4px; bottom: -4px; width: 17px; height: 17px; border-radius: 6px; display: grid; place-items: center;
+    background: var(--panel-ink); border: 2px solid var(--panel); color: var(--panel); }
+  .m-folder .badge svg { width: 10px; height: 10px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linejoin: round; }
+  .wa.m-folder .badge { width: 13px; height: 13px; left: -4px; bottom: -4px; border-radius: 4px; border-width: 1.5px; border-color: var(--paper); background: var(--ink); color: var(--paper); }
+  .wa.m-folder .badge svg { width: 8px; height: 8px; }
+  .cp.m-folder .badge { border-color: var(--card); background: var(--ink); color: var(--card); }
+
+  /* ——— C · VAZADO: o avatar sem fundo, só o contorno na cor do universo.
+     Versionado é bloco cheio; o modo leve é traço. */
+  .m-hollow.ri { background: transparent; box-shadow: inset 0 0 0 2px hsl(var(--h) 40% 58%); color: hsl(var(--h) 45% 78%); }
+  .m-hollow.ri.active { box-shadow: inset 0 0 0 2px hsl(var(--h) 40% 58%), 0 0 0 2px var(--accent); }
+  .m-hollow.wa, .m-hollow.cp { background: transparent; border: 1.5px solid hsl(var(--h) 40% 50%); color: hsl(var(--h) 45% 30%); }
+
+  /* ——— D · CHANFRO: cantos cortados em ângulo (octógono), sem ícone. */
+  .m-cut.ri, .m-cut.ri.active { border-radius: 0; clip-path: polygon(28% 0, 72% 0, 100% 28%, 100% 72%, 72% 100%, 28% 100%, 0 72%, 0 28%); }
+  .m-cut.ri.active { box-shadow: none; outline: 2px solid var(--accent); outline-offset: 2px; }
+  .m-cut.wa, .m-cut.cp { border-radius: 0; border: 0; clip-path: polygon(28% 0, 72% 0, 100% 28%, 100% 72%, 72% 100%, 28% 100%, 0 72%, 0 28%); }
+  .rail .cutwrap { position: relative; }
+  .rail .cutwrap .dot { position: absolute; right: -3px; bottom: -3px; box-sizing: content-box; width: 9px; height: 9px; border: 3px solid var(--panel); border-radius: 50%; background: var(--ok); }
+
+  @media (max-width: 720px) {
+    main { padding: 12px; gap: 12px; }
+    .opt { grid-template-columns: 1fr; gap: 10px; padding: 12px; }
+    .opt > div:empty { display: none; }
+    .rail { flex-direction: row; justify-content: center; gap: 14px; padding: 9px; }
+    .card { flex-wrap: wrap; }
+  }
+  /* faixa compacta: as quatro lado a lado, cada coluna = rail + cabeçalho + card */
+  .strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+  .col { display: grid; justify-items: center; gap: 8px; padding: 8px 4px 10px; border: 1.5px solid var(--line-strong); border-radius: 10px; background: var(--card); }
+  .col.rec { border-color: var(--accent); }
+  .col h3 { margin: 0; font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; }
+  .col .rail, .col .rail { flex-direction: column; padding: 8px 10px; gap: 8px; }
+  @media (max-width: 720px) { .mk-bar { padding: 8px 12px; } .mk-bar p { display: none; } .col .rail { flex-direction: column; } }
+  .col .ri { width: 38px; height: 38px; font-size: 12px; }
+  .col .ri:not(.m-circle):not(.m-cut) { border-radius: 13px; }
+  .col .ri.active:not(.m-circle):not(.m-cut) { border-radius: 10px; }
+  .col .mini { display: flex; align-items: center; gap: 8px; }
+  .notes { margin-top: 6px; padding: 12px 16px; border: 1px dashed var(--line-strong); border-radius: 10px; font-size: 11.5px; color: var(--ink-2); }
+  .notes b { color: var(--ink); }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-folder" viewBox="0 0 20 20"><path d="M2.5 5.5v10h15v-8.5h-7.5l-2-2h-5.5z"/></symbol>
+</svg>
+
+<header class="mk-bar">
+  <b>Mockup · Marca do universo sem versionamento</b>
+  <p>A orelha saiu (parecia documento). Quatro alternativas, cada uma no rail, no cabeçalho e no card da Home, com um versionado (SY) ao lado. O selo "sem versionamento" continua onde há espaço.</p>
+</header>
+
+<main>
+  <div class="strip" aria-label="As quatro alternativas lado a lado">
+    <div class="col rec"><h3>A · Círculo</h3>
+      <div class="rail"><div class="ri" style="--h:21">SY</div><div class="ri m-circle active" style="--h:145">PC<span class="dot"></span></div><div class="ri m-circle" style="--h:280">CA</div></div>
+      <div class="mini"><span class="wa m-circle" style="--h:145">PC</span><span class="cp m-circle" style="--h:145">PC</span></div></div>
+    <div class="col"><h3>B · Pasta</h3>
+      <div class="rail"><div class="ri" style="--h:21">SY</div><div class="ri m-folder active" style="--h:145">PC<span class="badge"><svg><use href="#i-folder"/></svg></span><span class="dot"></span></div><div class="ri m-folder" style="--h:280">CA<span class="badge"><svg><use href="#i-folder"/></svg></span></div></div>
+      <div class="mini"><span class="wa m-folder" style="--h:145">PC<span class="badge"><svg><use href="#i-folder"/></svg></span></span><span class="cp m-folder" style="--h:145">PC<span class="badge"><svg><use href="#i-folder"/></svg></span></span></div></div>
+    <div class="col"><h3>C · Vazado</h3>
+      <div class="rail"><div class="ri" style="--h:21">SY</div><div class="ri m-hollow active" style="--h:145">PC<span class="dot"></span></div><div class="ri m-hollow" style="--h:280">CA</div></div>
+      <div class="mini"><span class="wa m-hollow" style="--h:145">PC</span><span class="cp m-hollow" style="--h:145">PC</span></div></div>
+    <div class="col"><h3>D · Chanfro</h3>
+      <div class="rail"><div class="ri" style="--h:21">SY</div><div class="cutwrap"><div class="ri m-cut active" style="--h:145">PC</div><span class="dot"></span></div><div class="ri m-cut" style="--h:280">CA</div></div>
+      <div class="mini"><span class="wa m-cut" style="--h:145">PC</span><span class="cp m-cut" style="--h:145">PC</span></div></div>
+  </div>
+  <!-- A -->
+  <section class="opt rec">
+    <div><h2>A · Círculo <small>recomendada</small></h2>
+      <p>Sem versionamento é redondo; versionado segue quadrado. Só forma, nenhum ícone novo. Lê bem até no avatar de 26 px do cabeçalho e não disputa o canto com o ponto da missão.</p></div>
+    <div class="rail">
+      <div class="ri" style="--h:21">SY</div>
+      <div class="ri m-circle active" style="--h:145">PC<span class="dot"></span></div>
+      <div class="ri m-circle" style="--h:280">CA</div>
+    </div>
+    <div class="ctx">
+      <div class="pair">
+        <div class="hdr"><span class="wa" style="--h:21">SY</span><b>Synkora</b></div>
+        <div class="hdr"><span class="wa m-circle" style="--h:145">PC</span><b>Proposta…</b></div>
+      </div>
+      <div class="card"><span class="cp m-circle" style="--h:145">PC</span><div><b>PROPOSTA CLÍNICA</b><small>C:\Users\Erick\Documents\proposta-clinica</small></div><span class="tag">sem versionamento</span></div>
+    </div>
+    <div></div>
+  </section>
+
+  <!-- B -->
+  <section class="opt">
+    <div><h2>B · Selo de pasta</h2>
+      <p>Um selinho com a pasta no canto de baixo: "o agente edita direto na pasta". Diz o que o modo faz, mas é mais um ícone pequeno para ler.</p></div>
+    <div class="rail">
+      <div class="ri" style="--h:21">SY</div>
+      <div class="ri m-folder active" style="--h:145">PC<span class="badge"><svg><use href="#i-folder"/></svg></span><span class="dot"></span></div>
+      <div class="ri m-folder" style="--h:280">CA<span class="badge"><svg><use href="#i-folder"/></svg></span></div>
+    </div>
+    <div class="ctx">
+      <div class="pair">
+        <div class="hdr"><span class="wa" style="--h:21">SY</span><b>Synkora</b></div>
+        <div class="hdr"><span class="wa m-folder" style="--h:145">PC<span class="badge"><svg><use href="#i-folder"/></svg></span></span><b>Proposta…</b></div>
+      </div>
+      <div class="card"><span class="cp m-folder" style="--h:145">PC<span class="badge"><svg><use href="#i-folder"/></svg></span></span><div><b>PROPOSTA CLÍNICA</b><small>C:\Users\Erick\Documents\proposta-clinica</small></div><span class="tag">sem versionamento</span></div>
+    </div>
+    <div></div>
+  </section>
+
+  <!-- C -->
+  <section class="opt">
+    <div><h2>C · Vazado</h2>
+      <p>O avatar perde o fundo e fica só o contorno. Versionado é bloco cheio; o modo leve é traço. Muito discreto no rail escuro.</p></div>
+    <div class="rail">
+      <div class="ri" style="--h:21">SY</div>
+      <div class="ri m-hollow active" style="--h:145">PC<span class="dot"></span></div>
+      <div class="ri m-hollow" style="--h:280">CA</div>
+    </div>
+    <div class="ctx">
+      <div class="pair">
+        <div class="hdr"><span class="wa" style="--h:21">SY</span><b>Synkora</b></div>
+        <div class="hdr"><span class="wa m-hollow" style="--h:145">PC</span><b>Proposta…</b></div>
+      </div>
+      <div class="card"><span class="cp m-hollow" style="--h:145">PC</span><div><b>PROPOSTA CLÍNICA</b><small>C:\Users\Erick\Documents\proposta-clinica</small></div><span class="tag">sem versionamento</span></div>
+    </div>
+    <div></div>
+  </section>
+
+  <!-- D -->
+  <section class="opt">
+    <div><h2>D · Chanfro</h2>
+      <p>Cantos cortados em ângulo (octógono). Forma bem diferente, sem ícone; o anel de "ativo" vira contorno afastado.</p></div>
+    <div class="rail">
+      <div class="ri" style="--h:21">SY</div>
+      <div class="cutwrap"><div class="ri m-cut active" style="--h:145">PC</div><span class="dot"></span></div>
+      <div class="ri m-cut" style="--h:280">CA</div>
+    </div>
+    <div class="ctx">
+      <div class="pair">
+        <div class="hdr"><span class="wa" style="--h:21">SY</span><b>Synkora</b></div>
+        <div class="hdr"><span class="wa m-cut" style="--h:145">PC</span><b>Proposta…</b></div>
+      </div>
+      <div class="card"><span class="cp m-cut" style="--h:145">PC</span><div><b>PROPOSTA CLÍNICA</b><small>C:\Users\Erick\Documents\proposta-clinica</small></div><span class="tag">sem versionamento</span></div>
+    </div>
+    <div></div>
+  </section>
+
+  <div class="notes"><b>Em todas:</b> a marca aparece nos três lugares, e o selo "sem versionamento" acompanha onde há espaço, porque o ícone nunca fica sozinho. A foto que o dono sobe para o universo recebe a mesma forma (recorte no círculo ou no chanfro, ou o selo por cima).</div>
+</main>
+</body>
+</html>

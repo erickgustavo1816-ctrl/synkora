@@ -7,6 +7,7 @@ import {
   rename
 } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { isUnversionedProject, unversionedRefusal, type ProjectVersioning } from '../shared/projectVersioning'
 
 /**
  * P26 — contrato do menu da árvore.
@@ -21,6 +22,7 @@ export interface FileActionScope {
 
 export interface FileActionProjectRecord {
   path: string
+  versioning?: ProjectVersioning
 }
 
 /**
@@ -204,7 +206,12 @@ export function resolveFileActionRoot(
     throw new FileActionError('invalid-scope')
   }
   if (mission.status !== undefined && mission.status !== 'ativa') {
+    if (isUnversionedProject(project)) throw new FileActionError('mission-closed', unversionedRefusal('reopen'))
     throw new FileActionError('mission-closed')
+  }
+  if (isUnversionedProject(project)) {
+    if (mission.status !== 'ativa') throw new FileActionError('mission-closed', unversionedRefusal('reopen'))
+    return project.path
   }
   const worktree = mission.worktree
   if (worktree === undefined || worktree === '') {

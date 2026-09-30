@@ -34,6 +34,7 @@ import { CONTEXT_TOOL_NAMES } from './projectContextKit'
 import { PLAN_TOOL_NAMES } from './planToolCatalog'
 import { RELEASE_MISSION_TOOL_NAMES } from './releaseMissionTools'
 import { GUI_PLAN_APPROVAL_CLAUDE_TOOL } from './guiPlanApproval'
+import type { ProjectVersioning } from '../shared/projectVersioning'
 
 /** A cerca anti-subagente-nativo do claude (sonda 2026-08-18: cerca de 1-2
  *  nomes NÃO basta — o modelo desvia por RemoteTrigger etc.; esta lista de 12
@@ -85,6 +86,7 @@ export const GUI_DELEGATE_CODEX_TOOL_TIMEOUT_SEC = 300
 export const CODEX_NATIVE_AGENT_FENCE_ARG = 'features.multi_agent=false'
 
 export interface GuiDelegateMcpInput {
+  projectVersioning?: ProjectVersioning
   paneId: string
   projectId: string
   cwd: string
@@ -115,9 +117,11 @@ export type GuiPaneToolKind = 'planner' | 'delegator' | 'release' | 'none'
 
 export function guiPaneToolKind(
   paneId: string,
-  mission: { missionType?: string } | undefined
+  mission: { missionType?: string } | undefined,
+  versioning: ProjectVersioning = 'git'
 ): GuiPaneToolKind {
   if (!mission || !guiMissionRoleOf(paneId)) return 'none'
+  if (versioning === 'none') return missionTypeOf(mission) === 'dev' && guiMissionRoleOf(paneId) === 'dev' ? 'delegator' : 'none'
   // O tipo da MISSÃO decide, não o papel do pane: o planejamento roda num pane
   // `gui-dev-<id8>` (papel dev, missão de planejamento) e é planejador. Missão
   // legada sem carimbo é 'dev' por definição — nada no disco muda de natureza.
@@ -247,7 +251,8 @@ export const GUI_PLANNER_CLAUDE_ALLOWED_TOOLS: readonly string[] = [
  *  integração/release/browser). */
 export function guiDelegateClaudeArgs(
   mcpFile: string,
-  role: 'gui-delegator' | 'gui-release' | 'gui-planner' = 'gui-delegator'
+  role: 'gui-delegator' | 'gui-release' | 'gui-planner' = 'gui-delegator',
+  versioning: ProjectVersioning = 'git'
 ): string[] {
   return [
     // `--strict-mcp-config`: o chat que delega não herda MCP do seat. Servidor
@@ -260,7 +265,8 @@ export function guiDelegateClaudeArgs(
     (role === 'gui-planner'
       ? GUI_PLANNER_CLAUDE_ALLOWED_TOOLS
       : role === 'gui-release' ? GUI_RELEASE_CLAUDE_ALLOWED_TOOLS : GUI_DELEGATE_CLAUDE_ALLOWED_TOOLS
-    ).join(',')
+    ).filter(tool => versioning !== 'none' || !tool.startsWith('mcp__synkora__integration_') &&
+      !tool.startsWith('mcp__synkora__release_') && !PLAN_TOOL_NAMES.some(name => tool === `mcp__synkora__${name}`)).join(',')
   ]
 }
 
@@ -297,8 +303,10 @@ export function armGuiDelegateMcp(
    *  PLANEJADOR também entra por aqui: planos + ajudantes num papel só. */
   role: 'gui-delegator' | 'gui-release' | 'gui-planner' = 'gui-delegator'
 ): GuiPlannerMcp | undefined {
+  if (input.projectVersioning === 'none' && (role !== 'gui-delegator' || guiMissionRoleOf(input.paneId) !== 'dev')) return undefined
   const port = deps.port()
-  if (port === 0) return undefined
+  if (port === 0) return input.projectVersioning === 'none'
+    ? { args: [], env: { SYNKORA_PROJECT_VERSIONING: 'none' } } : undefined
   const previous = deps.tokenOf(input.paneId)
   const live = previous ? deps.hub.identityByToken(previous) : undefined
   const reusable =
@@ -316,13 +324,13 @@ export function armGuiDelegateMcp(
     const mcpFile = writeClaudeMcpConfig(deps.configRoot(), input.paneId, port, token)
     deps.remember(input.paneId, { token, mcpFile })
     return {
-      args: guiDelegateClaudeArgs(mcpFile, role),
-      env: { MCP_TOOL_TIMEOUT: String(GUI_DELEGATE_CLAUDE_TOOL_TIMEOUT_MS) }
+      args: guiDelegateClaudeArgs(mcpFile, role, input.projectVersioning),
+      env: { MCP_TOOL_TIMEOUT: String(GUI_DELEGATE_CLAUDE_TOOL_TIMEOUT_MS), SYNKORA_PROJECT_VERSIONING: input.projectVersioning ?? 'git' }
     }
   }
   deps.remember(input.paneId, { token })
   return {
     args: guiDelegateCodexArgs(port, role),
-    env: { [GUI_PLANNER_TOKEN_ENV]: token }
+    env: { [GUI_PLANNER_TOKEN_ENV]: token, SYNKORA_PROJECT_VERSIONING: input.projectVersioning ?? 'git' }
   }
 }

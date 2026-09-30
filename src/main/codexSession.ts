@@ -1,4 +1,5 @@
 import { sessionSpawnFailureText } from './sessionSpawnError'
+import { isUnversionedProject, unversionedRefusal } from '../shared/projectVersioning'
 import { CodexUserInputRequests } from './codexUserInput'
 import { codexAsyncQuestionEvent } from './codexAsyncQuestions'
 import { existsSync } from 'fs'
@@ -18,6 +19,7 @@ import {
   shouldArmGuiTurnWatchdog
 } from './guiTurnQueue'
 import { limitGuiToolInput } from './guiToolInput'
+import { redactSensitiveText } from './securityRedaction'
 import { codexCallParcelsFromTokenUsage, codexContextFromTokenUsage } from './codexTokenUsage'
 import { guiCodexUsageSample } from './guiRequestUsage'
 import { terminateGuiProcessTree } from './guiProcessTree'
@@ -419,6 +421,11 @@ function firstLines(text: string, max: number): string {
   return sliced.length <= max ? sliced : sliced.slice(0, max) + '…'
 }
 
+function codexTurnErrorText(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined
+  return firstLines(redactSensitiveText(value), 500) || undefined
+}
+
 function boundedJson(value: Record<string, unknown>, max = 2000): string {
   try {
     return firstLines(JSON.stringify(limitGuiToolInput(value), null, 2), max)
@@ -509,6 +516,7 @@ export class CodexSession {
   private turnStartTimer: NodeJS.Timeout | null = null
   private interruptedStartGeneration: number | null = null
   private turnErrorTimer: NodeJS.Timeout | null = null
+  private turnErrorEpisode: { turnId: string; retryNoted: boolean; errorText?: string } | null = null
   /** Sends aceitos cujo steer/start ainda não encontrou destino definitivo. */
   private nextSendOperation = 0
   private pendingSendOperations = new Set<number>()
@@ -675,6 +683,7 @@ export class CodexSession {
     this.clearInterruptGuard()
     this.clearTurnStartGuard()
     this.clearTurnErrorGuard()
+    this.turnErrorEpisode = null
     this.cancelPendingInteractions()
     this.failPendingRpcs('o painel codex encerrou')
     for (const w of this.capsWaiters.splice(0)) w(this.caps)
@@ -753,6 +762,8 @@ export class CodexSession {
       // pode invalidar uma tentativa mais nova.
       if (this.interruptedTurnId === interruptedTurnId && this.interruptTimer) return true
       this.clearInterruptGuard()
+      this.clearTurnErrorGuard()
+      this.turnErrorEpisode = null
       this.interruptedTurnId = interruptedTurnId
       // R23.1 — ESCALADA: sem confirmação neste prazo o processo CAI (o
       // `failInterrupt` abaixo derruba pelo kill de sempre) e a nota diz a
@@ -985,6 +996,10 @@ export class CodexSession {
   }
 
   private cmdDiff(): Promise<void> {
+    if (isUnversionedProject({ versioning: this.opts.extraEnv?.SYNKORA_PROJECT_VERSIONING === 'none' ? 'none' : 'git' })) {
+      this.finishCommand(unversionedRefusal('history'))
+      return Promise.resolve()
+    }
     // Igual ao TUI: git diff + untracked, direto do repo.
     return new Promise((resolve) => {
       const child = spawn(
@@ -1151,6 +1166,7 @@ export class CodexSession {
     this.clearInterruptGuard()
     this.clearTurnStartGuard()
     this.clearTurnErrorGuard()
+    this.turnErrorEpisode = null
     this.failPendingRpcs('painel codex encerrado')
     for (const w of this.capsWaiters?.splice(0) ?? []) w(this.caps)
     if (this.child) {
@@ -1904,6 +1920,8 @@ export class CodexSession {
           // nasceu enquanto o RPC anterior estava em voo.
           if (!ownsFailedGuiSteer(this.turnId, expectedTurnId)) continue
           this.turnId = null
+          this.clearTurnErrorGuard()
+          this.turnErrorEpisode = null
         }
         if (this.pendingTurnStart) {
           await this.pendingTurnStart.done
@@ -2173,6 +2191,10 @@ export class CodexSession {
           const pending = this.pendingTurnStart
           const shouldInterrupt =
             pending !== null && this.interruptedStartGeneration === pending.generation
+          if (this.turnId !== turn.id) {
+            this.clearTurnErrorGuard()
+            this.turnErrorEpisode = null
+          }
           this.turnId = turn.id
           if (pending) {
             // A notificação autoritativa dá destino a ESTE envio mesmo quando
@@ -2299,6 +2321,11 @@ export class CodexSession {
         const turn = p['turn'] as
           | { id?: string; status?: string; error?: { message?: string } }
           | undefined
+        if (turn?.id && this.turnId && turn.id !== this.turnId) break
+        const completedTurnId = turn?.id ?? this.turnId
+        const fallbackErrorText = this.turnErrorEpisode?.turnId === completedTurnId
+          ? this.turnErrorEpisode.errorText
+          : undefined
         const outcome = guiCodexTurnOutcome(turn?.status)
         if (this.cancelQueuedTurnId && turn?.id && turn.id !== this.cancelQueuedTurnId) break
         // The server's interrupted terminal proves pending steers were dropped.
@@ -2323,6 +2350,7 @@ export class CodexSession {
         this.cancelPendingInteractions()
         this.clearInterruptGuard()
         this.clearTurnErrorGuard()
+        this.turnErrorEpisode = null
         this.turnId = null
         // Turno raiz que NÃO concluiu (interrupção confirmada pelo servidor,
         // falha) leva os sub-agentes junto: eles pertencem a este turno e
@@ -2332,6 +2360,7 @@ export class CodexSession {
         const result: Extract<SessionEvent, { type: 'result' }> = interrupted
           ? {
               type: 'result',
+              ...(completedTurnId ? { turnId: completedTurnId } : {}),
               isError: false,
               outcome: 'cancelled',
               interrupted: true,
@@ -2339,9 +2368,11 @@ export class CodexSession {
             }
           : {
               type: 'result',
+              ...(completedTurnId ? { turnId: completedTurnId } : {}),
               isError: outcome === 'failed',
               outcome,
-              errorText: turn?.error?.message
+              errorText: codexTurnErrorText(turn?.error?.message) ??
+                (outcome === 'failed' ? fallbackErrorText : undefined)
             }
         // Respostas RPC resolvidas no mesmo chunk retomam em microtask. Só
         // depois delas sabemos se uma mensagem aceita precisa abrir outro turno.
@@ -2356,14 +2387,31 @@ export class CodexSession {
       }
       case 'error': {
         const payload = p['error'] as { message?: unknown; willRetry?: boolean } | undefined
-        const m = payload?.message ?? p['message']
-        const message = `codex: ${typeof m === 'string' ? firstLines(m, 500) : boundedJson(p, 200)}`
-        this.emit({
-          type: 'limit',
-          text: message
-        })
-        if (!guiCodexErrorWillRetry(p))
-          this.armTurnErrorGuard(message + ' — o turno não encerrou corretamente')
+        const message = codexTurnErrorText(payload?.message ?? p['message']) ??
+          'O Codex interrompeu a resposta sem informar o motivo.'
+        const errorTurnId = guiCodexString(p['turnId'])
+        if (!errorTurnId || errorTurnId !== this.turnId) {
+          this.emit({ type: 'limit', text: `codex: ${message}` })
+          break
+        }
+        if (this.interruptedTurnId === errorTurnId) break
+        if (this.turnErrorEpisode?.turnId !== errorTurnId)
+          this.turnErrorEpisode = { turnId: errorTurnId, retryNoted: false }
+        const episode = this.turnErrorEpisode
+        episode.errorText = message
+        if (guiCodexErrorWillRetry(p)) {
+          this.clearTurnErrorGuard()
+          if (!episode.retryNoted) {
+            episode.retryNoted = true
+            this.emit({
+              type: 'turn-retry',
+              turnId: errorTurnId,
+              text: 'O serviço interrompeu a resposta e está tentando novamente.'
+            })
+          }
+        } else {
+          this.armTurnErrorGuard(`codex: ${message} — o turno não encerrou corretamente`)
+        }
         break
       }
       default:

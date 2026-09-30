@@ -6,12 +6,23 @@ import FilesView from '../components/FilesView'
 import BacklogView from '../components/BacklogView'
 import UniverseMapView from '../components/UniverseMapView'
 import GuiPanelErrorBoundary from '../components/GuiPanelErrorBoundary'
+import SoloProject from '../components/SoloProject'
+import { isUnversionedProject } from '../../../shared/projectVersioning'
 
 interface Props {
   projectId: string
 }
 
+/** O universo aberto. A MODALIDADE decide a tela (2026-09-30): o projeto sem
+ *  versionamento tem tela própria, desenhada do zero (uma missão por vez, a
+ *  missão É a tela); o versionado segue com o Board de sempre. */
 export default function Universe({ projectId }: Props): React.JSX.Element {
+  const project = useStore((s) => s.projects.find((p) => p.id === projectId))
+  if (project && isUnversionedProject(project)) return <SoloProject project={project} />
+  return <VersionedUniverse projectId={projectId} />
+}
+
+function VersionedUniverse({ projectId }: Props): React.JSX.Element {
   const project = useStore((s) => s.projects.find((p) => p.id === projectId))
 
   // A aba PANES morreu na onda D (o deck de terminais saiu do caminho) e o

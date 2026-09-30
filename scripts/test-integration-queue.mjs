@@ -576,7 +576,8 @@ const gitAsyncStub = {
 }
 
 const requireCompiled = createRequire(import.meta.url)
-const COMPILED = join(import.meta.dirname, '..', '.tmp', 'integration-queue-test')
+// `--rootDir src` (package.json) emits under main/ — the old path never existed
+const COMPILED = join(import.meta.dirname, '..', '.tmp', 'integration-queue-test', 'main')
 const loadModule = Module._load
 Module._load = function (request, parent, isMain) {
   if (request === 'electron') return electronStub
@@ -602,7 +603,9 @@ test('completed mission summaries are projected into version history and repaire
   const mission = missions.create(projectId, { title: 'Busca corrigida', direct: true, versionId: version.id })
   const summary = 'A busca voltou a encontrar os itens pelo nome. Os resultados aparecem sem repetir a pesquisa.'
   const pushes = []
-  const engine = createMissionEngine({ missions, backlog, syncBoard: () => {}, hub: { publish: () => {} } }, {
+  // a versioned project (no `versioning` key): the engine asks the modality first
+  const projects = { get: (id) => (id === projectId ? { id: projectId, path: userData } : undefined) }
+  const engine = createMissionEngine({ missions, backlog, projects, syncBoard: () => {}, hub: { publish: () => {} } }, {
     emitBacklogChanged: id => pushes.push(id)
   })
   missions.update(mission.id, { summary, status: 'concluida' })
@@ -632,6 +635,7 @@ test('release pendente sobrevive à leitura depois de reiniciar sem pane vivo', 
   const { store: queue } = temporaryStore(t)
   const ctx = {
     missions: reopened, backlog: { getVersion: () => ({ status: 'lancada' }) }, integrationQueue: queue,
+    projects: { get: (id) => (id === projectId ? { id: projectId, path: userData } : undefined) },
     blackbox: { record: () => {} }, pushAll: () => {}, scheduleProgressSnapshot: () => {}
   }
   const engine = createMissionEngine(ctx, { paneAlive: () => false })

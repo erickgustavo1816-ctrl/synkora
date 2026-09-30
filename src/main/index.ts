@@ -11,6 +11,8 @@
 import {    join, resolve } from 'path'
 import { pathToFileURL } from 'url'
 import { ProjectStore } from './projects'
+import { isUnversionedProject, projectVersioning, unversionedRefusal } from '../shared/projectVersioning'
+import { ProjectLayoutStore } from './projectLayoutStore'
 import { SeatStore, type SeatCli } from './seats'
 import { PERSONA_DEV, SURVEY_SECURITY_PROMPT } from './maestro'
 import { MaestroStore } from './maestroStore'
@@ -63,6 +65,7 @@ import { registerMissionsIpc } from './ipc/missions'
 import { registerPtyIpc } from './ipc/pty'
 import { registerPanesIpc } from './ipc/panes'
 import { registerProjectsIpc } from './ipc/projects'
+import { registerProjectLayoutIpc, syncProjectLayout } from './ipc/projectLayout'
 import { registerBacklogIpc } from './ipc/backlog'
 import { registerFilesIpc } from './ipc/files'
 import { registerSettingsIpc } from './ipc/settings'
@@ -110,7 +113,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renam
 import { StallAttribution, instrumentIpcMain } from './stallAttribution'
 import { gitOff } from './gitAsync'
 import {} from 'child_process'
-import {   } from 'crypto'
+import { randomUUID } from 'crypto'
 import { PtyManager } from './pty'
 import { SessionStatsWatcher } from './sessionStats'
 import { Hub, type PaneIdentity } from './hub'
@@ -2420,6 +2423,13 @@ app.whenReady().then(async () => {
   // Fase 0: cargas síncronas dos stores no boot são etapa medida
   const endBootStores = mainStalls.begin('boot:stores')
   projects = new ProjectStore()
+  // Grupos de universos (2026-09-29): a ordem do rail num arquivo próprio,
+  // sempre reconciliada com o projects.json.
+  const projectLayout = new ProjectLayoutStore({
+    file: join(app.getPath('userData'), 'project-layout.json'),
+    listProjectIds: () => projects.list().map((p) => p.id),
+    newId: randomUUID
+  })
   seats = new SeatStore()
   const missions = new MissionStore()
   // Planos do universo (2.0, onda D): a fonte das abas do MAPA. Fica em
@@ -2434,7 +2444,8 @@ app.whenReady().then(async () => {
   const releases = new ReleasesStore(join(app.getPath('userData'), 'releases.json'))
   const releaseChangesStore = new ReleaseChangesStore(join(app.getPath('userData'), 'release-changes.json'))
   const releaseMutationLocks = new Set<string>()
-  const backlog = new BacklogStore()
+  const backlog = new BacklogStore(undefined, projectId =>
+    isUnversionedProject(projects.get(projectId)) ? unversionedRefusal('versions') : undefined)
   const projectContext = buildProjectContextTools({
     projects, missions, versions: backlog, plans,
     notes: new ProjectContextStore(join(app.getPath('userData'), 'project-context.json')),
@@ -2485,7 +2496,7 @@ app.whenReady().then(async () => {
   const ensureProjectRuntimeWritable = (projectId: string): void => {
     const project = projects.get(projectId)
     if (!project) throw new Error('projeto não encontrado')
-    ensureSynkoraGitExcludes(project.path)
+    if (!isUnversionedProject(project)) ensureSynkoraGitExcludes(project.path)
   }
   const synVoice = new SynVoiceService()
 
@@ -2552,6 +2563,7 @@ app.whenReady().then(async () => {
 
   hub = new Hub({
     projectPathOf: (pid) => projects.get(pid)?.path,
+    projectVersioningOf: (pid) => projectVersioning(projects.get(pid)),
     ensureProjectRuntimeWritable: ensureSynkoraGitExcludes,
     onEvent: (evt) => {
       // Caixa-preta: TODO evento do hub (mensagens/estados entre agentes) vira
@@ -2968,7 +2980,7 @@ app.whenReady().then(async () => {
   async function recoverVersionReleaseIntents(projectId: string, onlyVersionId?: string): Promise<Map<string, string>> {
     const outcomes = new Map<string, string>()
     const project = projects.get(projectId)
-    if (!project) return outcomes
+    if (!project || isUnversionedProject(project)) return outcomes
     try {
       ensureSynkoraGitExcludes(project.path)
     } catch {
@@ -3099,6 +3111,7 @@ app.whenReady().then(async () => {
   async function releaseVersionImpl(versionId: string, actor: string): Promise<string> {
     const version = backlog.getVersion(versionId)
     if (!version) return 'versão não encontrada'
+    if (isUnversionedProject(projects.get(version.projectId))) return unversionedRefusal('release')
     if (releaseMutationLocks.has(version.projectId))
       return 'uma operação de release está em andamento; aguarde e leia release_status'
     releaseMutationLocks.add(version.projectId)
@@ -3425,7 +3438,7 @@ app.whenReady().then(async () => {
     const project = projects.get(projectId)
     if (!project) return 0
     try {
-      ensureSynkoraGitExcludes(project.path)
+      ensureProjectRuntimeWritable(projectId)
     } catch {
       return 0
     }
@@ -3487,7 +3500,7 @@ app.whenReady().then(async () => {
     const project = projects.get(projectId)
     if (!project) return
     try {
-      ensureSynkoraGitExcludes(project.path)
+      ensureProjectRuntimeWritable(projectId)
       const dir = join(project.path, '.synkora')
       mkdirSync(dir, { recursive: true })
       const ms = missions.list(projectId)
@@ -3573,6 +3586,7 @@ app.whenReady().then(async () => {
       blackbox.record({ cat: 'mcp', event: 'lsp-protocol', actor: 'harness', err: message })
   })
   const guiLspTools = buildGuiLspTools({
+    projectVersioning: (projectId) => projectVersioning(projects.get(projectId)),
     manager: lspManager,
     // A MESMA fonte do trilho de diff do dono, e pelo mesmo caminho: o
     // gitWorker. Git no main thread foi a causa raiz das travadas de 08-04, e
@@ -3730,6 +3744,12 @@ app.whenReady().then(async () => {
   bindMobileOwnerWindow = mobile.bindOwnerWindow
   mobile.installQuit(app)
   const killMissionGuiPanes = (missionId: string, keepPaneId?: string): Promise<void> => {
+    const mission = missions.get(missionId)
+    const project = mission ? projects.get(mission.projectId) : undefined
+    if (isUnversionedProject(project)) {
+      guiHelperEngine.cancelPane(guiMissionPaneId('dev', missionId), 'a missão encerrou seus processos')
+      if (project) lspManager.invalidate(project.path)
+    }
     const closing = mobile.closeMission(missionId)
     guiSessions?.killWhere((paneId) => paneId !== keepPaneId && isGuiMissionPaneId(paneId, missionId))
     // O servidor de linguagem tem `cwd` DENTRO do worktree, igual aos chats:
@@ -3737,7 +3757,7 @@ app.whenReady().then(async () => {
     // merge da fila e o "excluir de vez"), e um processo segurando a pasta é o
     // que trava a limpeza do git no Windows. Derrubar aqui é o par exato do
     // kill dos panes — a próxima pergunta em outra raiz sobe um servidor novo.
-    const worktree = missions.get(missionId)?.worktree
+    const worktree = isUnversionedProject(project) ? undefined : mission?.worktree
     if (worktree) lspManager.invalidate(worktree)
     // O BROWSER MORRE NO MESMO PONTO (design H1/H2). É a costura que o design
     // pede nominalmente: arquivar, integrar e "excluir de vez" passam todos
@@ -3890,6 +3910,7 @@ app.whenReady().then(async () => {
     })
   }
   const guiHelperEngine = createGuiHelperEngine({
+    projectVersioning: (projectId) => projectVersioning(projects.get(projectId)),
     // A FROTA SOBREVIVE AO APP (R6.1): sem este arquivo nada persiste e o boot
     // não reencontra ninguém — a ordem do dono só existe com esta linha.
     storeFile: join(app.getPath('userData'), GUI_HELPERS_STORE_FILE),
@@ -3953,6 +3974,7 @@ app.whenReady().then(async () => {
   // delegador (helper_cancel).
   setInterval(() => guiHelperEngine.sweep(), 60_000).unref()
   const guiDelegation = buildGuiDelegationApi({
+    projectVersioning: (projectId) => projectVersioning(projects.get(projectId)),
     releaseAllowed: (identity) => {
       const mission = identity.missionId ? missions.get(identity.missionId) : undefined
       return !releaseConversationError({ identity, mission,
@@ -4137,6 +4159,7 @@ app.whenReady().then(async () => {
   })
 
   const missionSummaries = buildMissionSummaries({
+    projectVersioning: (projectId) => projectVersioning(projects.get(projectId)),
     missions,
     reconcile: (mission) => missionEngine.reconcileConcludedMission(
       mission.projectId, mission.id, `Missão integrada: ${mission.title}.`
@@ -4185,6 +4208,7 @@ app.whenReady().then(async () => {
     // releaseVersionImpl sem executá-lo, e o run é o próprio impl com o
     // sinal estrutural de sucesso (status 'lancada') concluindo a missão.
     releaseStatus: (id) => {
+      if (isUnversionedProject(projects.get(id.projectId))) return unversionedRefusal('release')
       const mission = id.missionId ? missions.get(id.missionId) : undefined
       const version = mission?.versionId ? backlog.getVersion(mission.versionId) : undefined
       const project = version ? projects.get(version.projectId) : undefined
@@ -4272,6 +4296,7 @@ app.whenReady().then(async () => {
       })
     },
     releaseTarget: async (id, branch) => {
+      if (isUnversionedProject(projects.get(id.projectId))) return unversionedRefusal('release')
       const scope = releaseChanges.inspect(id)
       if (scope.error) return scope.error
       const mission = id.missionId ? missions.get(id.missionId) : undefined
@@ -4292,6 +4317,7 @@ app.whenReady().then(async () => {
       } finally { releaseMutationLocks.delete(project.id) }
     },
     releaseRun: async (id) => {
+      if (isUnversionedProject(projects.get(id.projectId))) return unversionedRefusal('release')
       const mission = id.missionId ? missions.get(id.missionId) : undefined
       const version = mission?.versionId ? backlog.getVersion(mission.versionId) : undefined
       if (!mission || !version)
@@ -4319,12 +4345,13 @@ app.whenReady().then(async () => {
         version.id
       )
     },
-    releaseSave: (id, input) => releaseChanges.save(id, input),
-    releasePush: (id, expectedHead) => releaseChanges.push(id, expectedHead),
+    releaseSave: (id, input) => isUnversionedProject(projects.get(id.projectId)) ? Promise.resolve(unversionedRefusal('release')) : releaseChanges.save(id, input),
+    releasePush: (id, expectedHead) => isUnversionedProject(projects.get(id.projectId)) ? Promise.resolve(unversionedRefusal('release')) : releaseChanges.push(id, expectedHead),
     // R38 — O FECHO É DO AGENTE. A plumbing do fecho é a MESMA de sempre
     // (missions.update + emitBacklogChanged + missions:changed + syncBoard);
     // o que mudou é o GATILHO: era a ascensão, agora é a decisão do agente.
     releaseDone: (id) => {
+      if (isUnversionedProject(projects.get(id.projectId))) return unversionedRefusal('release')
       const mission = id.missionId ? missions.get(id.missionId) : undefined
       if (!mission) return 'esta conversa não está ligada a uma missão — não há release a encerrar.'
       const version = mission.versionId ? backlog.getVersion(mission.versionId) : undefined
@@ -4377,7 +4404,7 @@ app.whenReady().then(async () => {
     // R18.1: a casca aguarda — o motor mandou os ~7 gits desta fotografia para
     // o gitWorker e o handler MCP da tool sempre foi assíncrono.
     integrationStatus: async (id) =>
-      id.missionId
+      isUnversionedProject(projects.get(id.projectId)) ? unversionedRefusal('integration') : id.missionId
         ? missionEngine.missionIntegrationStatus(id.projectId, id.missionId)
         : 'esta conversa não está ligada a uma missão — não há fila de integração a consultar.',
     missionSummary: (id, summary) => missionSummaries.save(id, summary).text,
@@ -4386,6 +4413,7 @@ app.whenReady().then(async () => {
     planApproval: (id, input) => guiSessions?.planApproval(id, input) ??
       { ok: false, error: 'conversa indisponível; escreva o plano como texto normal no chat e peça a aprovação com o cartão de pergunta' },
     integrationRun: async (id, summary) => {
+      if (isUnversionedProject(projects.get(id.projectId))) return unversionedRefusal('integration')
       const receipt = missionSummaries.prepareIntegration(id, summary)
       if (!receipt.ok) return receipt.text
       return missionEngine.runMissionIntegration(id.projectId, id.missionId!)
@@ -4406,6 +4434,7 @@ app.whenReady().then(async () => {
     // só enxerga membros-função, e cada método já escreve o próprio diário.
     skills: guiSkillTools,
     context: projectContext,
+    projectVersioning: (projectId) => projectVersioning(projects.get(projectId)),
     hub
   }
 
@@ -4610,11 +4639,11 @@ app.whenReady().then(async () => {
   const CLIP_TTL = 14 * 86_400_000
   for (const p of projects.list()) {
     try {
-      ensureSynkoraGitExcludes(p.path)
+      if (!isUnversionedProject(p)) ensureSynkoraGitExcludes(p.path)
     } catch {
       continue
     }
-    pruneWorktrees(p.path)
+    if (!isUnversionedProject(p)) pruneWorktrees(p.path)
     const runsDir = join(p.path, '.synkora', 'runs')
     try {
       for (const ent of readdirSync(runsDir)) {
@@ -4662,6 +4691,11 @@ app.whenReady().then(async () => {
   // no gate que já estava rodando, sobre o mesmo worktree. Assim um restart
   // nunca paga outra implementação por causa de um gate perdido.
   for (const p of projects.list()) {
+    if (isUnversionedProject(p)) {
+      sweepProjectFiles(p.id, { preserveInterruptedHelpers: true })
+      syncBoard(p.id)
+      continue
+    }
     let runtimeWritable = true
     try {
       ensureSynkoraGitExcludes(p.path)
@@ -4815,6 +4849,7 @@ app.whenReady().then(async () => {
   const releaseWorkspaceForMission = async (mission: Mission) => {
     const version = mission.versionId ? backlog.getVersion(mission.versionId) : undefined
     const project = projects.get(mission.projectId)
+    if (isUnversionedProject(project)) return { error: unversionedRefusal('release') }
     const recordedBranch = version ? releases.listForVersion(version.id)[0]?.branch : undefined
     const target = project && version ? await gitOff('inspectReleaseTarget', project.path,
       version.status === 'lancada' ? recordedBranch : version.releaseTargetBranch) : undefined
@@ -4917,8 +4952,11 @@ app.whenReady().then(async () => {
     ensureBypassAccepted,
     discardUnstartedPane,
     guiSessions: guiSessionRegistry,
-    killProjectGuiPanes
+    killProjectGuiPanes,
+    stopSoloMission: missionLifecycle.stopSolo,
+    syncProjectLayout: () => syncProjectLayout(projectLayout, pushAll)
   })
+  registerProjectLayoutIpc(ctx, { store: projectLayout, assertAppRendererSender })
   registerBacklogIpc(ctx, {
     emitBacklogChanged,
     releaseVersionImpl,
@@ -4942,6 +4980,7 @@ app.whenReady().then(async () => {
     surveySystemPromptFile
   })
   registerMissionsIpc(ctx, {
+    assertAppRendererSender,
     resolveReleaseWorkspace: releaseWorkspaceForMission,
     lifecycle: missionLifecycle,
     projectContextBriefing: projectContext.briefing,

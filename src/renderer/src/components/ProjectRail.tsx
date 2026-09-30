@@ -1,63 +1,113 @@
-import { useEffect, useRef, useState } from 'react'
-import { useStore, type Mission } from '../store'
-import { projectMissionActivity, projectMissionActivityLabel } from '../projectMissionActivity'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import type { ProjectLayoutDropTarget, ProjectLayoutGroupEntry } from '../../../shared/projectLayout'
+import { useStore } from '../store'
+import { projectMissionActivityLabel } from '../projectMissionActivity'
 import { useProjectMissionActivity } from '../useProjectMissionActivity'
+import { useProjectLayout } from '../projectLayoutStore'
+import { railDropHint, railDropOp, type RailDragSource } from '../railDragModel'
+import { railEntries, railProjectTip, railRenderedCount } from '../railGroupPresentation'
+import { useRailDrag, type RailDragState } from '../useRailDrag'
 import { hueOf, initialsOf } from '../util'
+import { isUnversionedProject } from '../../../shared/projectVersioning'
+import { projectNameWithMode, railTipWithMode } from '../unversionedPresentation'
 import SynkoraMark from './SynkoraMark'
+import UnversionedFolderSeal from './UnversionedFolderSeal'
 import NewUniverseModal from './NewUniverseModal'
 import GuiPanelErrorBoundary from './GuiPanelErrorBoundary'
 import AppUpdateBadge from './AppUpdateBadge'
+import RailContextMenu, { type RailMenuRequest, type RailMenuTarget } from './RailContextMenu'
+import RailGroupSheet from './RailGroupSheet'
+import {
+  hueStyle,
+  RailFolderGrid,
+  RailGroupCapsule,
+  RailGroupFolder,
+  railProjectActivity,
+  railProjectAttention
+} from './RailGroupFolder'
 import './ProjectRail.css'
 
-// Referência estável para seletores (regra do projeto: nunca `?? []` inline).
-const NO_PANES: never[] = []
-const NO_MISSIONS: Mission[] = []
+/** Quanto dura a "marca" de uma pasta que acabou de nascer/abrir (o pop de
+ *  260 ms e a entrada escalonada dos filhos cabem aqui dentro). */
+const JUST_MARK_MS = 450
 
-function RailItem({ projectId }: { projectId: string }): React.JSX.Element | null {
+interface RailItemProps {
+  projectId: string
+  /** grupo aberto que contém o tile (null = solto no nível de cima) */
+  groupId: string | null
+  tipsOff: boolean
+  isDragging: boolean
+  dropCombine: boolean
+}
+
+function RailItem({ projectId, groupId, tipsOff, isDragging, dropCombine }: RailItemProps): React.JSX.Element | null {
   const project = useStore((s) => s.projects.find((p) => p.id === projectId))
   const active = useStore((s) => s.appPage === 'workspace' && s.openProjectId === projectId)
-  const activity = useStore(s => projectMissionActivity(projectId, s.missionsByProject[projectId] ?? NO_MISSIONS, s.guiPanes))
+  const activity = useStore((s) => railProjectActivity(s, projectId))
   // Atenção do projeto visível de QUALQUER lugar (pedido do usuário,
   // 2026-08-06): um pane pedindo permissão faz o avatar pulsar até o dono ir
   // lá resolver. O canal ask_user saiu na purga F6 — a pergunta do agente na
   // era 2.0 mora dentro da conversa.
-  const attention = useStore((s) =>
-    (s.panesByProject[projectId] ?? NO_PANES).some((p) => s.paneAttention[p.id])
-  )
+  const attention = useStore((s) => railProjectAttention(s, projectId))
   const openProject = useStore((s) => s.openProject)
-  const setProjectPhoto = useStore((s) => s.setProjectPhoto)
 
   if (!project) return null
   const missing = project.missing === true
+  // SEM VERSIONAMENTO (2026-09-30): o selo de pasta no canto de baixo à
+  // esquerda (o direito é do ponto da missão) e o modo dito no nome acessível
+  const unversioned = isUnversionedProject(project)
   const activityLabel = projectMissionActivityLabel(activity)
+  const className = [
+    'rail-item',
+    active ? 'active' : '',
+    missing ? 'missing' : '',
+    attention && !missing ? 'attn' : '',
+    isDragging ? 'is-dragging' : '',
+    dropCombine ? 'drop-combine' : ''
+  ]
+    .filter(Boolean)
+    .join(' ')
   return (
     <button
-      className={`rail-item${active ? ' active' : ''}${missing ? ' missing' : ''}${attention && !missing ? ' attn' : ''}`}
+      type="button"
+      className={className}
       style={{ ['--card-hue' as string]: hueOf(project.name) }}
-      aria-label={`${project.name} — ${missing ? 'pasta não encontrada' : activityLabel}`}
+      // o que o arraste mede: solto é um slot do nível de cima; dentro da
+      // cápsula é um filho do grupo
+      data-slot={groupId === null ? 'p' : undefined}
+      data-child={groupId === null ? undefined : ''}
+      data-gid={groupId ?? undefined}
+      data-pid={project.id}
+      aria-label={`${projectNameWithMode(project.name, unversioned)} — ${missing ? 'pasta não encontrada' : activityLabel}`}
+      data-tip-side="right"
       data-tip={
-        missing
-          ? `${project.name}\npasta não encontrada — corrija na Home (📁 alterar pasta)`
-          : `${project.name}\n${activityLabel}${attention ? '\n❓ um agente está esperando você aqui' : ''}\nclique direito: definir foto`
+        tipsOff
+          ? undefined
+          : railTipWithMode(railProjectTip({ name: project.name, missing, attention, activityLabel }), unversioned)
       }
       // pasta morta: abrir o universo só geraria panes quebrados — vai para a
       // Home, onde o card oferece a relocação
       onClick={() => openProject(missing ? null : project.id)}
-      onContextMenu={(e) => {
-        e.preventDefault()
-        void setProjectPhoto(project.id)
-      }}
     >
       {project.photo ? (
         <img src={project.photo} alt="" draggable={false} />
       ) : (
         <span className="rail-initials">{initialsOf(project.name)}</span>
       )}
-      {attention && !missing && !activity && <span className="rail-ask-dot" data-tip="Um agente precisa de você" />}
-      {activity && !missing && (
-        <span className="rail-mission-dot" data-activity={activity} data-tip={activityLabel} aria-hidden="true" />
+      {unversioned && <UnversionedFolderSeal size="rail" />}
+      {attention && !missing && !activity && (
+        <span className="rail-ask-dot" data-tip-side="right" data-tip={tipsOff ? undefined : 'Um agente precisa de você'} />
       )}
-      {missing && <span className="rail-warn-dot" data-tip="Pasta não encontrada" />}
+      {activity && !missing && (
+        <span
+          className="rail-mission-dot"
+          data-activity={activity}
+          data-tip-side="right" data-tip={tipsOff ? undefined : activityLabel}
+          aria-hidden="true"
+        />
+      )}
+      {missing && <span className="rail-warn-dot" data-tip-side="right" data-tip={tipsOff ? undefined : 'Pasta não encontrada'} />}
     </button>
   )
 }
@@ -95,8 +145,108 @@ function useRailListEdges(itemCount: number): {
   return { ref, ...edges }
 }
 
+/** Uma "marca" passageira (a pasta que nasceu, a cápsula que abriu): some
+ *  sozinha depois da animação. */
+function useTransientMark(): [string | null, (id: string) => void] {
+  const [mark, setMark] = useState<string | null>(null)
+  useEffect(() => {
+    if (mark === null) return
+    const timer = window.setTimeout(() => setMark(null), JUST_MARK_MS)
+    return () => window.clearTimeout(timer)
+  }, [mark])
+  return [mark, setMark]
+}
+
+/** O fantasma do arraste e a pílula "soltar: …" (portal; posição por ref). */
+function RailDragOverlay({
+  drag,
+  groups,
+  activeProjectId,
+  ghostRef,
+  hintRef
+}: {
+  drag: RailDragState
+  groups: readonly ProjectLayoutGroupEntry[]
+  activeProjectId: string | null
+  ghostRef: (el: HTMLElement | null) => void
+  hintRef: (el: HTMLElement | null) => void
+}): React.JSX.Element {
+  const source = drag.source
+  const project = useStore((s) =>
+    source.kind === 'project' ? s.projects.find((p) => p.id === source.projectId) : undefined
+  )
+  const layout = useProjectLayout((s) => s.layout)
+  const group = source.kind === 'group' ? groups.find((g) => g.id === source.groupId) : undefined
+  const hint =
+    layout && drag.drop
+      ? railDropHint(
+          layout,
+          (id) => useStore.getState().projects.find((p) => p.id === id)?.name ?? '',
+          source,
+          drag.drop.target
+        )
+      : null
+
+  let ghost: React.JSX.Element | null = null
+  if (project) {
+    ghost = (
+      <div
+        ref={ghostRef}
+        className="rail-item rail-ghost"
+        style={{ ['--card-hue' as string]: hueOf(project.name) }}
+        aria-hidden="true"
+      >
+        {project.photo ? (
+          <img src={project.photo} alt="" draggable={false} />
+        ) : (
+          <span className="rail-initials">{initialsOf(project.name)}</span>
+        )}
+        {isUnversionedProject(project) && <UnversionedFolderSeal size="rail" />}
+      </div>
+    )
+  } else if (group) {
+    ghost = (
+      <div
+        ref={ghostRef}
+        className={`rail-item rail-folder rail-ghost${group.hue !== null ? ' has-hue' : ''}`}
+        style={hueStyle(group.hue)}
+        aria-hidden="true"
+      >
+        <RailFolderGrid projectIds={group.projectIds} activeProjectId={activeProjectId} />
+      </div>
+    )
+  }
+
+  return createPortal(
+    <>
+      {ghost}
+      <div ref={hintRef} className={`rail-drag-hint${hint ? ' on' : ''}`} role="status" aria-live="polite">
+        {hint && (
+          <>
+            {hint.lead}
+            {hint.em && <em>{hint.em}</em>}
+            {hint.tail}
+          </>
+        )}
+      </div>
+    </>,
+    document.body
+  )
+}
+
+function menuTargetOf(el: HTMLElement): RailMenuTarget | null {
+  if (el.dataset.pid) return { kind: 'project', projectId: el.dataset.pid }
+  const groupId = el.dataset.folder ?? el.dataset.head
+  return groupId ? { kind: 'group', groupId } : null
+}
+
+const MENU_SOURCE = '[data-pid], [data-folder], [data-head]'
+
 /**
- * Rail lateral estilo Discord: Home no topo e um avatar por universo.
+ * Rail lateral estilo Discord: Home no topo e um avatar por universo — e,
+ * desde 2026-09-29, GRUPOS (pastas que abrem como cápsula; arrastar um
+ * universo sobre outro cria um). A ordem é o layout do main
+ * (`useProjectLayout`); sem ele ainda, a lista plana de `projects`.
  * Trocar de projeto NUNCA derruba nada — os universos ficam montados em
  * segundo plano; o ponto mostra atividade de missões, não a contagem de panes.
  */
@@ -106,16 +256,110 @@ export default function ProjectRail(): React.JSX.Element {
   const openProjectId = useStore((s) => s.openProjectId)
   const appPage = useStore((s) => s.appPage)
   const openProject = useStore((s) => s.openProject)
-  // ONDA D: o "+" abre o MESMO modal da Home — a pasta continua sendo o
-  // essencial, mas agora existe uma decisão a mais (link do GitHub).
+  // nome do grupo sob a pasta: preferência de Ajustes, ligada por padrão
+  const showNames = useStore((s) => s.settings?.railGroupNames !== false)
+  const layout = useProjectLayout((s) => s.layout)
+  const apply = useProjectLayout((s) => s.apply)
+  const openGroupSheet = useProjectLayout((s) => s.openGroupSheet)
+  const sheetGroupId = useProjectLayout((s) => s.sheetGroupId)
+  const sheetSelectName = useProjectLayout((s) => s.sheetSelectName)
+  // O "+" abre o MESMO modal da Home — a pasta continua sendo o essencial,
+  // com as decisões do nascimento (versionar com Git, link do GitHub).
   const [adding, setAdding] = useState(false)
-  const listEdges = useRailListEdges(projects.length)
+  const [menu, setMenu] = useState<RailMenuRequest | null>(null)
+  const menuRef = useRef<RailMenuRequest | null>(null)
+  menuRef.current = menu
+  const [justOpened, markOpened] = useTransientMark()
+  const [justMade, markMade] = useTransientMark()
+
+  useEffect(() => {
+    void useProjectLayout.getState().load()
+  }, [])
+
+  const projectIds = useMemo(() => projects.map((p) => p.id), [projects])
+  const entries = useMemo(() => railEntries(layout, projectIds), [layout, projectIds])
+  const groups = useMemo(
+    () => entries.filter((e): e is ProjectLayoutGroupEntry => e.kind === 'group'),
+    [entries]
+  )
+  const activeProjectId = appPage === 'workspace' ? openProjectId : null
+  const listEdges = useRailListEdges(railRenderedCount(entries, showNames))
+
+  const setGroupOpen = useCallback(
+    (groupId: string, open: boolean) => {
+      if (open) markOpened(groupId)
+      void apply({ op: 'setGroupOpen', groupId, open })
+    },
+    [apply, markOpened]
+  )
+
+  const onDrop = useCallback(
+    (source: RailDragSource, target: ProjectLayoutDropTarget) => {
+      const op = railDropOp(source, target)
+      if (!op) return
+      void apply(op).then((result) => {
+        if (!result) return
+        if (result.createdGroupId) {
+          markMade(result.createdGroupId)
+          openGroupSheet(result.createdGroupId, true)
+        } else if (target.type === 'into') {
+          markMade(target.groupId)
+        }
+      })
+    },
+    [apply, markMade, openGroupSheet]
+  )
+
+  const { drag, ghostRef, hintRef, onPointerDown, onClickCapture } = useRailDrag({
+    listRef: listEdges.ref,
+    enabled: layout !== null,
+    onDrop
+  })
+
+  const openMenuFor = (el: HTMLElement, x: number, y: number): void => {
+    const target = menuTargetOf(el)
+    if (target) setMenu({ target, x, y, invoker: el })
+  }
+
+  const dismissMenu = useCallback((restoreFocus: boolean) => {
+    const invoker = menuRef.current?.invoker
+    setMenu(null)
+    if (restoreFocus && invoker?.isConnected) invoker.focus({ preventScroll: true })
+  }, [])
+
+  // a folha do grupo mora aqui, mas abre de qualquer lugar (Home inclusive);
+  // grupo que sumiu (desfeito em outra janela, último universo removido)
+  // fecha a folha
+  const sheetOpen = sheetGroupId !== null && groups.some((g) => g.id === sheetGroupId)
+  useEffect(() => {
+    if (sheetGroupId !== null && layout !== null && !sheetOpen) useProjectLayout.getState().closeGroupSheet()
+  }, [sheetGroupId, layout, sheetOpen])
+
+  const tipsOff = drag !== null
+  const draggingProject = drag?.source.kind === 'project' ? drag.source.projectId : null
+  const draggingGroup = drag?.source.kind === 'group' ? drag.source.groupId : null
+  const combineId = drag?.drop?.feedback.kind === 'combine' ? drag.drop.feedback.projectId : null
+  const intoId = drag?.drop?.feedback.kind === 'into' ? drag.drop.feedback.groupId : null
+  const line = drag?.drop?.feedback.kind === 'line' ? drag.drop.feedback : null
+
+  const tile = (projectId: string, groupId: string | null): React.JSX.Element => (
+    <RailItem
+      key={`p:${projectId}`}
+      projectId={projectId}
+      groupId={groupId}
+      tipsOff={tipsOff}
+      isDragging={draggingProject === projectId}
+      dropCombine={combineId === projectId}
+    />
+  )
 
   return (
-    <nav className="project-rail">
+    <nav className="project-rail" aria-label="Universos">
       <button
+        type="button"
         className={`rail-item rail-home${appPage === 'workspace' && openProjectId === null ? ' active' : ''}`}
-        data-tip="Home — universos"
+        data-tip-side="right" data-tip="Home — universos"
+        aria-label="Home — universos"
         onClick={() => openProject(null)}
       >
         <SynkoraMark size={22} />
@@ -124,23 +368,111 @@ export default function ProjectRail(): React.JSX.Element {
       <div
         ref={listEdges.ref}
         className={`rail-list${listEdges.top ? ' fade-top' : ''}${listEdges.bottom ? ' fade-bottom' : ''}`}
+        onPointerDown={onPointerDown}
+        onClickCapture={onClickCapture}
+        onContextMenu={(event) => {
+          const el = (event.target as HTMLElement).closest<HTMLElement>(MENU_SOURCE)
+          if (!el) return
+          event.preventDefault()
+          openMenuFor(el, event.clientX, event.clientY)
+        }}
+        onKeyDown={(event) => {
+          if (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10')) return
+          const el = (event.target as HTMLElement).closest<HTMLElement>(MENU_SOURCE)
+          if (!el) return
+          event.preventDefault()
+          const r = el.getBoundingClientRect()
+          openMenuFor(el, r.right + 6, r.top)
+        }}
       >
-        {projects.map((p) => (
-          <RailItem key={p.id} projectId={p.id} />
-        ))}
+        {entries.map((entry) => {
+          if (entry.kind === 'project') return tile(entry.projectId, null)
+          if (!entry.open) {
+            return (
+              <RailGroupFolder
+                key={`g:${entry.id}`}
+                group={entry}
+                activeProjectId={activeProjectId}
+                showName={showNames}
+                tipsOff={tipsOff}
+                isDragging={draggingGroup === entry.id}
+                dropInto={intoId === entry.id}
+                justMade={justMade === entry.id}
+                onOpen={(groupId) => setGroupOpen(groupId, true)}
+              />
+            )
+          }
+          return (
+            <RailGroupCapsule
+              key={`g:${entry.id}`}
+              group={entry}
+              showName={showNames}
+              tipsOff={tipsOff}
+              isDragging={draggingGroup === entry.id}
+              justOpened={justOpened === entry.id}
+              onClose={(groupId) => setGroupOpen(groupId, false)}
+            >
+              {entry.projectIds.map((id) => tile(id, entry.id))}
+            </RailGroupCapsule>
+          )
+        })}
         <button
+          type="button"
           className={`rail-item rail-add${adding ? ' busy' : ''}`}
-          data-tip={'Novo universo\npasta do projeto · link do GitHub opcional'}
+          data-tip-side="right" data-tip={'Novo universo\npasta do projeto · com ou sem Git'}
+          aria-label="Novo universo"
           onClick={() => setAdding(true)}
         >
           +
         </button>
+        {line && drag?.lineTop != null && (
+          <div
+            className={`rail-drop-line${line.inset ? ' inset' : ''}`}
+            style={{ top: drag.lineTop }}
+            aria-hidden="true"
+          />
+        )}
       </div>
       {/* O SELO DE VERSÃO (2026-09-21): o pé do rail é o único lugar visível de
           QUALQUER universo — a versão que roda, e se há uma nova chegando. */}
       <GuiPanelErrorBoundary paneId="rail:app-update" label="a versão do Synkora">
         <AppUpdateBadge />
       </GuiPanelErrorBoundary>
+      {drag && (
+        <RailDragOverlay
+          drag={drag}
+          groups={groups}
+          activeProjectId={activeProjectId}
+          ghostRef={ghostRef}
+          hintRef={hintRef}
+        />
+      )}
+      {menu && (
+        <GuiPanelErrorBoundary paneId="overlay:rail:menu" label="o menu do rail" onClose={() => setMenu(null)}>
+          <RailContextMenu
+            request={menu}
+            layout={layout}
+            onDismiss={dismissMenu}
+            onToggleGroup={setGroupOpen}
+            onGroupMade={markMade}
+          />
+        </GuiPanelErrorBoundary>
+      )}
+      {sheetOpen && sheetGroupId !== null && (
+        <GuiPanelErrorBoundary
+          paneId="overlay:rail:group-sheet"
+          label="a folha do grupo"
+          onClose={() => useProjectLayout.getState().closeGroupSheet()}
+        >
+          <RailGroupSheet
+            key={sheetGroupId}
+            groupId={sheetGroupId}
+            selectName={sheetSelectName}
+            activeProjectId={activeProjectId}
+            listRef={listEdges.ref}
+          />
+        </GuiPanelErrorBoundary>
+      )}
       {adding && (
         <GuiPanelErrorBoundary
           paneId="overlay:rail:new-universe"

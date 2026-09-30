@@ -1,0 +1,848 @@
+/* ————— O BROWSER DA MISSÃO —————
+
+   O chrome comum ao painel do dock e à janela destacada (`BrowserChrome.tsx`),
+   desenhado em `docs/mockups/browser-chrome-2026-09-29.html`. Três leis:
+
+   1. A PÁGINA NÃO É DESENHADA AQUI. A `WebContentsView` compõe POR CIMA do DOM,
+      no retângulo que `.dock-browser-page` mede; o que se pinta lá dentro só
+      aparece quando ela NÃO está — por isso ele é painel escuro.
+   2. UM corpo, UMA borda, UM raio; por dentro, costuras de fio de cabelo (H7:
+      caixa-dentro-de-caixa foi o "vale da estranheza" que o dono reprovou).
+   3. NADA que aparece por causa do MOUSE muda a altura da página: dica é
+      `title` nativo, recado é linha da faixa de avisos.
+
+   A faixa de avisos e o cartão de erro na página moram em `BrowserNotices.css`. */
+
+.dock-browser {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* Borda INK (bege ao lado de um site branco não fecha janela); fundo `--card`
+   (sobre `--paper` o `--ink-3` cai abaixo de 3:1); sem sombra. */
+.dock-browser-shell {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border: 1px solid var(--ink);
+  border-radius: 8px;
+  background: var(--card);
+  overflow: hidden;
+}
+
+/* Anel POR DENTRO (a tira rola e cortaria um anel por fora) — e vence o
+   `.workspace-panel button:focus-visible`, que o poria fora. */
+.dock-browser .dock-browser-shell button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* ——— a tira de abas ——— */
+
+/* UMA linha de altura fixa. A costura de baixo é DESENHADA (e não borda) para
+   a aba ativa cobri-la e FUNDIR com a barra: a lista rola, e rolagem recorta o
+   que sai da caixa dela. */
+.dock-browser-tabbar {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  flex: none;
+  height: 33px;
+  min-width: 0;
+  padding: 5px 6px 0;
+  background: var(--paper);
+}
+
+.dock-browser-tabbar::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 1px;
+  background: var(--line-strong);
+}
+
+/* A lista tem o tamanho das abas (o + cola na última) e ROLA quando elas já
+   encolheram até o piso. Sem barra: a borda que ESCONDE aba esmaece. */
+.dock-browser-tabs {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: flex-end;
+  flex: 0 1 auto;
+  min-width: 0;
+  height: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.dock-browser-tabs.fade-end {
+  mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+}
+
+.dock-browser-tabs.fade-start {
+  mask-image: linear-gradient(to right, transparent, #000 28px);
+}
+
+.dock-browser-tabs.fade-start.fade-end {
+  mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent);
+}
+
+/* Nasce larga e encolhe quando falta lugar, como no Chrome. Ela se MEDE (o
+   `@container` lá embaixo); os 180px intrínsecos evitam que a lista a zere. */
+.dock-browser-tab-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 0 1 180px;
+  min-width: 64px;
+  height: 28px;
+  padding-right: 4px;
+  border: 1px solid transparent;
+  border-bottom: 0;
+  border-radius: 7px 7px 0 0;
+  isolation: isolate;
+  container: dock-browser-tab / inline-size;
+  contain-intrinsic-inline-size: 180px;
+}
+
+.dock-browser-tab-wrap::before {
+  content: '';
+  position: absolute;
+  inset: 3px 2px 4px;
+  z-index: -1;
+  border-radius: 5px;
+  background: transparent;
+  transition: background var(--motion-fast) ease;
+}
+
+.dock-browser-tab-wrap:not(.on):hover::before {
+  background: color-mix(in srgb, var(--ink) 7%, transparent);
+}
+
+.dock-browser-tab-wrap + .dock-browser-tab-wrap::after {
+  content: '';
+  position: absolute;
+  top: 8px;
+  left: -1px;
+  width: 1px;
+  height: 13px;
+  background: var(--line-strong);
+}
+
+.dock-browser-tab-wrap.on::after,
+.dock-browser-tab-wrap.on + .dock-browser-tab-wrap::after,
+.dock-browser-tab-wrap:hover::after,
+.dock-browser-tab-wrap:hover + .dock-browser-tab-wrap::after {
+  opacity: 0;
+}
+
+/* A ATIVA é papel de card e desce até cobrir a costura: aba e barra viram o
+   mesmo objeto. As outras moram na prateleira. */
+.dock-browser-tab-wrap.on {
+  z-index: 1;
+  border-color: var(--line-strong);
+  background: var(--card);
+}
+
+.dock-browser-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  padding: 0 2px 1px 10px;
+  appearance: none;
+  border: 0;
+  border-radius: 7px 7px 0 0;
+  background: transparent;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink-2);
+  text-align: left;
+  cursor: pointer;
+}
+
+.dock-browser-tab-wrap:hover .dock-browser-tab,
+.dock-browser-tab-wrap.on .dock-browser-tab {
+  color: var(--ink);
+}
+
+.dock-browser-tab-wrap.on .dock-browser-tab {
+  font-weight: 700;
+}
+
+/* A marca de ERRO da aba: visível mesmo olhando outra aba. */
+.dock-browser-tab > svg {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  color: var(--err);
+}
+
+/* A bolinha só existe enquanto a aba CARREGA (parada, comia o palmo do nome). */
+.dock-browser-tab-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: gui-subagent-pulse 1.05s ease-in-out infinite;
+}
+
+/* DE QUEM É A ABA: a do dono não tem prefixo (é a régua). A IDENTIDADE NÃO
+   CEDE — corta o nome da página, que a dica devolve; o teto de 72% (medido:
+   "INV-BRAND" inteiro numa aba de 138px) impede o inverso. */
+.dock-browser-tab-owner {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex: 0 0 auto;
+  min-width: 0;
+  max-width: 72%;
+  padding-right: 6px;
+  border-right: 1px solid var(--line);
+  color: var(--ink-2);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.dock-browser-tab-owner.is-bare {
+  padding-right: 0;
+  border-right: 0;
+}
+
+.dock-browser-tab-wrap.on .dock-browser-tab-owner {
+  color: var(--ink);
+}
+
+/* ⚡ desenhado; movimento é SINAL — a batida é a das fichas de ajudante. */
+.dock-browser-tab-owner svg {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  color: var(--accent);
+  animation: gui-subagent-pulse 1.05s ease-in-out infinite;
+}
+
+.dock-browser-tab-name,
+.dock-browser-tab-owner-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dock-browser-tab-name {
+  flex: 1 1 auto;
+}
+
+/* O × só na ativa, na sob o mouse e na com foco: doze × eram doze alvos de erro. */
+.dock-browser-tab-x {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  appearance: none;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--ink-2);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--motion-fast) ease, background var(--motion-fast) ease;
+}
+
+.dock-browser-tab-wrap.on .dock-browser-tab-x,
+.dock-browser-tab-wrap:hover .dock-browser-tab-x,
+.dock-browser-tab-wrap:has(:focus-visible) .dock-browser-tab-x {
+  opacity: 1;
+}
+
+.dock-browser-tab-x:hover {
+  background: var(--line);
+  color: var(--ink);
+}
+
+.dock-browser-tab-x svg {
+  width: 11px;
+  height: 11px;
+}
+
+/* Aba estreita não tem palmo para as duas verdades: quem fica é a IDENTIDADE,
+   e o nome volta inteiro na dica; o × sai das inativas (como no Chrome) e
+   devolve o palmo dele. Depois das regras acima de propósito — `@container`
+   não soma especificidade. */
+@container dock-browser-tab (max-width: 112px) {
+  .dock-browser-tab-owner:not(.is-bare) + .dock-browser-tab-name,
+  .dock-browser-tab-wrap:not(.on):not(:has(:focus-visible)) .dock-browser-tab-x {
+    display: none;
+  }
+
+  .dock-browser-tab {
+    padding-left: 6px;
+  }
+
+  .dock-browser-tab-owner {
+    max-width: 100%;
+    padding-right: 0;
+    border-right: 0;
+  }
+}
+
+/* O + mora colado à ÚLTIMA aba e fora da rolagem. No teto, apaga — e a dica
+   ensina a saída ("feche uma"). */
+.dock-browser-tab-add {
+  flex: none;
+  align-self: center;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  margin: 0 0 3px 3px;
+  padding: 0;
+  appearance: none;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+
+.dock-browser-tab-add:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--ink) 7%, transparent);
+  color: var(--ink);
+}
+
+.dock-browser-tab-add:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.dock-browser-tab-add svg {
+  width: 13px;
+  height: 13px;
+}
+
+/* ——— a barra ——— */
+
+/* Uma fileira só (2ª linha apenas no trilho legado estreito). A linha INK é a
+   moldura de cima da página — desce para a faixa de avisos quando ela existe. */
+.dock-browser-nav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  flex: none;
+  gap: 4px 2px;
+  min-width: 0;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--ink);
+  background: var(--card);
+}
+
+.dock-browser-nav:has(+ .dock-browser-infos) {
+  border-bottom-color: var(--line);
+}
+
+/* Afordamento é FUNDO no hover: o endereço é o único encaixe da fileira. */
+.dock-browser-btn {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  appearance: none;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--ink-2);
+  cursor: pointer;
+  transition: background var(--motion-fast) ease, color var(--motion-fast) ease;
+}
+
+.dock-browser-btn:hover:not(:disabled) {
+  background: var(--paper-2);
+  color: var(--ink);
+}
+
+.dock-browser-btn:active:not(:disabled) {
+  background: var(--line);
+}
+
+.dock-browser-btn:disabled {
+  color: var(--ink-3);
+  opacity: 0.55;
+  cursor: default;
+}
+
+.dock-browser-btn svg {
+  width: 15px;
+  height: 15px;
+}
+
+.dock-browser-url-wrap {
+  position: relative;
+  flex: 1 1 72px;
+  min-width: 0;
+  margin: 0 4px;
+}
+
+.dock-browser-url {
+  width: 100%;
+  height: 26px;
+  padding: 0 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  outline: none;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+}
+
+.dock-browser-url::placeholder {
+  color: var(--ink-2);
+  opacity: 1;
+}
+
+.dock-browser-url:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 11%, transparent);
+}
+
+.dock-browser-url-wrap.driving .dock-browser-url {
+  padding-right: 30px;
+}
+
+/* ⚡ AGENTE mora DENTRO do campo: acender e apagar não empurra nada. */
+.dock-browser-url-driving {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  bottom: 4px;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--accent) 14%, var(--paper));
+  color: var(--accent-deep);
+}
+
+.dock-browser-url-driving svg {
+  width: 11px;
+  height: 11px;
+  animation: gui-subagent-pulse 1.05s ease-in-out infinite;
+}
+
+/* A LARGURA: seletor sobre a lista NATIVA (abre por cima da página). Aceso
+   enquanto a página é emulada; tracejado quando o agente pediu fora da lista. */
+.dock-browser-width {
+  position: relative;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 26px;
+  padding: 0 20px 0 6px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  color: var(--ink-2);
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  transition: background var(--motion-fast) ease, color var(--motion-fast) ease,
+    border-color var(--motion-fast) ease;
+}
+
+.dock-browser-width:hover:not(:has(select:disabled)) {
+  background: var(--paper-2);
+  color: var(--ink);
+}
+
+.dock-browser-width.on {
+  border-color: var(--ink);
+  background: var(--card);
+  color: var(--ink);
+}
+
+.dock-browser-width.custom {
+  border-style: dashed;
+  border-color: var(--accent);
+}
+
+.dock-browser-width:has(select:disabled) {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.dock-browser-width:has(select:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.dock-browser-width > svg {
+  flex: none;
+  width: 14px;
+  height: 14px;
+}
+
+.dock-browser-width > svg:last-of-type {
+  position: absolute;
+  top: 6px;
+  right: 4px;
+  width: 12px;
+  height: 12px;
+  pointer-events: none;
+}
+
+.dock-browser-width select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  opacity: 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  cursor: inherit;
+}
+
+.dock-browser-sep {
+  flex: none;
+  width: 1px;
+  height: 16px;
+  margin: 0 4px;
+  background: var(--line);
+}
+
+/* REENCAIXAR com palavra: não se adivinha de uma seta, e na janela sobra lugar. */
+.dock-browser-dock-act {
+  display: inline-flex;
+  gap: 5px;
+  width: auto;
+  padding: 0 9px;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+/* ——— o retângulo da página ——— */
+
+/* A altura vem do componente (FRAÇÃO do trilho legado; altura é ORDEM). Sem
+   borda nem raio: a view nativa, um retângulo, encaixa sem cobrir linha. */
+.dock-browser-page {
+  position: relative;
+  flex: none;
+  min-width: 0;
+  height: var(--dock-browser-page-h, 320px);
+  background: var(--panel-2);
+  overflow: hidden;
+}
+
+/* Viva, o fundo é a cor que a página vai ter; sem convite nem faixa, o
+   subpixel de uma borda fracionária mostra a cor do chrome, não uma 2ª borda. */
+.dock-browser-page.live {
+  background: var(--panel);
+}
+
+.dock-browser-page.live:not(:has(.dock-browser-empty, .dock-browser-bands)) {
+  background: var(--card);
+}
+
+/* A MOLDURA DE DISPOSITIVO: a geometria é do LAYOUT (a conta do motor) e o
+   `round(down …)` é o `Math.floor` dele — sem ele a view cobre a costura
+   quando a sobra é ímpar. Nunca comem clique. */
+.dock-browser-bands {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.dock-browser-band {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: round(down, (100% - min(100%, var(--dock-browser-vp-w, 100%))) / 2, 1px);
+  background: var(--panel-2);
+}
+
+/* A costura (3,1:1, o piso do WCAG 1.4.11) é SOMBRA interna: borda pintaria
+   um risco mesmo com a faixa em largura zero. */
+.dock-browser-band.l {
+  left: 0;
+  box-shadow: inset -1px 0 0 var(--panel-ink-3);
+}
+
+.dock-browser-band.r {
+  right: 0;
+  box-shadow: inset 1px 0 0 var(--panel-ink-3);
+}
+
+.dock-browser-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 14px;
+  text-align: center;
+}
+
+/* "Slot vazio" dito por FORMA: o tracejado é do convite, o único conteúdo
+   quando não há view nenhuma. */
+.dock-browser-page:not(.live) .dock-browser-empty {
+  margin: 7px;
+  padding: 10px;
+  border: 1px dashed var(--panel-ink-3);
+  border-radius: 6px;
+}
+
+/* Texto sobre o painel escuro só em `--panel-ink`/`--panel-ink-2` (11,8 e
+   6,1:1); o `--panel-ink-3` (3,1:1) reprovava em texto pequeno. */
+.dock-browser-empty-line {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--panel-ink);
+  overflow-wrap: anywhere;
+}
+
+.dock-browser-empty-fine {
+  font-size: 9.5px;
+  line-height: 1.35;
+  color: var(--panel-ink-2);
+  overflow-wrap: anywhere;
+}
+
+/* O botão de painel escuro: contorno claro, o espelho do botão de papel. */
+.dock-browser-open {
+  appearance: none;
+  border: 1.5px solid var(--panel-ink-2);
+  border-radius: 6px;
+  background: transparent;
+  padding: 5px 12px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--panel-ink);
+  cursor: pointer;
+  transition: background var(--motion-fast) ease, border-color var(--motion-fast) ease,
+    color var(--motion-fast) ease;
+}
+
+.dock-browser-open:hover:not(:disabled) {
+  background: var(--panel-ink);
+  border-color: var(--panel-ink);
+  color: var(--panel);
+}
+
+.dock-browser-open:active:not(:disabled) {
+  background: var(--panel-ink-2);
+  border-color: var(--panel-ink-2);
+}
+
+.dock-browser-open:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+/* ——— a alça da altura (trilho legado) ——— */
+
+/* Encostada no que redimensiona; o `border-top` ink é a moldura de baixo da
+   página. Risco em `--ink-3` (3:1 sobre o card, WCAG 1.4.11): o dono precisa
+   ACHAR a alça. */
+.dock-browser-grip {
+  position: relative;
+  flex: none;
+  height: 12px;
+  border-top: 1px solid var(--ink);
+  background: var(--card);
+  cursor: ns-resize;
+  touch-action: none;
+  user-select: none;
+}
+
+.dock-browser-grip-line {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 28px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--ink-3);
+  transform: translate(-50%, -50%);
+  transition: width var(--motion-fast) ease, background var(--motion-fast) ease;
+}
+
+.dock-browser-grip:hover .dock-browser-grip-line,
+.dock-browser-grip:focus-visible .dock-browser-grip-line {
+  width: 40px;
+  background: var(--ink-2);
+}
+
+.dock-browser-grip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  border-radius: 4px;
+}
+
+/* No arrasto o ponteiro sai da alça no 1º pixel: o painel inteiro assume. */
+.dock-browser.is-dragging {
+  cursor: ns-resize;
+  user-select: none;
+}
+
+.dock-browser.is-dragging .dock-browser-grip-line {
+  width: 40px;
+  background: var(--accent);
+}
+
+/* ——— o recibo: "destacado numa janela própria" ——— */
+
+/* Papel, não painel escuro: um retângulo preto prometeria uma página que está
+   em outra janela. */
+.dock-browser-away {
+  gap: 5px;
+  padding: 9px;
+}
+
+.dock-browser-away-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 1.35;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+/* O MESMO ícone do botão que trouxe o dono até aqui, em acento. */
+.dock-browser-away-head > svg {
+  flex: none;
+  width: 13px;
+  height: 13px;
+  color: var(--accent);
+}
+
+.dock-browser-away-fine {
+  font-size: 9.5px;
+  line-height: 1.35;
+  color: var(--ink-3);
+  overflow-wrap: anywhere;
+}
+
+.dock-browser-away-driving {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--ink-2);
+}
+
+.dock-browser-away-driving svg {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  color: var(--accent);
+  animation: gui-subagent-pulse 1.05s ease-in-out infinite;
+}
+
+.dock-browser-away-acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 2px;
+}
+
+.dock-browser-away-btn {
+  flex: 1 1 auto;
+  appearance: none;
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  background: transparent;
+  padding: 4px 8px;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  cursor: pointer;
+  transition: background var(--motion-fast) ease, border-color var(--motion-fast) ease,
+    color var(--motion-fast) ease;
+}
+
+.dock-browser-away-btn:hover {
+  border-color: var(--ink);
+  background: var(--paper-2);
+  color: var(--ink);
+}
+
+/* TRAZER DE VOLTA desfaz o estado: contorno cheio, não preenchimento. */
+.dock-browser-away-btn.on {
+  border-color: var(--ink);
+  color: var(--ink);
+}
+
+.dock-browser-away-btn.on:hover {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+.dock-browser-away-btn:active {
+  transform: translateY(1px);
+}
+
+/* Os avisos do recibo encostam nas bordas do cartão, como no instrumento. */
+.dock-browser-away .dock-browser-infos {
+  margin: 4px -9px -9px;
+  border-top: 1px solid var(--line);
+  border-bottom: 0;
+}
+
+/* ——— a janela destacada ——— */
+
+/* O INSTRUMENTO É A JANELA (a moldura é a nativa); `min-height: 0` em cadeia
+   deixa a página encolher junto com ela. */
+.dock-browser.browser-popout {
+  height: 100%;
+  min-height: 0;
+}
+
+.browser-popout-shell {
+  flex: 1 1 auto;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+}
+
+/* A altura da página é o que SOBRA: quem decide é a moldura da janela. */
+.browser-popout-page {
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 0;
+}
+
+/* Janela sem missão na URL (ou preload velho): só o recado, centrado. */
+.browser-popout.is-lost {
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}

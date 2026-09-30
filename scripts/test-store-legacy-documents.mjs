@@ -20,7 +20,8 @@ import test from 'node:test'
  */
 
 const require = createRequire(import.meta.url)
-const COMPILED = '../.tmp/store-legacy-test'
+// `--rootDir src`: the stores import src/shared, so tsc emits under main/
+const COMPILED = '../.tmp/store-legacy-test/main'
 
 let userData = ''
 const originalLoad = Module._load

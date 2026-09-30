@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from 'fs'
 import { join } from 'path'
 import { randomUUID } from 'crypto'
 import { persistJsonStore } from './jsonStore'
+import type { ProjectVersioning } from '../shared/projectVersioning'
 
 export interface Project {
   id: string
@@ -15,6 +16,9 @@ export interface Project {
   mode?: 'greenfield' | 'existing'
   /** avatar do projeto (data URL PNG 128px) — rail estilo Discord */
   photo?: string
+  /** Modalidade gravada no nascimento (definitiva). Ausente = 'git'. Leia
+   *  SEMPRE por `projectVersioning()` de shared/projectVersioning. */
+  versioning?: ProjectVersioning
 }
 
 /* REGISTRO LEGADO (limpa F6, 2026-08-17): `planningEvidence`,
@@ -53,12 +57,14 @@ export class ProjectStore {
     return this.projects.find((p) => p.id === id)
   }
 
-  create(name: string, path: string): Project {
+  create(name: string, path: string, versioning: ProjectVersioning = 'git'): Project {
     const project: Project = {
       id: randomUUID(),
       name,
       path,
-      createdAt: new Date().toISOString()
+      createdAt: new Date().toISOString(),
+      // só a exceção é gravada: registro sem a chave continua sendo 'git'
+      ...(versioning === 'none' ? { versioning } : {})
     }
     this.projects.push(project)
     this.persist()

@@ -81,6 +81,12 @@ export interface SynkoraPreferences {
    */
   noticeAutoCloseSeconds: NoticeAutoCloseSeconds
   noticeCorner: NoticeCorner
+  /**
+   * GRUPOS NO RAIL (mockup aprovado pelo dono, 2026-09-29): o nome do grupo
+   * escrito sob a pasta, à la iPhone. Ligado por padrão; desligado, o nome
+   * fica só na dica do hover. Quem consome é `renderer/components/ProjectRail`.
+   */
+  railGroupNames: boolean
 }
 
 /** Estado completo, restrito ao processo principal. */
@@ -112,7 +118,8 @@ const DEFAULTS: SynkoraPreferences = {
   chatWritingMaxLagMs: 1000,
   chatWritingFade: true,
   noticeAutoCloseSeconds: 0,
-  noticeCorner: 'bottom'
+  noticeCorner: 'bottom',
+  railGroupNames: true
 }
 
 /** Faixas da acessibilidade — espelho de `UI_SCALE_RANGE`, `CHAT_FONT_SIZE_RANGE`
@@ -218,7 +225,9 @@ function sanitizePreferences(value: unknown): SynkoraPreferences {
     )
       ? (source.noticeAutoCloseSeconds as NoticeAutoCloseSeconds)
       : DEFAULTS.noticeAutoCloseSeconds,
-    noticeCorner: source.noticeCorner === 'top' ? 'top' : DEFAULTS.noticeCorner
+    noticeCorner: source.noticeCorner === 'top' ? 'top' : DEFAULTS.noticeCorner,
+    // Ausente/torto = ligado: o nome sob a pasta é o padrão aprovado.
+    railGroupNames: source.railGroupNames !== false
   }
 }
 

@@ -1,6 +1,13 @@
 import type { GuiInterruptOrigin } from '../shared/guiInterrupt'
+import type { MissionRemovalConfirmation, MissionRemovalResult } from '../shared/missionRemoval'
 import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron'
 import type { DirectReleaseInput, DirectReleaseResult } from '../shared/directRelease'
+import type {
+  MissionFinishResult,
+  ProjectFolderInspection,
+  ProjectVersioning
+} from '../shared/projectVersioning'
+import type { ProjectLayout, ProjectLayoutOp, ProjectLayoutOpResult } from '../shared/projectLayout'
 import type { MobileApi, MobilePhoneApi, MobileVideoDelivery } from '../shared/mobileSimulator'
 export type { MobileApi, MobileAction, MobileFrame, MobileSession, MobileState, MobileVideoPacket } from '../shared/mobileSimulator'
 export type { MobileExpoProject, MobileExpoState, MobileExpoStartRequest } from '../shared/mobileExpo'
@@ -198,6 +205,9 @@ export interface Project {
   /** COMPUTADO na listagem: a pasta não existe mais (renomeada/movida fora
    *  do app) — a Home oferece "alterar pasta" */
   missing?: boolean
+  /** Modalidade gravada no nascimento (definitiva). Ausente = 'git'. Leia por
+   *  `projectVersioning()` de shared/projectVersioning. */
+  versioning?: ProjectVersioning
 }
 
 /**
@@ -682,6 +692,9 @@ export interface SynkoraPreferences {
    *  (nunca fecha sozinho, canto inferior). */
   noticeAutoCloseSeconds?: 0 | 6 | 10 | 20
   noticeCorner?: 'bottom' | 'top'
+  /** GRUPOS NO RAIL (2026-09-29) — espelho de main/settingsCore.ts: o nome do
+   *  grupo escrito sob a pasta (à la iPhone). Ausente = ligado. */
+  railGroupNames?: boolean
 }
 
 /** Snapshot seguro do main. Nenhum segredo bruto cruza esta fronteira. */
@@ -917,6 +930,24 @@ export interface BrowserTab {
   /** O agente DESTA aba está dirigindo AGORA (⚡ por aba, D2); o ⚡ da missão
    *  (`agentDriving`) continua contando o fato geral. Ausente = não dirigindo. */
   driving?: boolean
+  /** A página DESTA aba não carregou ou caiu (2026-09-29, variante B do
+   *  `docs/mockups/browser-chrome-2026-09-29.html`): enquanto houver falha, o
+   *  chrome esconde a página nativa — que é só um branco mudo — e o retângulo
+   *  explica o erro com RECARREGAR. Opcional no espelho: motor anterior não
+   *  manda, e ausente = sem falha. Espelho declarado do `BrowserTabView.failure`
+   *  de `src/main/browserPaneContracts.ts` (o par). */
+  failure?: BrowserTabFailure | null
+}
+
+/** Por que a página de uma aba não está de pé. `kind` é `string` aqui pelo
+ *  mesmo motivo do `BrowserNoticeView`: o motor é o dono do vocabulário. */
+export interface BrowserTabFailure {
+  kind: string
+  /** cabeça do cartão; ausente (motor anterior) = o chrome deriva do `kind` */
+  title?: string
+  text: string
+  /** código cru para diagnóstico (ERR_…, motivo do crash), em letra miúda */
+  code?: string
 }
 
 /** Nota legível do MOTOR para o dono (download barrado, teto de abas, página
@@ -926,8 +957,14 @@ export interface BrowserTab {
  *  um valor novo não pode quebrar a tela. */
 export interface BrowserNoticeView {
   kind: string
+  /** cabeça em negrito da linha — espelho do `BrowserNotice.title` do main */
+  title?: string
   text: string
   at: string
+  /** repetições coalescidas do MESMO recado (≥ 2 vira "×N") */
+  count?: number
+  /** `tab-lost`: endereço da aba que morreu, para o REABRIR */
+  url?: string
 }
 
 /** ONDE a página desta missão está: no painel do dock ou numa JANELA PRÓPRIA
@@ -986,8 +1023,17 @@ const api = {
     /** `gitUrl` (2.0, onda D): pasta vazia CLONA o repositório; pasta com
      *  conteúdo ganha `origin` + push best-effort. Push recusado NÃO impede a
      *  criação — o aviso PT-BR volta em `gitWarning` para a UI mostrar. */
-    create: (name: string, path: string, gitUrl?: string): Promise<ProjectCreateResult> =>
-      ipcRenderer.invoke('projects:create', name, path, gitUrl),
+    create: (
+      name: string,
+      path: string,
+      gitUrl?: string,
+      versioning?: ProjectVersioning
+    ): Promise<ProjectCreateResult> =>
+      ipcRenderer.invoke('projects:create', name, path, gitUrl, versioning),
+    /** PROJETO SEM VERSIONAMENTO: fotografia da pasta escolhida no modal —
+     *  `hasGit` trava o interruptor em "versionado". Leitura pura, sem Git. */
+    inspectFolder: (path: string): Promise<ProjectFolderInspection> =>
+      ipcRenderer.invoke('projects:inspectFolder', path),
     remove: (id: string): Promise<void> => ipcRenderer.invoke('projects:remove', id),
     rename: (id: string, name: string): Promise<Project | null> =>
       ipcRenderer.invoke('projects:rename', id, name),
@@ -1009,6 +1055,19 @@ const api = {
       const listener = (_e: IpcRendererEvent, projectId: string): void => cb(projectId)
       ipcRenderer.on('projects:flowChanged', listener)
       return () => ipcRenderer.removeListener('projects:flowChanged', listener)
+    }
+  },
+  /** GRUPOS DE UNIVERSOS (2026-09-29): a ordem do rail e os grupos. Só o main
+   *  muda o layout — `apply` devolve o layout novo e o main também o espalha
+   *  por `projectLayout:changed` (as outras janelas acompanham). */
+  projectLayout: {
+    get: (): Promise<ProjectLayout> => ipcRenderer.invoke('projectLayout:get'),
+    apply: (op: ProjectLayoutOp): Promise<ProjectLayoutOpResult> =>
+      ipcRenderer.invoke('projectLayout:apply', op),
+    onChanged: (cb: (layout: ProjectLayout) => void): (() => void) => {
+      const listener = (_e: IpcRendererEvent, layout: ProjectLayout): void => cb(layout)
+      ipcRenderer.on('projectLayout:changed', listener)
+      return () => ipcRenderer.removeListener('projectLayout:changed', listener)
     }
   },
   seats: {
@@ -1145,6 +1204,8 @@ const api = {
       attachments?: GuiAttachmentDescriptor[],
       browserReferences?: GuiBrowserReference[]
     ): Promise<GuiResult> => ipcRenderer.invoke('gui:send', paneId, text, messageId, attachments, browserReferences),
+    resumeFailedTurn: (paneId: string, recoveryToken: string): Promise<GuiResult> =>
+      ipcRenderer.invoke('gui:resumeFailedTurn', paneId, recoveryToken),
     browserReferencesList: (paneId: string): Promise<GuiBrowserReferencesResult> =>
       ipcRenderer.invoke('gui:browser-references-list', paneId),
     revealBrowserReference: (paneId: string, id: string): Promise<import('../shared/guiBrowserReferences').GuiBrowserReferenceRevealResult> =>
@@ -1339,8 +1400,14 @@ const api = {
     ): Promise<Mission | null> => ipcRenderer.invoke('missions:update', id, patch),
     integrate: (missionId: string): Promise<string> =>
       ipcRenderer.invoke('missions:integrate', missionId),
-    remove: (missionId: string): Promise<boolean> =>
-      ipcRenderer.invoke('missions:remove', missionId),
+    /** PROJETO SEM VERSIONAMENTO: o FINALIZAR — encerra o chat, os ajudantes e
+     *  os terminais da missão e a grava como concluída. Nada de merge: as
+     *  edições já estão na pasta. Projeto versionado recusa (lá é o ⇪). */
+    finish: (missionId: string): Promise<MissionFinishResult> =>
+      ipcRenderer.invoke('missions:finish', missionId),
+    remove: (missionId: string, confirmation?: MissionRemovalConfirmation): Promise<MissionRemovalResult> =>
+      confirmation === undefined ? ipcRenderer.invoke('missions:remove', missionId)
+        : ipcRenderer.invoke('missions:remove', missionId, confirmation),
     // missão criada pelo PM: grava conta/modelo/effort do orquestrador
     // escolhidos no modal e libera o pane nascer
     // `confirmOrchestrator` e `setOrchestratorSeat` (escolha e troca de conta

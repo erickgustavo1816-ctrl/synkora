@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { isUnversionedProject, type ProjectVersioning } from '../shared/projectVersioning'
 
 /**
  * Export de diagnóstico deliberadamente mínimo. O pacote serve para reconstruir
@@ -11,6 +12,7 @@ import { join } from 'node:path'
  */
 
 export interface DiagnosticsProjectInput {
+  versioning?: ProjectVersioning
   id: string
   name: string
   path: string
@@ -363,7 +365,7 @@ export function exportDiagnostics(input: DiagnosticsInput): { ok: boolean; msg: 
             present
               ? {
                   present: true,
-                  git: gitEvidence(project.path),
+                  ...(isUnversionedProject(project) ? {} : { git: gitEvidence(project.path) }),
                   artifacts: projectArtifactSummary(project.path)
                 }
               : { present: false },

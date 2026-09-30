@@ -1,0 +1,87 @@
+/* O SELO DE PASTA do universo sem versionamento (opção B de
+   docs/mockups/projeto-sem-versao-marca-2026-09-30.html, escolhida pelo dono
+   em 2026-09-30). Geometria copiada do mockup, por lugar:
+   - rail (avatar 46px sobre o painel escuro): 17px, tinta clara, aro da cor
+     do painel — o mesmo aro que recorta o ponto da missão no canto oposto;
+   - header (avatar 26px no papel): 13px, tinta escura, aro de papel;
+   - card (avatar 42px no cartão): 17px, tinta escura, aro da cor do cartão.
+   O aro é da cor do FUNDO, então o selo parece recortado do avatar. */
+
+.uv-seal {
+  position: absolute;
+  left: -4px;
+  bottom: -4px;
+  z-index: 1;
+  box-sizing: border-box;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+
+.uv-seal svg {
+  display: block;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linejoin: round;
+}
+
+.uv-seal--rail,
+.uv-seal--card {
+  width: 17px;
+  height: 17px;
+  border-radius: 6px;
+  border: 2px solid;
+}
+
+.uv-seal--rail svg,
+.uv-seal--card svg {
+  width: 10px;
+  height: 10px;
+}
+
+.uv-seal--rail {
+  background: var(--panel-ink);
+  border-color: var(--panel);
+  color: var(--panel);
+}
+
+.uv-seal--card {
+  background: var(--ink);
+  border-color: var(--card);
+  color: var(--card);
+}
+
+.uv-seal--header {
+  width: 13px;
+  height: 13px;
+  border-radius: 4px;
+  border: 1.5px solid var(--paper);
+  background: var(--ink);
+  color: var(--paper);
+}
+
+.uv-seal--header svg {
+  width: 8px;
+  height: 8px;
+}
+
+/* O SELO TEXTUAL do modo — acompanha o selo de pasta onde há espaço. */
+.mode-tag {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  height: 18px;
+  padding: 0 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: 3px;
+  background: transparent;
+  font-family: var(--mono);
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  line-height: 1;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  white-space: nowrap;
+}

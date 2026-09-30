@@ -121,7 +121,7 @@ test('real DockBrowser hides in layout and retired observers cannot publish afte
   const source = buildSync({ stdin: { contents: readFileSync(process.env.BROWSER_DOCK_SOURCE ??
     'src/renderer/src/components/DockBrowser.tsx', 'utf8') + '\nexport { WorkspacePanelVisibility as __PanelVisibility } from "../workspace/WorkspacePanelContext"', loader: 'tsx', resolveDir: resolve('src/renderer/src/components') },
     bundle: true, platform: 'node', format: 'cjs', jsx: 'automatic', write: false,
-    external: ['react', 'react/jsx-runtime', '../store'] }).outputFiles[0].text
+    loader: { '.css': 'empty' }, external: ['react', 'react/jsx-runtime', '../store'] }).outputFiles[0].text
   const callbacks = []
   const frames = []
   const reports = []

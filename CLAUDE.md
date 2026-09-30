@@ -39,6 +39,9 @@ crasha.
   da delegação (helpers MCP sem aba) + rodadas 5-6 (o ciclo redondo).
 - `docs/SKILLS.md` — curadoria da biblioteca de skills (volta com kit mínimo
   quando o dono decidir).
+- `docs/DESIGN_PROJETO_SEM_VERSAO_2026-09-30.md` — o projeto SEM
+  versionamento (uma missão por vez, direto na pasta, sem Git): regras do
+  servidor, contrato do agente e a costura única `src/shared/projectVersioning.ts`.
 - `docs/ATUALIZACAO_AUTOMATICA.md` — como o Synkora instalado se atualiza
   (Action no repo privado → release no repo público `synkora-releases` →
   electron-updater + selo no pé do rail) e a configuração única do dono.
@@ -153,6 +156,14 @@ heurística sobre conteúdo proibida — só sinal estrutural sondado.
 - paneId/helperId viram NOME DE ARQUIVO: sem `:` nem `/` (Windows recusa).
 - Junctions de node_modules em worktrees: NUNCA `Remove-Item -Recurse` através
   de junction viva — remover a junction com `rmdir` SEM recursão primeiro.
+
+**Testes (2026-09-30):**
+- `src/main` importa `src/shared/` SEM extensão (o que tsc/bundler exigem).
+  Suíte que carrega `.ts` nativo (Node 24 tira tipos sozinho) precisa do
+  `--import ./scripts/test-unversioned-agent-loader.mjs`; build `tsc` de teste
+  que puxa `shared/` precisa de `--rootDir src` e lê o compilado em `main/`.
+- Teste que recorta função do `index.ts` e executa com `new Function` quebra
+  quando a função ganha dependência nova: acrescente-a ao escopo do fixture.
 
 **Comportamento dos CLIs (re-sondar a cada update):**
 - claude monta o catálogo de tools POR REQUEST: prompt inicial no argv sai ANTES

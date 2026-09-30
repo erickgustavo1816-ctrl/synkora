@@ -34,6 +34,7 @@ import { armGuiDelegateMcp, guiPaneToolKind } from './guiDelegateMcp'
 import { guiMissionRoleOf, missionShortId } from './guiMissionContracts'
 import type { GuiPaneSpawn } from './guiSessions'
 import type { MainContext } from './mainContext'
+import { projectVersioning, isUnversionedProject } from '../shared/projectVersioning'
 
 /** Motivo pelo qual um pane NÃO recebeu ferramentas. Enum fechado: cada valor
  *  aparece no diário e responde sozinho "por que este chat está sem tools?".
@@ -111,7 +112,7 @@ export function rearmGuiPaneTools(
   spawn: GuiPaneSpawn
 ): GuiPlannerMcp | undefined {
   const mission = missionOfPane(ctx, spawn.projectId, spawn.paneId)
-  const kind = guiPaneToolKind(spawn.paneId, mission)
+  const kind = guiPaneToolKind(spawn.paneId, mission, projectVersioning(ctx.projects.get(spawn.projectId)))
   // O release usa o MESMO arm da delegação com o papel próprio (R10). Cair num
   // braço que não conhece o papel deixava o pane DESARMADO em todo spawn
   // (incidente de 2026-08-20): o gancho de re-arme nasceu na R14 e o roteador
@@ -139,7 +140,8 @@ export function rearmGuiDelegateMcp(
   ctx: MainContext,
   spawn: GuiPaneSpawn
 ): GuiPlannerMcp | undefined {
-  const refuse = (reason: GuiDelegateArmRefusal): undefined => {
+  const project = ctx.projects.get(spawn.projectId)
+  const refuse = (reason: GuiDelegateArmRefusal): GuiPlannerMcp | undefined => {
     ctx.blackbox.record({
       cat: 'pane',
       event: 'gui-delegate-arm-refused',
@@ -147,14 +149,14 @@ export function rearmGuiDelegateMcp(
       ids: { paneId: spawn.paneId, projectId: spawn.projectId },
       detail: { reason, cli: spawn.cli }
     })
-    return undefined
+    return reason !== 'not-a-dev-mission' && isUnversionedProject(project)
+      ? { args: [], env: { SYNKORA_PROJECT_VERSIONING: 'none' } } : undefined
   }
 
-  if (ctx.mcpPort === 0) return refuse('server-down')
-
   const mission = missionOfPane(ctx, spawn.projectId, spawn.paneId)
-  const kind = guiPaneToolKind(spawn.paneId, mission)
+  const kind = guiPaneToolKind(spawn.paneId, mission, projectVersioning(project))
   if (!mission || kind === 'none') return refuse('not-a-dev-mission')
+  if (ctx.mcpPort === 0) return refuse('server-down')
   // O papel do token decide o early-return do catálogo no servidor: release
   // ganha release_status/release_run; dev ganha o kit da delegação; o
   // planejador (2026-08-30) ganha o kit de planos MAIS o de ajudantes.
@@ -171,7 +173,8 @@ export function rearmGuiDelegateMcp(
       {
         paneId: spawn.paneId,
         projectId: spawn.projectId,
-        cwd: spawn.cwd,
+        cwd: isUnversionedProject(project) ? project!.path : spawn.cwd,
+        projectVersioning: projectVersioning(project),
         cli: spawn.cli,
         missionId: mission.id,
         // O seat da CONVERSA VIVA, não o do nascimento da missão: o dono pode

@@ -13,11 +13,15 @@ export function TestServerModal({
   projectId,
   target,
   label,
+  lead,
   onClose
 }: {
   projectId: string
   target: { missionId?: string; versionId?: string }
   label: string
+  /** a frase de abertura quando o alvo não é uma branch (projeto sem
+   *  versionamento: o servidor sobe da própria pasta do projeto) */
+  lead?: string
   onClose: () => void
 }): React.JSX.Element {
   const setTab = useStore((s) => s.setUniverseTab)
@@ -75,8 +79,8 @@ export function TestServerModal({
           </button>
         </div>
         <p className="confirm-text">
-          Sobe o servidor desta branch num terminal para você testar. O comando fica visível no
-          pane — feche o pane para derrubar o servidor.
+          {lead ??
+            'Sobe o servidor desta branch num terminal para você testar. O comando fica visível no pane — feche o pane para derrubar o servidor.'}
         </p>
         <p className="confirm-text">
           {portsMap

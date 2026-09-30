@@ -34,7 +34,7 @@ export type GuiPulseAction =
 
 export type GuiPulseTier = 'live' | 'quiet' | 'stalled'
 
-/** Silêncio público (nenhuma fala, nenhuma ferramenta nova do pai) que muda a
+/** Silêncio público (nenhuma fala ou atividade visível do pai) que muda a
  *  forma da linha. O lembrete do harness ao modelo dispara aos 45 s; um minuto
  *  sem sinal já é notícia, três é alarme. */
 export const GUI_PULSE_QUIET_MS = 60_000

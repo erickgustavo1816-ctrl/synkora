@@ -18,6 +18,7 @@ import {
   type SaveDialogOptions
 } from 'electron'
 import { basename, join, resolve } from 'path'
+import { isUnversionedProject } from '../../shared/projectVersioning'
 import { readFileSync, readdirSync, statSync } from 'fs'
 import {
   findTerminalFileLinks,
@@ -280,6 +281,7 @@ export function registerFilesIpc(ctx: MainContext, extras: FilesIpcExtras): void
     // integração limpa o registro — sem isto, missão encerrada seguia legível e
     // missão sem worktree caía na RAIZ DO PROJETO rotulada "worktree da missão".
     if (mission.status !== 'ativa') return null
+    if (isUnversionedProject(project)) return { kind: 'mission', path: project.path }
     if (mission.missionType === 'release') {
       const workspace = await extras.resolveReleaseWorkspace(mission)
       return workspace.error !== undefined ? null : { kind: 'mission', path: workspace.dir }

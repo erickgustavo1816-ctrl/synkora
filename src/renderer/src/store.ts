@@ -1,4 +1,10 @@
 import type { GuiInterruptOrigin } from '../../shared/guiInterrupt'
+import type { MissionRemovalConfirmation, MissionRemovalResult } from '../../shared/missionRemoval'
+import {
+  isUnversionedProject,
+  type MissionFinishResult,
+  type ProjectVersioning
+} from '../../shared/projectVersioning'
 import { create } from 'zustand'
 import { isGuiBrowserReferenceList, type GuiBrowserReference } from '../../shared/guiBrowserReferences'
 import { guiParentTurnActivity } from './guiParentTurnActivity'
@@ -24,8 +30,11 @@ import type {
 } from '../../preload/index'
 import { applyDeptHueVars, DEPT_HUES_LS_KEY, loadDeptHues } from './departments'
 import { sameBrowserPanel } from './dockBrowserModel'
+import { useProjectLayout } from './projectLayoutStore'
 import { versionPortrait } from './projectLanding'
+import { plainIpcError } from './util'
 import { isReleaseMissionRecord } from './missionCardAccess'
+import { soloHomeStats, type SoloHomeStats } from './unversionedPresentation'
 import {
   guiResultEchoesSpeech,
   guiRoundClosed,
@@ -117,7 +126,25 @@ export interface Project {
   photo?: string
   /** pasta não existe mais (renomeada/movida fora do app) — computado no main */
   missing?: boolean
+  /** Modalidade gravada no nascimento (definitiva). Ausente = 'git'. Espelho de
+   *  `Project` em src/preload/index.ts; leia por `projectVersioning()`. */
+  versioning?: ProjectVersioning
 }
+
+/** O pedido do modal de projeto novo. */
+export interface NewProjectInput {
+  name: string
+  path: string
+  /** só projeto versionado — o main recusa link em projeto sem versionamento */
+  gitUrl?: string
+  versioning: ProjectVersioning
+}
+
+/** Desfecho da criação. `warning` = o projeto NASCEU mas o GitHub não fechou
+ *  (push/auth) — aviso nunca cancela a criação. `ok: false` = não nasceu. */
+export type ProjectCreateOutcome =
+  | { ok: true; projectId: string; warning: string | null }
+  | { ok: false; error: string }
 
 export type SeatCli = 'claude' | 'codex'
 export type SeatStatus = 'logado' | 'pendente' | 'expirado'
@@ -189,6 +216,10 @@ export interface HomeStats {
    *  identidade nenhum, em vez de eleger a aberta mais antiga e chamá-la de
    *  "a versão do projeto". A régua mora em `projectLanding.versionPortrait`. */
   versaoNaMain?: string
+  /** Só projeto SEM VERSIONAMENTO (2026-09-30): a missão aberta e quantas
+   *  foram finalizadas — é o que o card da Home mostra no lugar das versões.
+   *  Ausente = projeto versionado. */
+  solo?: SoloHomeStats
   /** quando foi lido (a ausência da entrada é que significa "não li ainda") */
   at: number
 }
@@ -437,6 +468,8 @@ export type GuiItem =
       /** Aviso provisório enquanto um resultado de ferramenta correlacionado
        * ainda pode chegar depois do terminal do turno. */
       transient?: boolean
+      recoveryToken?: string
+      retryTurnId?: string
     }
   | {
       id: string
@@ -553,6 +586,7 @@ export type GuiPendingInteraction =
     }
 
 export interface GuiPaneState {
+  recoveryToken: string | null
   /** Main parent activity, independent from helpers keeping status working. */
   turnActive?: boolean
   items: GuiItem[]
@@ -664,6 +698,7 @@ export interface GuiHistoryTarget {
 }
 
 export const EMPTY_GUI_PANE: GuiPaneState = {
+  recoveryToken: null,
   items: [],
   stream: '',
   activeAssistantId: null,
@@ -1539,6 +1574,19 @@ function reduceGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState
       }
     }
 
+    case 'turn-retry': {
+      const base = finalizeGuiStream(state)
+      const existing = base.items.some(item =>
+        (item.kind === 'note' || item.kind === 'error') && item.retryTurnId === evt.turnId)
+      return {
+        ...base,
+        items: existing ? base.items : pushGuiItem(base.items, {
+          id: guiItemId(), kind: 'note', text: evt.text, retryTurnId: evt.turnId, at: Date.now()
+        }),
+        ...guiStatusPatch(base, busy(base))
+      }
+    }
+
     case 'limit': {
       const base = finalizeGuiStream(state)
       return {
@@ -1604,6 +1652,7 @@ function reduceGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState
               evt.errorText?.trim() ||
               (orphanedTool ? orphanedToolText(orphan.names) : 'o turno falhou sem detalhes'),
             at: Date.now(),
+            ...(evt.recoveryToken ? { recoveryToken: evt.recoveryToken } : {}),
             ...(orphanedTool && !evt.isError && evt.outcome !== 'failed'
               ? { transient: true }
               : {})
@@ -1753,7 +1802,19 @@ function reduceGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState
  * envio/interrupção guardam essa revisão e não podem rebaixar um turno novo.
  */
 export function applyGuiEvent(state: GuiPaneState, evt: GuiSessionEvent): GuiPaneState {
-  let next = reduceGuiEvent(state, evt)
+  const endRetries = ['fatal', 'closed', 'session-restarted', 'conversation-cleared', 'turn-started'].includes(evt.type)
+  const completedTurnId = evt.type === 'result' ? evt.turnId : undefined
+  const items = endRetries || completedTurnId
+    ? state.items.filter(item => (item.kind !== 'note' && item.kind !== 'error') ||
+      !item.retryTurnId || (!endRetries && item.retryTurnId !== completedTurnId))
+    : state.items
+  let next = reduceGuiEvent(items === state.items ? state : { ...state, items }, evt)
+  const recoveryToken = evt.type === 'result'
+    ? (evt.isError || evt.outcome === 'failed') && !evt.interrupted ? evt.recoveryToken ?? null : null
+    : ['turn-started', 'user-message', 'executor-changed', 'session-restarted', 'session-id',
+      'conversation-cleared', 'fatal', 'closed', 'turn-retry'].includes(evt.type)
+      ? null : next.recoveryToken
+  if (recoveryToken !== next.recoveryToken) next = { ...next, recoveryToken }
   const contextCompacting = guiContextCompaction(state.contextCompacting, evt)
   if (contextCompacting !== next.contextCompacting) next = { ...next, contextCompacting }
   const publicSilenceSince = guiPublicSilenceSince(state.publicSilenceSince, evt, Date.now(),
@@ -1923,7 +1984,10 @@ interface SynkoraState {
    *  plano/ fica no repo e a aba do plano segue no mapa (o main guarda a porta:
    *  'concluida' por aqui só entra em missão de PLANEJAMENTO). */
   concludePlanningMission: (id: string) => Promise<void>
-  deleteMission: (id: string) => Promise<void>
+  /** PROJETO SEM VERSIONAMENTO: finaliza a missão aberta (o main encerra chat,
+   *  ajudantes e terminais). Ao dar certo, a aba volta para o Início. */
+  finishMission: (id: string) => Promise<MissionFinishResult>
+  deleteMission: (id: string, confirmation?: MissionRemovalConfirmation) => Promise<MissionRemovalResult>
   /** A SAÍDA DA SUBIDA: arquiva e exclui num gesto só (ver releaseRailPresentation). */
   discardRelease: (id: string) => Promise<void>
   integrateMission: (missionId: string) => Promise<string>
@@ -1945,9 +2009,10 @@ interface SynkoraState {
 
   loadProjects: () => Promise<void>
   /** cria o universo. `gitUrl` (onda D) conecta o repositório no nascimento;
-   *  devolve o AVISO em PT-BR quando o main criou o projeto mas o GitHub não
-   *  fechou (auth/push) — null = tudo certo. Aviso nunca cancela a criação. */
-  createProject: (name: string, path: string, gitUrl?: string) => Promise<string | null>
+   *  `versioning` escolhe a modalidade (definitiva). Nunca lança: recusa do
+   *  main (pasta inválida, clone falho, pasta com Git em projeto sem
+   *  versionamento) volta como `{ ok: false, error }`. */
+  createProject: (input: NewProjectInput) => Promise<ProjectCreateOutcome>
   removeProject: (id: string) => Promise<void>
   setProjectPhoto: (id: string) => Promise<void>
   removeProjectPhoto: (id: string) => Promise<void>
@@ -2140,13 +2205,25 @@ const KIND_LABEL: Record<PaneKind, string> = {
   codex: 'Codex'
 }
 
+/** SEM VERSIONAMENTO (2026-09-30): o retrato da Home é a missão aberta (a
+ *  regra de uma por vez) e o tamanho do histórico — nenhuma versão é lida.
+ *  `false` = projeto versionado, que segue pelo retrato por versão
+ *  (`loadHomeStats`). */
+async function loadSoloHomeStats(projectId: string): Promise<boolean> {
+  if (!isUnversionedProject(useStore.getState().projects.find((p) => p.id === projectId))) return false
+  const solo = soloHomeStats(await window.synkora.missions.list(projectId), projectId)
+  const stats: HomeStats = { missoesAtivas: solo.openMissionTitle ? 1 : 0, versoes: [], solo, at: Date.now() }
+  useStore.setState((s) => ({ homeStats: { ...s.homeStats, [projectId]: stats } }))
+  return true
+}
+
 /** Aviso PT-BR devolvido pelo `projects:create` quando o universo nasceu mas o
  *  GitHub não fechou (onda D). Lê defensivamente: o motor é o dono do nome do
  *  campo e um payload sem aviso nenhum vale como sucesso. */
 function projectCreateWarning(res: unknown): string | null {
   if (!res || typeof res !== 'object') return null
   const bag = res as Record<string, unknown>
-  for (const key of ['warning', 'aviso', 'msg']) {
+  for (const key of ['gitWarning', 'warning', 'aviso', 'msg']) {
     const value = bag[key]
     if (typeof value === 'string' && value.trim()) return value.trim()
   }
@@ -2223,6 +2300,23 @@ export const useStore = create<SynkoraState>((set, get) => ({
     const pid = get().openProjectId
     if (pid) await get().loadMissions(pid)
   },
+  finishMission: async (id) => {
+    if (!window.synkora.missions?.finish) {
+      return { ok: false, error: 'reinicie o app (npm run dev) para finalizar missões' }
+    }
+    let result: MissionFinishResult
+    try {
+      result = await window.synkora.missions.finish(id)
+    } catch (err) {
+      result = { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+    const pid = get().openProjectId
+    if (pid) {
+      await get().loadMissions(pid)
+      if (result.ok) get().setMissionTab(pid, null)
+    }
+    return result
+  },
   concludePlanningMission: async (id) => {
     if (!window.synkora.missions) return
     await window.synkora.missions.update(id, { status: 'concluida' })
@@ -2241,14 +2335,23 @@ export const useStore = create<SynkoraState>((set, get) => ({
     await window.synkora.missions.update(id, { status: 'arquivada' })
     await get().deleteMission(id)
   },
-  deleteMission: async (id) => {
-    if (!window.synkora.missions?.remove) return
-    await window.synkora.missions.remove(id)
+  deleteMission: async (id, confirmation) => {
+    if (!window.synkora.missions?.remove)
+      return { ok: false, error: 'A exclusão está indisponível. Reinicie o Synkora e tente novamente.' }
+    let result: MissionRemovalResult
+    try {
+      result = confirmation === undefined ? await window.synkora.missions.remove(id)
+        : await window.synkora.missions.remove(id, confirmation)
+    } catch {
+      return { ok: false, error: 'Não consegui confirmar a exclusão. Tente novamente; se persistir, reinicie o Synkora.' }
+    }
+    if (!result.ok) return result
     const pid = get().openProjectId
     if (pid) {
       get().setMissionTab(pid, null)
       await get().loadMissions(pid)
     }
+    return result
   },
   integrateMission: async (missionId) => {
     if (!window.synkora.missions) return 'reinicie o app (npm run dev) para usar missões'
@@ -2292,22 +2395,24 @@ export const useStore = create<SynkoraState>((set, get) => ({
     set({ projects })
   },
 
-  createProject: async (name, path, gitUrl) => {
-    // TODO(onda D, motor): `projects:create` ganha o 3º parâmetro (gitUrl) e
-    // passa a devolver o aviso do GitHub. Enquanto o preload não publica a
-    // assinatura nova, o cast estreito mora AQUI — main antigo simplesmente
-    // ignora o argumento extra e nunca devolve aviso.
-    const create = window.synkora.projects.create as (
-      name: string,
-      path: string,
-      gitUrl?: string
-    ) => Promise<unknown>
-    const res = await create(name, path, gitUrl)
+  createProject: async ({ name, path, gitUrl, versioning }) => {
+    let res: Awaited<ReturnType<typeof window.synkora.projects.create>>
+    try {
+      res = await window.synkora.projects.create(name, path, gitUrl, versioning)
+    } catch (err) {
+      // o main LANÇA nas recusas (caminho inválido, clone falho, pasta com
+      // Git): sem este catch o modal ficava preso em "criando" para sempre
+      return { ok: false, error: plainIpcError(err) }
+    }
     await get().loadProjects()
-    return projectCreateWarning(res)
+    return { ok: true, projectId: res.id, warning: projectCreateWarning(res) }
   },
 
   removeProject: async (id) => {
+    // sai da lista ANTES do IPC: o layout novo (sem ele) chega por broadcast
+    // antes da resposta, e um universo ainda listado mas fora do layout seria
+    // desenhado solto no fim do rail por um instante
+    set((s) => ({ projects: s.projects.filter((p) => p.id !== id) }))
     await window.synkora.projects.remove(id)
     set((s) => ({
       mountedProjects: s.mountedProjects.filter((x) => x !== id),
@@ -2381,16 +2486,19 @@ export const useStore = create<SynkoraState>((set, get) => ({
   // backlog.json). Nunca dispara no laço de render: quem chama é a Home no
   // mount (escalonado) e os canais de mudança. A terceira leitura era
   // tasks.json, para contar CARDS — que morreram na purga F6 (2026-08-17).
+  // Quando a régua de versão morava no corpo desta ação, o chip de identidade
+  // elegia a aberta mais antiga e o dono lia "◈ V1.0" com os números de outra
+  // linha ao lado. Projeto SEM VERSIONAMENTO sai na primeira linha: o retrato
+  // dele é a missão aberta (loadSoloHomeStats), sem ler versão nenhuma.
   loadHomeStats: async (projectId) => {
+    if (await loadSoloHomeStats(projectId)) return
     const [missions, versions] = await Promise.all([
       window.synkora.missions.list(projectId),
       window.synkora.backlog.listVersions(projectId)
     ])
     // A ATRIBUIÇÃO mora em `projectLanding.versionPortrait` (puro e testado):
     // linha por versão contando missão CARIMBADA nela, e o nome do que está NA
-    // MAIN. Aqui fica só a leitura do disco — quando a régua morava neste
-    // corpo, o chip de identidade elegia a aberta mais antiga e o dono lia
-    // "◈ V1.0" com os números de outra linha ao lado.
+    // MAIN. Aqui fica só a leitura do disco.
     // R27 — o registro de release não é missão de superfície: fora do retrato
     // e do ✦ de ativas (o cabeçalho chegou a contar a própria subida).
     const surface = missions.filter((m) => !isReleaseMissionRecord(m))
@@ -2538,7 +2646,11 @@ export const useStore = create<SynkoraState>((set, get) => ({
           ? [...s.mountedProjects, id]
           : s.mountedProjects
     }))
-    if (id) void get().loadMissions(id)
+    if (id) {
+      void get().loadMissions(id)
+      // "abertos por último" da Home: o único carimbo honesto de uso
+      void useProjectLayout.getState().apply({ op: 'touchOpened', projectId: id, at: new Date().toISOString() })
+    }
   },
 
   universeTabByProject: {},

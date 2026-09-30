@@ -42,7 +42,7 @@ export function setGitObserver(
   gitObserver = observer
 }
 
-function gitRaw(cwd: string, args: string[], maxBuffer?: number): string {
+export function gitRaw(cwd: string, args: string[], maxBuffer?: number): string {
   const startedAt = gitObserver ? Date.now() : 0
   try {
     // Worktrees add the project/version IDs to the path. A file that fits in

@@ -154,15 +154,16 @@
 .workspace-drop-target.below { inset: auto 6px 6px; height: calc(50% - 6px); }
 .workspace-drop-target.is-full { border-style: dotted; color: var(--ink-3); }
 
-/* The browser gets the full window height. Its old in-accordion height grip
-   stays mounted for compatibility, but window sizing is the visible control. */
+/* The browser gets the full window height: the page takes whatever the tab
+   strip, the bar and the notices (all `flex: none` in BrowserChrome.css) leave.
+   Its old in-accordion height grip stays mounted for compatibility, but window
+   sizing is the visible control. */
 .workspace-panel[data-workspace-panel="browser"] .workspace-panel-body { overflow: hidden; }
 .workspace-panel[data-workspace-panel="browser"] .dock-sec-body { overflow: hidden; padding: 0; }
 .workspace-panel .dock-browser { flex: 1; min-height: 0; }
 .workspace-panel .dock-browser-shell { flex: 1; min-height: 0; border: 0; border-radius: 0; }
 .workspace-panel .dock-browser-page { flex: 1; height: auto; min-height: 0; }
 .workspace-panel .dock-browser-grip { display: none; }
-.workspace-panel .dock-browser-nav, .workspace-panel .dock-browser-tabbar, .workspace-panel .dock-browser-foot { flex-shrink: 0; }
 
 @container board (max-width: 1103px) {
   .board.workspace-board .board-main.stage-mode .maestro-window { width: calc(100% - var(--workspace-reserved-space, 0px)); transition: width 220ms cubic-bezier(.2, .8, .2, 1); }

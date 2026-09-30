@@ -211,3 +211,190 @@ test('ABAS: o teto subiu para 12 (dono + dev + frota) e a recusa segue nomeando 
   assert.match(cheio, /teto de 12 abas/u)
   assert.match(cheio, /feche uma \(×\)/u, 'toda guarda nomeia a saída')
 })
+
+// ————— O CHROME NOVO (2026-09-29, `docs/mockups/browser-chrome-2026-09-29.html`) —————
+//
+// Sem o pé de status, a dica de cada controle virou `title` nativo, os recados
+// moram numa faixa DENTRO do corpo, e a falha de carga/queda passou a ser POR
+// ABA: a página explica o erro (variante B). As palavras e as decisões moram no
+// modelo puro — é aqui que elas se provam.
+
+const falhou = (over = {}) => ({ kind: 'load-failed', text: 'a prévia na porta 5173 recusou a conexão', ...over })
+
+test('FALHA: a falha POR ABA atravessa o espelho, e o portão repinta quando ela nasce ou some', () => {
+  const state = painel([
+    doDev({ failure: falhou() }),
+    dono({ tabId: 'b', active: false, failure: { kind: 'crashed', text: '   ' } }),
+    doAjudante('inv-brand', { active: false, failure: 'lixo' })
+  ])
+  assert.deepEqual(state.tabs[0].failure, falhou())
+  assert.equal(state.tabs[1].failure, undefined, 'falha sem texto não ocupa a tela dizendo nada')
+  assert.equal(state.tabs[2].failure, undefined, 'payload torto não vira falha inventada')
+
+  const dePe = painel([doDev()])
+  assert.equal(dePe.tabs[0].failure, undefined, 'motor velho não manda o campo — ausência é página de pé')
+  assert.equal(sameBrowserPanel(dePe, painel([doDev({ failure: falhou() })])), false, 'a falha nasceu: o cartão acende')
+  assert.equal(
+    sameBrowserPanel(painel([doDev({ failure: falhou() })]), painel([doDev({ failure: falhou({ kind: 'crashed' }) })])),
+    false,
+    'a ESPÉCIE mudou: o título do cartão é outro'
+  )
+  assert.equal(sameBrowserPanel(painel([doDev({ failure: falhou() })]), painel([doDev({ failure: falhou() })])), true)
+})
+
+test('FALHA: só a aba À VISTA troca a página pelo cartão, e o título vem da ESPÉCIE', () => {
+  const ativaFalhou = painel([doDev({ failure: falhou() }), dono({ tabId: 'b', active: false })])
+  assert.deepEqual(model.activeBrowserTabFailure(ativaFalhou), falhou())
+  const outraFalhou = painel([dono(), doDev({ active: false, failure: falhou() })])
+  assert.equal(model.activeBrowserTabFailure(outraFalhou), null, 'aba de fundo com erro não esconde a página à vista')
+  assert.equal(model.activeBrowserTabFailure(model.EMPTY_BROWSER_PANEL), null)
+
+  assert.equal(model.browserTabFailureTitle(falhou()), 'a página não carregou')
+  assert.equal(model.browserTabFailureTitle(falhou({ kind: 'crashed' })), 'a página caiu')
+  // Heurística sobre conteúdo é proibida: espécie nova cai no genérico, mesmo
+  // que o texto "pareça" uma queda.
+  assert.equal(model.browserTabFailureTitle({ kind: 'blocked', text: 'a página caiu' }), 'a página falhou')
+})
+
+test('ABAS: a dica nativa da aba é a frase inteira e, embaixo, o endereço', () => {
+  const state = painel([
+    dono({ url: 'http://localhost:5173/' }),
+    doDev({ active: false, driving: true, url: 'http://localhost:5173/#/board' }),
+    doAjudante('inv-brand', { active: false, url: '', failure: falhou() })
+  ])
+  // A aba do dono diz só o nome: a frase curta É o texto visível, e o leitor de
+  // tela continua lendo o próprio botão.
+  assert.equal(model.browserTabSentence(state.tabs[0]), 'Board · Synkora')
+  assert.equal(model.browserTabTitle(state.tabs[0]), 'Board · Synkora\nhttp://localhost:5173/')
+  assert.equal(
+    model.browserTabTitle(state.tabs[1]),
+    'aba de dev · localhost:5173 · dirigindo agora\nhttp://localhost:5173/#/board'
+  )
+  // A marca de erro é desenho: a PALAVRA volta na frase (e sem URL, sem linha vazia).
+  assert.equal(model.browserTabTitle(state.tabs[2]), 'aba de inv-brand · QA visual · a página não carregou')
+})
+
+// ————— CADA ERRO COM A SUA UI (2026-09-29, lei 8 do playbook) —————
+//
+// O motor passou a mandar a cabeça (`title`), o código cru (`code`), o
+// contador da repetição (`count`) e o endereço da aba que morreu (`url`). A
+// FORMA de cada recado é da `test-browser-notices.mjs`; aqui se prende o
+// espelho, o portão do store e a ESPERA da página travada.
+
+test('ESPELHO: os campos novos do motor atravessam — e a ausência não é escrita', () => {
+  const state = painel([doDev({ failure: falhou({ title: '  a prévia não respondeu ', code: ' ERR_CONNECTION_REFUSED ' }) })], {
+    notice: {
+      kind: 'permission-denied',
+      title: ' a página pediu a câmera ',
+      text: 'o browser da missão não libera dispositivos.',
+      at: 'c1',
+      count: 3.7,
+      url: '  '
+    }
+  })
+  assert.deepEqual(state.notice, {
+    kind: 'permission-denied',
+    title: 'a página pediu a câmera',
+    text: 'o browser da missão não libera dispositivos.',
+    at: 'c1',
+    count: 3
+  })
+  assert.deepEqual(state.tabs[0].failure, {
+    kind: 'load-failed',
+    title: 'a prévia não respondeu',
+    text: 'a prévia na porta 5173 recusou a conexão',
+    code: 'ERR_CONNECTION_REFUSED'
+  })
+
+  const morta = painel([dono()], {
+    notice: { kind: 'tab-lost', text: 'a aba fechou sozinha', at: 'l1', url: 'https://example.test/a' }
+  })
+  assert.equal(morta.notice.url, 'https://example.test/a')
+
+  // Motor ANTERIOR e payload torto: nada inventado, nenhuma segunda grafia.
+  for (const count of [1, 0, -2, '3', Number.NaN, Number.POSITIVE_INFINITY]) {
+    const torto = painel([dono()], { notice: { kind: 'tab-cap', text: 'teto', at: 't', count, title: 7, url: 9 } })
+    assert.deepEqual(torto.notice, { kind: 'tab-cap', text: 'teto', at: 't' }, `count ${String(count)}`)
+  }
+  const velha = painel([doDev({ failure: { kind: 'crashed', text: 'caiu', title: '   ', code: 42 } })])
+  assert.deepEqual(velha.tabs[0].failure, { kind: 'crashed', text: 'caiu' })
+})
+
+test('PORTÃO: o ×N subir repinta — o carimbo da repetição coalescida é o MESMO', () => {
+  const nota = (over = {}) => painel([dono()], { notice: { kind: 'permission-denied', text: 'câmera', at: 'c1', count: 2, ...over } })
+  assert.equal(sameBrowserPanel(nota(), nota()), true)
+  assert.equal(sameBrowserPanel(nota(), nota({ count: 3 })), false, 'o contador mudou com o carimbo igual')
+  assert.equal(sameBrowserPanel(nota(), nota({ title: 'a página pediu a câmera' })), false, 'a cabeça nasceu')
+  assert.equal(sameBrowserPanel(nota(), nota({ url: 'https://example.test/' })), false, 'o REABRIR ganhou endereço')
+
+  const falha = (over = {}) => painel([doDev({ failure: falhou(over) })])
+  assert.equal(sameBrowserPanel(falha({ code: 'ERR_A' }), falha({ code: 'ERR_A' })), true)
+  assert.equal(sameBrowserPanel(falha(), falha({ title: 'a prévia não respondeu' })), false, 'a cabeça do cartão mudou')
+  assert.equal(sameBrowserPanel(falha({ code: 'ERR_A' }), falha({ code: 'ERR_B' })), false, 'o código miúdo mudou')
+})
+
+test('FALHA: a cabeça do MOTOR vence; sem ela, a espécie — e a página travada tem a sua', () => {
+  assert.equal(model.browserTabFailureTitle(falhou({ title: 'a prévia não respondeu' })), 'a prévia não respondeu')
+  assert.equal(model.browserTabFailureTitle({ kind: 'unresponsive', text: 'preso' }), 'a página parou de responder')
+  // A frase da aba (dica nativa e leitor de tela) conta a MESMA cabeça.
+  const state = painel([doAjudante('inv-brand', { failure: { kind: 'unresponsive', text: 'preso' } })])
+  assert.equal(model.browserTabSentence(state.tabs[0]), 'aba de inv-brand · QA visual · a página parou de responder')
+})
+
+test('ESPERAR: o dono olha a página travada até a falha MUDAR ou SUMIR', () => {
+  const travada = (over = {}) => ({ kind: 'unresponsive', text: 'algum script dela está preso', ...over })
+  const state = painel([doDev({ failure: travada() }), dono({ tabId: 'b', active: false })])
+  const identity = model.browserFailureIdentity(state)
+  assert.equal(typeof identity, 'string')
+  assert.equal(model.browserPageHidden(state, null), true, 'sem espera, o cartão toma o lugar da página')
+  assert.equal(model.browserPageHidden(state, identity), false, 'ESPERAR: a página volta à vista')
+  assert.equal(model.liveBrowserWait(state, identity), identity, 'a mesma falha mantém a espera (mesma string)')
+
+  // A falha MUDOU (outro texto, outra espécie): a espera era por aquela.
+  const outra = painel([doDev({ failure: travada({ text: 'ainda preso, agora no layout' }) }), dono({ tabId: 'b', active: false })])
+  assert.equal(model.liveBrowserWait(outra, identity), null)
+  assert.equal(model.browserPageHidden(outra, identity), true)
+  const caiu = painel([doDev({ failure: travada({ kind: 'crashed' }) }), dono({ tabId: 'b', active: false })])
+  assert.equal(model.browserPageHidden(caiu, identity), true)
+
+  // A MESMA falha em OUTRA aba não herda a espera.
+  const outraAba = painel([doDev({ active: false }), dono({ tabId: 'b', failure: travada() })])
+  assert.equal(model.browserPageHidden(outraAba, identity), true)
+
+  // A falha SUMIU: nada a esconder, e a espera morre junto.
+  const dePe = painel([doDev(), dono({ tabId: 'b', active: false })])
+  assert.equal(model.browserFailureIdentity(dePe), null)
+  assert.equal(model.browserPageHidden(dePe, identity), false)
+  assert.equal(model.liveBrowserWait(dePe, identity), null)
+  assert.equal(model.browserPageHidden(model.EMPTY_BROWSER_PANEL, null), false)
+})
+
+test('LARGURA: a nota de moldura vira a dica do seletor e a do piso vira linha da faixa', () => {
+  const auto = painel([dono()])
+  const cabe = painel([dono({ viewport: 375 })], { viewport: 375, viewportWidth: 375, viewportBand: 262 })
+  const apertado = painel([dono({ viewport: 1280 })], { viewport: 1280, viewportWidth: 1200 })
+  const doAgente = painel([dono({ viewport: 900 })], { viewport: 900, viewportWidth: 900 })
+
+  assert.equal(
+    model.browserViewportFitNote(cabe),
+    'a página está em 375px REAIS, centralizada — as faixas dos lados são o app, não o site'
+  )
+  assert.equal(model.browserViewportShortfall(cabe), null, 'com faixa não existe piso mordendo')
+  assert.equal(model.browserViewportFitNote(apertado), null)
+  assert.match(model.browserViewportShortfall(apertado), /recebendo 1200px/u)
+
+  assert.match(model.browserViewportTitle(auto), /^largura que a página enxerga · largura real do painel/u)
+  assert.match(model.browserViewportTitle(cabe), /375px REAIS/u)
+  assert.match(model.browserViewportTitle(doAgente), /\no agente pediu 900px lógicos · AUTO devolve a largura do painel$/u)
+  assert.match(model.browserViewportTitle(model.EMPTY_BROWSER_PANEL), /abra uma página \(\+\)/u, 'desabilitado nunca é beco')
+
+  assert.deepEqual(model.browserViewportOptions(auto), ['auto', 375, 768, 1280])
+  assert.deepEqual(model.browserViewportOptions(doAgente), ['auto', 375, 768, 1280, 900], 'a largura do agente vira opção')
+  assert.deepEqual(
+    model.browserViewportOptions(doAgente).map(model.browserViewportOptionLabel),
+    ['AUTO · largura do painel', '375 · celular', '768 · tablet', '1280 · desktop', '900 · pedido do agente']
+  )
+  // A lista nativa devolve TEXTO: "auto" e lixo voltam a AUTO, número vira largura.
+  assert.equal(model.readViewportMode(Number('768')), 768)
+  assert.equal(model.readViewportMode(Number('auto')), 'auto')
+})

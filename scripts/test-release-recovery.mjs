@@ -9,6 +9,7 @@ import { stripTypeScriptTypes } from 'node:module'
 import worktree from '../.tmp/release-recovery-test/worktree.js'
 import { releaseIdentityError } from '../src/main/releaseChangesScope.ts'
 import { runReleaseForChat } from '../src/main/releaseChat.ts'
+import { isUnversionedProject, unversionedRefusal } from '../src/shared/projectVersioning.ts'
 
 // Execute the real boot wrapper with real Git. Only app/store notifications and
 // the worker transport are replaced; importing Electron would start the app.
@@ -70,6 +71,8 @@ function fixture(t, { legacy = false } = {}) {
     releaseMutationLocks: locks, releaseChangesStore: { list: () => control.prepared },
     releaseChanges: { inspect: () => ({ error: 'source scope unavailable during interrupted cleanup' }) },
     releaseIdentityError, runReleaseForChat, releaseProductPublishesBox: () => false,
+    // index.ts asks the project modality first (non-versioned projects, 2026-09-30)
+    isUnversionedProject, unversionedRefusal,
     closeTestServersUnder: async dir => { closed.push(dir); await control.beforeClose() },
     gitOff: async (name, ...args) => { await control.beforeGit(name); return worktree[name](...args) }
   }
