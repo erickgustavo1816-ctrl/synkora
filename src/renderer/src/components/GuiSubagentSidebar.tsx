@@ -136,6 +136,20 @@ function SubagentCard({
   )
 }
 
+/** O resumo do painel Frota — conta a verdade com a seção recolhida
+ *  (encerrada inclui entregue, negada e parada). Um só dono para o trilho da
+ *  missão versionada e para os painéis do projeto sem versionamento. */
+export function frotaSectionSummary(
+  entries: readonly Pick<GuiSubagentSidebarEntry, 'status'>[]
+): string | undefined {
+  if (entries.length === 0) return undefined
+  const running = entries.filter((entry) => entry.status === 'running').length
+  const ended = entries.length - running
+  if (running === entries.length) return `${running} trabalhando`
+  if (running === 0) return `${entries.length} encerrada${entries.length === 1 ? '' : 's'}`
+  return `${running} trabalhando · ${ended} encerrada${ended === 1 ? '' : 's'}`
+}
+
 /**
  * Seção da lateral de entrega. Sem fichas, não ocupa espaço nem deixa um
  * placeholder barulhento; a lista nasce no primeiro Task/Agent factual.

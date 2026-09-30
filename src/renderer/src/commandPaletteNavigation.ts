@@ -3,6 +3,8 @@ import type {
   PaletteNavigationTarget,
   TerminalMarkdownTarget
 } from '../../preload'
+import { projectVersioning } from '../../shared/projectVersioning'
+import { paletteTabFor } from './commandPaletteScope'
 import { queueMarkdownOpen } from './projectFileNavigation'
 import { useStore } from './store'
 
@@ -97,8 +99,11 @@ export async function navigateFromCommandPalette(
     return { close: true }
   }
   if (target.kind === 'project') {
+    // projeto sem versionamento não tem Mapa nem Versões: o destino cai na
+    // aba da missão em vez de abrir uma tela que não existe nele
+    const project = state.projects.find((p) => p.id === target.projectId)
     state.openProject(target.projectId)
-    state.setUniverseTab(target.projectId, target.tab)
+    state.setUniverseTab(target.projectId, paletteTabFor(projectVersioning(project), target.tab))
     if (target.missionId !== undefined) state.setMissionTab(target.projectId, target.missionId)
     return { close: true }
   }

@@ -611,7 +611,9 @@ test('CONTRATO: cadastrar universo não semeia PROJECT_PLAN.json nem classifica 
   assert.ok(!/ensureGreenfieldProjectPlan/u.test(projects), 'a semeadura voltou')
   assert.ok(!/projectModeOf|projectPlanOf/u.test(projects), 'a classificação F6 voltou')
   assert.ok(!/'greenfield'/u.test(projects), 'o modo greenfield voltou ao cadastro')
-  assert.match(projects, /projects\.create\(name, path\)/u)
+  // a modalidade (versionado × sem versionamento, 2026-09-30) é escolha do
+  // dono, não classificação: é o único terceiro argumento aceito
+  assert.match(projects, /projects\.create\(name, path(?:, versioning)?\)/u)
   // A pergunta "esta pasta está vazia?" sobrevive — ela decide CLONAR × PUBLICAR.
   assert.match(projects, /isEffectivelyEmptyProject/u)
   assert.match(projects, /from '\.\.\/projectFolder'/u)

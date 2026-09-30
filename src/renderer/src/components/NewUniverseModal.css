@@ -1,0 +1,216 @@
+/* NOVO UNIVERSO — a folha com o interruptor "Versionar com Git" (mockup
+   aprovado: docs/mockups/projeto-sem-versao-2026-09-30.html, cena 1). A pele
+   da folha mora em SheetModal.css. */
+
+.nu-field {
+  display: block;
+}
+
+.nu-folder {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.nu-folder .btn {
+  flex: none;
+}
+
+.nu-folder-path {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  /* corta o COMEÇO: o nome da pasta é o que identifica */
+  direction: rtl;
+  text-align: left;
+  font-size: 11.5px;
+  color: var(--ink);
+}
+
+.nu-folder-path.is-empty {
+  color: var(--ink-2);
+}
+
+/* O INTERRUPTOR. Geometria do switch da casa (trilho 34×18, bolinha 10px,
+   acento quando ligado); a LINHA é nova: rótulo do estado LIGADO, a palavra
+   do estado e, embaixo, a frase que muda com ele. Linhas finas em cima e
+   embaixo — não é um cartão dentro do cartão. */
+.vswitch {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px 18px;
+  width: 100%;
+  margin: 2px 0 0;
+  padding: 12px 2px;
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--mono);
+  text-align: left;
+  cursor: pointer;
+}
+
+.vswitch:disabled {
+  cursor: default;
+}
+
+.vswitch:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.vs-label {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.vs-state {
+  grid-row: 1 / span 2;
+  grid-column: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.vs-word {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 3px;
+  min-width: 9ch;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+
+.vs-word svg {
+  width: 12px;
+  height: 12px;
+}
+
+.vs-track {
+  position: relative;
+  width: 34px;
+  height: 18px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--paper-3, #e3dccb);
+  transition: background-color 130ms ease, border-color 130ms ease;
+}
+
+.vs-knob {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--ink-3);
+  transition: transform 130ms ease, background-color 130ms ease;
+}
+
+.vswitch[aria-checked='true'] .vs-track {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line-strong));
+  background: color-mix(in srgb, var(--accent) 18%, var(--paper-2));
+}
+
+.vswitch[aria-checked='true'] .vs-knob {
+  background: var(--accent);
+  transform: translateX(16px);
+}
+
+.vswitch:hover:not(:disabled) .vs-track {
+  border-color: var(--ink-2);
+}
+
+.vswitch.is-locked .vs-track {
+  opacity: 0.55;
+}
+
+.vs-hint {
+  grid-column: 1;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--ink-2);
+}
+
+/* o campo do GitHub pertence ao LIGADO: desligar recolhe — a forma mostra a
+   consequência (movimento como sinal) */
+.nu-remote {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition:
+    grid-template-rows 200ms var(--ease-out),
+    opacity 160ms ease,
+    margin-top 200ms var(--ease-out);
+}
+
+.nu-remote > div {
+  min-height: 0;
+  overflow: hidden;
+  /* a folga devolve o anel de foco que o overflow cortaria */
+  padding: 2px;
+  margin: -2px;
+}
+
+/* recolhido, devolve também o vão do flex (14px) para não sobrar buraco */
+.nu-remote.is-collapsed {
+  grid-template-rows: 0fr;
+  opacity: 0;
+  margin-top: -14px;
+}
+
+.sheet-modal .nu-remote-input {
+  font-weight: 400;
+  font-size: 12.5px;
+}
+
+/* o erro ONDE quebrou, com a saída; nunca um "… criando" parado */
+.nu-err {
+  margin-top: 8px;
+  padding: 9px 11px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--err) 7%, var(--card));
+  color: var(--err);
+  font-size: 11.5px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.nu-err .link-btn {
+  color: var(--err);
+  font-weight: 700;
+}
+
+.nu-err .link-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* o erro do pé da folha já está no vão do flex */
+.sheet-modal > .nu-err {
+  margin-top: 0;
+}
+
+.nu-note {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink-2);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nu-remote,
+  .vs-track,
+  .vs-knob {
+    transition: none;
+  }
+}

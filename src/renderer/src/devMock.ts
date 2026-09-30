@@ -1,5 +1,6 @@
 import type {
   Mission,
+  Project,
   ProgressOverlaySnapshot,
   Seat,
   SkillsKitState,
@@ -456,7 +457,7 @@ export function installDevMock(): void {
     }
   }
 
-  const projects = [
+  const projects: Project[] = [
     {
       id: 'mock-1',
       name: 'App Fitness',
@@ -468,6 +469,22 @@ export function installDevMock(): void {
       name: 'Synkora',
       path: 'C:\\Users\\Erick\\Desktop\\Synkora',
       createdAt: '2026-07-21T12:00:00.000Z'
+    },
+    // SEM VERSIONAMENTO (2026-09-30): um com a missão aberta, outro só com o
+    // histórico — as duas linhas do card da Home e o selo de pasta no rail
+    {
+      id: 'mock-solo-1',
+      name: 'Proposta Clínica Vida',
+      path: 'C:\\Users\\Erick\\Documents\\proposta-clinica',
+      createdAt: '2026-09-25T12:00:00.000Z',
+      versioning: 'none'
+    },
+    {
+      id: 'mock-solo-2',
+      name: 'Contrato do apê',
+      path: 'C:\\Users\\Erick\\Documents\\contrato-ape',
+      createdAt: '2026-09-20T12:00:00.000Z',
+      versioning: 'none'
     }
   ]
 
@@ -519,7 +536,47 @@ export function installDevMock(): void {
       baseBranch: 'main',
       createdAt: '2026-07-22T09:00:00.000Z',
       updatedAt: '2026-07-22T09:00:00.000Z'
-    }
+    },
+    // sem versionamento: a missão edita a pasta direto (sem branch/worktree)
+    {
+      id: 'mission-solo-open',
+      projectId: 'mock-solo-1',
+      title: 'Reescrever a seção de preços',
+      goal: 'Três planos lado a lado, sem o desconto anual.',
+      status: 'ativa',
+      direct: true,
+      missionType: 'dev',
+      createdAt: '2026-09-30T10:14:00.000Z',
+      updatedAt: '2026-09-30T10:14:00.000Z'
+    },
+    ...[
+      ['Revisar os prazos de implantação', '2026-09-29T16:05:00.000Z'],
+      ['Escrever o resumo executivo', '2026-09-27T11:40:00.000Z'],
+      ['Montar a estrutura da proposta', '2026-09-25T09:12:00.000Z']
+    ].map(([title, at], i): Mission => ({
+      id: `mission-solo-done-${i + 1}`,
+      projectId: 'mock-solo-1',
+      title,
+      status: 'concluida',
+      direct: true,
+      missionType: 'dev',
+      completedAt: at,
+      createdAt: at,
+      updatedAt: at
+    })),
+    ...['Cláusula de multa', 'Vistoria de entrada', 'Prazo de reajuste', 'Índice do aluguel'].map(
+      (title, i): Mission => ({
+        id: `mission-solo-ape-${i + 1}`,
+        projectId: 'mock-solo-2',
+        title,
+        status: 'concluida',
+        direct: true,
+        missionType: 'dev',
+        completedAt: `2026-09-2${i}T15:00:00.000Z`,
+        createdAt: `2026-09-2${i}T14:00:00.000Z`,
+        updatedAt: `2026-09-2${i}T15:00:00.000Z`
+      })
+    )
   ]
 
   // Grupos: layout em memória com as MESMAS operações do main — o preview de

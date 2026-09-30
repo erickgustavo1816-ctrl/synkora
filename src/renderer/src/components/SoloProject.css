@@ -1,0 +1,701 @@
+/* O UNIVERSO SEM VERSIONAMENTO (2026-09-30) — medidas do mockup aprovado:
+   docs/mockups/projeto-sem-versao-2026-09-30.html (cenas 2 a 6). O mundo da
+   casa não muda: papel, tipografia mono, botões de tinta, acento #d96c3f. Só
+   o que é NOVO deste modo mora aqui; o palco, o chat, os painéis e a folha de
+   modal (SheetModal.css) são os de sempre.
+
+   Texto de estado que passa o AA sobre papel (aprovados no mockup do painel
+   do projeto, 2026-09-26): o verde e o âmbar puros medem ~2,8:1. Locais até
+   virarem token da casa. */
+.solo-project,
+.solo-finish {
+  --solo-ok-ink: #2d6f45;
+  --solo-warn-ink: #7f5410;
+}
+
+.solo-project {
+  container: solo / inline-size;
+}
+
+/* ——— cabeçalho: o avatar carrega o SELO DE PASTA, que sai 4px da caixa ——— */
+.solo-project .solo-avatar {
+  position: relative;
+  overflow: visible;
+}
+.solo-project .solo-avatar img {
+  border-radius: inherit;
+}
+.solo-mode-tag {
+  display: inline-flex;
+  flex: none;
+}
+.solo-project .ws-path svg {
+  flex: none;
+  width: 13px;
+  height: 13px;
+  color: var(--ink-3);
+}
+.solo-project .ws-actions .btn svg {
+  width: 13px;
+  height: 13px;
+}
+
+/* ——— O INÍCIO: uma folha de escrever, não um convite em cartão ——— */
+.solo-start {
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+  overflow: auto;
+  background: var(--paper);
+}
+.solo-col {
+  width: min(680px, 100% - 48px);
+  margin: 0 auto;
+  padding: 44px 0 56px;
+}
+.ss-h1 {
+  margin: 0;
+  font-size: 22px;
+  line-height: 28px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+.ss-sub {
+  margin: 6px 0 18px;
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+.ss-sub b {
+  color: var(--ink);
+}
+
+/* a folha tem a MESMA pele do composer do chat (card, traço 28% de tinta,
+   foco em acento): começar a missão é escrever a primeira fala */
+.ss-sheet {
+  border: 1px solid color-mix(in srgb, var(--ink) 28%, transparent);
+  border-radius: 8px;
+  background: var(--card);
+  transition: border-color 120ms ease;
+}
+.ss-sheet:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 54%, color-mix(in srgb, var(--ink) 28%, transparent));
+}
+.ss-field {
+  display: block;
+  padding: 12px 14px 10px;
+}
+.ss-field + .ss-field {
+  border-top: 1px solid color-mix(in srgb, var(--ink) 12%, transparent);
+}
+.ss-label {
+  display: block;
+  margin: 0 0 4px;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+.ss-label small {
+  font-size: inherit;
+  font-weight: 400;
+  letter-spacing: 0.06em;
+  text-transform: none;
+}
+.ss-title,
+.ss-goal {
+  display: block;
+  width: 100%;
+  padding: 2px 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--ink);
+}
+.ss-title {
+  font: 700 17px/1.35 var(--mono);
+}
+.ss-goal {
+  min-height: 44px;
+  resize: none;
+  font: 13px/1.55 var(--mono);
+}
+.ss-title::placeholder,
+.ss-goal::placeholder {
+  color: var(--ink-3);
+  font-weight: 400;
+}
+.ss-need {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--err);
+}
+.ss-error {
+  margin: 0;
+  padding: 9px 14px;
+  border-top: 1px solid color-mix(in srgb, var(--err) 30%, transparent);
+  background: color-mix(in srgb, var(--err) 7%, var(--card));
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--err);
+}
+.ss-foot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 10px 10px 14px;
+  border-top: 1px solid color-mix(in srgb, var(--ink) 12%, transparent);
+  border-radius: 0 0 8px 8px;
+  background: color-mix(in srgb, var(--paper) 55%, var(--card));
+}
+.ss-note {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--ink-2);
+}
+.ss-kbd {
+  font-size: 10px;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+.ss-kbd kbd {
+  font: inherit;
+  padding: 1px 5px;
+  border: 1px solid var(--line-strong);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: var(--card);
+}
+.ss-foot .btn svg {
+  width: 14px;
+  height: 14px;
+}
+.ss-how {
+  max-width: 62ch;
+  margin: 16px 2px 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--ink-2);
+}
+
+/* ——— O HISTÓRICO como livro-razão: data | título + a frase do resumo ——— */
+.solo-log {
+  margin-top: 40px;
+}
+.log-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 0 0 8px;
+  padding: 0 2px;
+}
+.log-title-h {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+.log-count {
+  font-size: 11px;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.log-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--line);
+}
+.log-list li {
+  border-bottom: 1px solid var(--line);
+}
+.log-row {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr) auto;
+  column-gap: 16px;
+  align-items: start;
+  width: 100%;
+  padding: 12px 8px 13px 2px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+.log-row:hover {
+  background: color-mix(in srgb, var(--ink) 4%, transparent);
+}
+.log-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.log-when {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding-top: 1px;
+  font-size: 11.5px;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.log-when b {
+  color: var(--ink);
+  font-weight: 700;
+}
+.log-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.log-name {
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.log-sum {
+  display: -webkit-box;
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink-2);
+  text-wrap: pretty;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.log-sum.none {
+  font-style: italic;
+}
+.log-go {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding-top: 2px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+.log-go svg {
+  width: 13px;
+  height: 13px;
+  transition: transform 140ms var(--ease-out, ease);
+}
+.log-row:hover .log-go {
+  color: var(--ink);
+}
+.log-row:hover .log-go svg {
+  transform: translateX(2px);
+}
+/* a missão que ACABOU de ser finalizada chega no topo com o filete de 2px do
+   acento, que some sozinho — o sinal de "foi para cá" */
+.log-list li.just {
+  animation: solo-log-in 420ms var(--ease-out, ease) both;
+}
+.log-list li.just .log-row {
+  box-shadow: inset 2px 0 0 var(--accent);
+  animation: solo-log-edge 2.4s ease 600ms both;
+}
+@keyframes solo-log-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+}
+@keyframes solo-log-edge {
+  to {
+    box-shadow: inset 2px 0 0 transparent;
+  }
+}
+
+/* ——— A MISSÃO É A TELA: o título sobe para a cabeça do palco ——— */
+.solo-stage-title,
+.solo-stage-title-input {
+  flex: 0 1 auto;
+  min-width: 0;
+  /* o mockup pedia 34ch, mas com o respiro interno um título comum de 32
+     caracteres ("Revisar os prazos de implantação") já cortava */
+  max-width: 44ch;
+  height: 24px;
+  margin-left: 2px;
+  padding: 3px 6px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: none;
+  color: var(--ink);
+  font: 700 12px/1.2 var(--mono);
+}
+.solo-stage-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: text;
+}
+.solo-stage-title > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.solo-stage-title svg {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  color: var(--ink-3);
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.solo-stage-title:not(.is-static):hover,
+.solo-stage-title:not(.is-static):focus-visible {
+  border-color: var(--line-strong);
+  background: var(--card);
+}
+.solo-stage-title:hover svg,
+.solo-stage-title:focus-visible svg {
+  opacity: 1;
+}
+.solo-stage-title:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.solo-stage-title.is-static {
+  cursor: default;
+}
+.solo-stage-title-input {
+  width: 34ch;
+  border-color: var(--ink);
+  background: var(--card);
+  outline: none;
+}
+.solo-mission .stage-head .solo-title-sep {
+  align-self: center;
+  margin: 0 2px;
+}
+.solo-mission .stage-pills {
+  align-self: center;
+}
+
+/* ——— FINALIZAR: a única cerimônia do modo, com PALAVRA ———
+   Tinta em repouso; quando o agente entrega o resumo e fecha o turno, vira o
+   botão laranja da casa e dá UM anel (sinal, não enfeite). */
+.solo-finish-btn {
+  flex: none;
+  height: 24px;
+  margin-left: 4px;
+}
+.solo-finish-btn svg {
+  width: 13px;
+  height: 13px;
+}
+.solo-finish-btn.is-ready {
+  background: var(--accent);
+  border-color: var(--accent-deep);
+  color: #fff;
+  animation: solo-finish-ready 1.1s var(--ease-out, ease) 1 both;
+}
+.solo-finish-btn.is-ready:hover {
+  background: var(--accent-deep);
+  color: #fff;
+}
+@keyframes solo-finish-ready {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 55%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 9px color-mix(in srgb, var(--accent) 0%, transparent);
+  }
+}
+/* aqui a cabeça também carrega o TÍTULO: as palavras saem um pouco antes
+   (720 em vez dos 640 da casa) para o nome da missão caber */
+@container stage-head (max-width: 720px) {
+  .solo-mission .stage-status .ss-text,
+  .solo-mission .stage-status .ss-clock,
+  .solo-mission .stage-seat-btn .ss-name,
+  .solo-read-when {
+    display: none;
+  }
+}
+.solo-chat-error {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+}
+
+/* ——— A MISSÃO FINALIZADA, SÓ LEITURA, na mesma tela ——— */
+.board.solo-reading {
+  height: 100%;
+}
+.solo-read-window.maestro-window.stage-window {
+  flex: 1;
+  width: auto;
+  max-width: none;
+  border-color: var(--line);
+}
+.solo-read-back {
+  flex: none;
+  height: 24px;
+  margin-left: 2px;
+}
+.solo-read-back svg {
+  width: 13px;
+  height: 13px;
+}
+.solo-reading .stage-head > .stage-sep {
+  align-self: center;
+  margin: 0 2px;
+}
+.solo-read-when {
+  flex: none;
+  align-self: center;
+  font-size: 10.5px;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+.solo-read-pills {
+  margin-right: 8px;
+}
+.solo-read-chip {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+  height: 20px;
+  padding: 0 7px;
+  border: 1px solid var(--line-strong);
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+.solo-read-chip svg {
+  width: 12px;
+  height: 12px;
+}
+.solo-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 3px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.solo-icon-btn:hover {
+  background: var(--paper-2);
+  color: var(--ink);
+}
+.solo-icon-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+/* a confirmação NA PRÓPRIA LINHA: a pergunta e as duas saídas */
+.solo-remove-confirm {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.solo-remove-q {
+  font-size: 11px;
+  color: var(--err);
+  white-space: nowrap;
+}
+.solo-remove-error {
+  flex: none;
+  margin: 0;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--err) 7%, var(--paper));
+  font-size: 11.5px;
+  color: var(--err);
+}
+.solo-read-body.maestro-body {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+.solo-read-thread {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.solo-read-empty {
+  margin: auto;
+  padding: 24px;
+  font-size: 12px;
+  color: var(--ink-2);
+  text-align: center;
+}
+/* o RESUMO no topo: a mesma frase que foi para o histórico */
+.solo-summary {
+  flex: none;
+  width: min(780px, 100% - 36px);
+  margin: 14px auto 0;
+  padding: 9px 12px 10px;
+  border: 1px solid color-mix(in srgb, var(--ok) 40%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--ok) 8%, var(--card));
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink);
+}
+.ssum-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 3px;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--solo-ok-ink);
+}
+.ssum-label svg {
+  width: 13px;
+  height: 13px;
+}
+.solo-frozen-foot {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 12px 18px 14px;
+  border-top: 1px solid var(--line);
+  background: color-mix(in srgb, var(--paper) 92%, var(--card));
+  font-size: 11.5px;
+  color: var(--ink-2);
+  text-align: center;
+}
+.solo-frozen-foot > svg {
+  width: 14px;
+  height: 14px;
+}
+.solo-frozen-foot .btn svg {
+  width: 13px;
+  height: 13px;
+}
+
+/* ——— CONFIRMAÇÃO DE FINALIZAR (a folha é a do SheetModal.css) ——— */
+.sheet-modal.solo-finish {
+  width: min(520px, 100%);
+}
+.fm-title {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.4;
+  font-weight: 700;
+  text-wrap: balance;
+}
+.fm-facts {
+  display: grid;
+  gap: 9px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.fm-facts li {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--ink);
+}
+.fm-facts svg,
+.fm-risk svg {
+  width: 16px;
+  height: 16px;
+  margin-top: 1px;
+}
+.fm-facts svg {
+  color: var(--ink-2);
+}
+.fm-risk {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--warn) 60%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--warn) 13%, var(--card));
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--solo-warn-ink);
+}
+.fm-risk b {
+  color: var(--ink);
+}
+.fm-error {
+  margin: 0;
+  padding: 9px 11px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--err) 7%, var(--card));
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--err);
+}
+
+/* ——— JANELA ESTREITA (o app com metade da tela) ——— */
+@container solo (max-width: 720px) {
+  .solo-project .ws-header {
+    gap: 10px;
+    padding: 10px 12px;
+  }
+  .solo-project .ws-path,
+  .solo-project .solo-mode-tag {
+    display: none;
+  }
+  .solo-col {
+    width: calc(100% - 40px);
+    padding-top: 30px;
+  }
+  .log-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    row-gap: 4px;
+  }
+  .log-when {
+    grid-column: 1;
+    flex-direction: row;
+    gap: 8px;
+  }
+  .log-text {
+    grid-column: 1;
+  }
+  .log-go {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    align-self: center;
+  }
+  .ss-kbd {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .log-list li.just,
+  .log-list li.just .log-row,
+  .solo-finish-btn.is-ready {
+    animation-duration: 1ms;
+  }
+}

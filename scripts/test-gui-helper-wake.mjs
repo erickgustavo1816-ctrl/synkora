@@ -26,8 +26,8 @@ import test from 'node:test'
 // Namespace de propósito (mesma disciplina da suíte irmã): com destructure no
 // topo, UM export faltando derruba o arquivo inteiro e o vermelho deixa de
 // discriminar qual peça falta.
-import * as cards from '../.tmp/gui-helper-wake-test/guiHelperCards.js'
-import * as sessions from '../.tmp/gui-helper-wake-test/guiSessions.js'
+import * as cards from '../.tmp/gui-helper-wake-test/main/guiHelperCards.js'
+import * as sessions from '../.tmp/gui-helper-wake-test/main/guiSessions.js'
 
 const { GuiHelperCardCorrelator, GuiHelperInbox, guiHelperWakeMessage } = cards
 const { GuiSessionRegistry } = sessions

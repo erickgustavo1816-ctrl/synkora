@@ -78,8 +78,8 @@ export default function Home(): React.JSX.Element {
   const hoverRef = useRef<string | null>(null)
 
   const [clis, setClis] = useState<CliStatus[]>([])
-  // ONDA D: criar universo virou um passo com decisão (link do GitHub
-  // opcional), então deixou de ser só o seletor de pasta.
+  // Criar universo é um passo com decisões (versionar com Git, link do
+  // GitHub opcional), então deixou de ser só o seletor de pasta.
   const [novoOpen, setNovoOpen] = useState(false)
 
   // ---- o índice: busca, filtros, ordem, visão e abas de grupo ------------
@@ -431,7 +431,7 @@ export default function Home(): React.JSX.Element {
     <button className="universe-card add" onClick={() => setNovoOpen(true)}>
       <span className="add-plus">+</span>
       <span className="add-title">novo universo</span>
-      <span className="add-hint">pasta do projeto · GitHub opcional</span>
+      <span className="add-hint">pasta do projeto · com ou sem Git</span>
     </button>
   )
 

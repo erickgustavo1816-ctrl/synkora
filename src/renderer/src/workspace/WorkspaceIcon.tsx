@@ -4,7 +4,7 @@ export default function WorkspaceIcon({ name }: {
   name: WorkspacePanelId | 'menu' | 'sidebar' | 'expand' | 'restore' | 'close' | 'upload' | 'terminal' | 'review' | 'archive' | 'check' | 'discard'
     | 'play' | 'plus' | 'branch' | 'chevron' | 'arrow' | 'ask' | 'queue' | 'plan'
     | 'back' | 'reload' | 'code' | 'popout' | 'redock' | 'width' | 'bolt' | 'alert' | 'info'
-    | 'lock' | 'download' | 'tabs' | 'frozen' | 'gone'
+    | 'lock' | 'download' | 'tabs' | 'frozen' | 'gone' | 'folder' | 'pencil' | 'stop'
 }): React.JSX.Element {
   const paths: Record<typeof name, React.ReactNode> = {
     browser: <><circle cx="10" cy="10" r="7" /><ellipse cx="10" cy="10" rx="3" ry="7" /><path d="M3 10h14" /></>,
@@ -45,7 +45,12 @@ export default function WorkspaceIcon({ name }: {
     download: <path d="M10 3v10m-4-4 4 4 4-4M3.5 16.5h13" />,
     tabs: <><rect x="2.5" y="6" width="15" height="11" rx="1.5" /><path d="M2.5 9.5h15M6 6V3.5h8V6" /></>,
     frozen: <><rect x="3" y="3" width="14" height="14" rx="2" /><path d="M8 7v6m4-6v6" /></>,
-    gone: <><rect x="2.5" y="4" width="15" height="12" rx="1.5" /><path d="m7.5 8.5 5 5m0-5-5 5" /></>
+    gone: <><rect x="2.5" y="4" width="15" height="12" rx="1.5" /><path d="m7.5 8.5 5 5m0-5-5 5" /></>,
+    // projeto sem versionamento (2026-09-30): a pasta onde o agente edita, o
+    // lápis do título que se renomeia e o parar da conversa ao finalizar
+    folder: <path d="M2.5 5.5v10h15v-8.5h-7.5l-2-2h-5.5z" />,
+    pencil: <path d="M13.5 3.5l3 3-9 9H4.5v-3z" />,
+    stop: <><path d="M3.5 5.5a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H9l-3.5 3v-3a2 2 0 0 1-2-2z" /><path d="M8 7.5v2.5m4-2.5v2.5" /></>
   }
   return <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>
 }

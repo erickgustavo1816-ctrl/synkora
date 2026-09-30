@@ -4,7 +4,11 @@ import { hueOf, initialsOf } from '../util'
 import { useProjectLayout } from '../projectLayoutStore'
 import { groupOfProject, layoutGroups } from '../../../shared/projectLayout'
 import { highlightMatch } from '../homeIndexModel'
+import { isUnversionedProject } from '../../../shared/projectVersioning'
+import { projectNameWithMode, soloActivityLine } from '../unversionedPresentation'
 import { HomePopover } from './HomeIndexBar'
+import UnversionedFolderSeal, { UnversionedModeTag } from './UnversionedFolderSeal'
+import './UniverseCard.css'
 
 // ————————————————————————————————————————————————————————————————————————
 // O CARD DE UM UNIVERSO — a mesma anatomia do núcleo do mapa (.map-core), de
@@ -89,6 +93,9 @@ export default function UniverseCard({
   if (!project) return null
 
   const missing = project.missing === true
+  // SEM VERSIONAMENTO (2026-09-30): o card diz a missão aberta (é ela que o
+  // dono procura) e leva o selo de pasta; não há versão, chip ◈ nem barra.
+  const unversioned = isUnversionedProject(project)
   const vivos = panes.filter((p) => paneActivity[p.id] !== 'dead')
   const rodando = vivos.filter((p) => paneActivity[p.id] === 'run').length
   const pedindo = vivos.filter((p) => paneAttention[p.id]).length
@@ -143,6 +150,7 @@ export default function UniverseCard({
     }),
     { missoesFeitas: 0, missoesTotal: 0 }
   )
+  const solo = unversioned && stats?.solo ? soloActivityLine(stats.solo) : null
   const activitySummary = !stats
     ? 'lendo atividade…'
     : [
@@ -168,7 +176,11 @@ export default function UniverseCard({
       <button
         type="button"
         className="uc-open-hit"
-        aria-label={missing ? `Relocar pasta do universo ${project.name}` : `Abrir universo ${project.name}`}
+        aria-label={
+          missing
+            ? `Relocar pasta do universo ${projectNameWithMode(project.name, unversioned)}`
+            : `Abrir universo ${projectNameWithMode(project.name, unversioned)}`
+        }
         disabled={renaming || confirmDel || relocating || actionsOpen}
         onClick={() => {
           // pasta sumiu: o clique vira relocação — abrir levaria a um universo
@@ -191,11 +203,15 @@ export default function UniverseCard({
       )}
 
       <div className="uc-head">
-        {project.photo ? (
-          <img className="core-photo" src={project.photo} alt="" draggable={false} />
-        ) : (
-          <i className="core-photo ph">{initialsOf(project.name)}</i>
-        )}
+        {/* a foto pode ser <img> (sem filhos): o selo senta na moldura dela */}
+        <span className="uc-photo">
+          {project.photo ? (
+            <img className="core-photo" src={project.photo} alt="" draggable={false} />
+          ) : (
+            <i className="core-photo ph">{initialsOf(project.name)}</i>
+          )}
+          {unversioned && <UnversionedFolderSeal size="card" />}
+        </span>
 
         <div className="uc-identity">
           {renaming ? (
@@ -334,11 +350,22 @@ export default function UniverseCard({
       </div>
 
       <div className="uc-work">
-        <span className="uc-work-label">atividade</span>
-        <span className={`uc-work-text${stats ? '' : ' loading'}`}>{activitySummary}</span>
+        <span className="uc-work-label">{unversioned ? 'missão' : 'atividade'}</span>
+        {solo?.kind === 'open' ? (
+          <span className="uc-work-text uc-solo" title={solo.title}>
+            {/* o ponto do turno: anima só com trabalho rodando (sinal) */}
+            <i className={`dot${rodando > 0 ? ' run' : ''}`} aria-hidden="true" />
+            <span>{solo.title}</span>
+          </span>
+        ) : solo ? (
+          <span className="uc-work-text uc-idle">{solo.text}</span>
+        ) : (
+          <span className={`uc-work-text${stats ? '' : ' loading'}`}>{activitySummary}</span>
+        )}
         {/* A barra mede MISSÕES entregues. Media tarefas quando havia card;
-            eles morreram na purga F6 (2026-08-17) e a missão virou a unidade. */}
-        {stats && agg.missoesTotal > 0 && (
+            eles morreram na purga F6 (2026-08-17) e a missão virou a unidade.
+            Sem versão não há barra: vazia, ela mentiria. */}
+        {stats && !unversioned && agg.missoesTotal > 0 && (
           <div
             className="uc-progress"
             data-tip={
@@ -377,7 +404,10 @@ export default function UniverseCard({
           <span>sessão fechada</span>
         )}
         <span className="uc-tele-end">
-          {versoes.length > 0 && (
+          {unversioned && (
+            <UnversionedModeTag title="Uma missão por vez; as edições vão direto para a pasta" />
+          )}
+          {!unversioned && versoes.length > 0 && (
             <span
               className={`uc-version ${versoes[0].lancada ? 'live' : ''}`}
               data-tip={

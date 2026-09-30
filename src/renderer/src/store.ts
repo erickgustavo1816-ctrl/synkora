@@ -1,6 +1,10 @@
 import type { GuiInterruptOrigin } from '../../shared/guiInterrupt'
 import type { MissionRemovalConfirmation, MissionRemovalResult } from '../../shared/missionRemoval'
-import type { MissionFinishResult, ProjectVersioning } from '../../shared/projectVersioning'
+import {
+  isUnversionedProject,
+  type MissionFinishResult,
+  type ProjectVersioning
+} from '../../shared/projectVersioning'
 import { create } from 'zustand'
 import { isGuiBrowserReferenceList, type GuiBrowserReference } from '../../shared/guiBrowserReferences'
 import { guiParentTurnActivity } from './guiParentTurnActivity'
@@ -28,7 +32,9 @@ import { applyDeptHueVars, DEPT_HUES_LS_KEY, loadDeptHues } from './departments'
 import { sameBrowserPanel } from './dockBrowserModel'
 import { useProjectLayout } from './projectLayoutStore'
 import { versionPortrait } from './projectLanding'
+import { plainIpcError } from './util'
 import { isReleaseMissionRecord } from './missionCardAccess'
+import { soloHomeStats, type SoloHomeStats } from './unversionedPresentation'
 import {
   guiResultEchoesSpeech,
   guiRoundClosed,
@@ -210,6 +216,10 @@ export interface HomeStats {
    *  identidade nenhum, em vez de eleger a aberta mais antiga e chamá-la de
    *  "a versão do projeto". A régua mora em `projectLanding.versionPortrait`. */
   versaoNaMain?: string
+  /** Só projeto SEM VERSIONAMENTO (2026-09-30): a missão aberta e quantas
+   *  foram finalizadas — é o que o card da Home mostra no lugar das versões.
+   *  Ausente = projeto versionado. */
+  solo?: SoloHomeStats
   /** quando foi lido (a ausência da entrada é que significa "não li ainda") */
   at: number
 }
@@ -2195,16 +2205,21 @@ const KIND_LABEL: Record<PaneKind, string> = {
   codex: 'Codex'
 }
 
+/** SEM VERSIONAMENTO (2026-09-30): o retrato da Home é a missão aberta (a
+ *  regra de uma por vez) e o tamanho do histórico — nenhuma versão é lida.
+ *  `false` = projeto versionado, que segue pelo retrato por versão
+ *  (`loadHomeStats`). */
+async function loadSoloHomeStats(projectId: string): Promise<boolean> {
+  if (!isUnversionedProject(useStore.getState().projects.find((p) => p.id === projectId))) return false
+  const solo = soloHomeStats(await window.synkora.missions.list(projectId), projectId)
+  const stats: HomeStats = { missoesAtivas: solo.openMissionTitle ? 1 : 0, versoes: [], solo, at: Date.now() }
+  useStore.setState((s) => ({ homeStats: { ...s.homeStats, [projectId]: stats } }))
+  return true
+}
+
 /** Aviso PT-BR devolvido pelo `projects:create` quando o universo nasceu mas o
  *  GitHub não fechou (onda D). Lê defensivamente: o motor é o dono do nome do
  *  campo e um payload sem aviso nenhum vale como sucesso. */
-/** Mensagem PT-BR de um `ipcRenderer.invoke` rejeitado — o Electron embrulha o
- *  erro do handler em "Error invoking remote method '<canal>': Error: <msg>". */
-function ipcErrorMessage(err: unknown): string {
-  const raw = err instanceof Error ? err.message : String(err)
-  return raw.replace(/^Error invoking remote method '[^']+':\s*(?:Error:\s*)?/, '').trim() || raw
-}
-
 function projectCreateWarning(res: unknown): string | null {
   if (!res || typeof res !== 'object') return null
   const bag = res as Record<string, unknown>
@@ -2387,7 +2402,7 @@ export const useStore = create<SynkoraState>((set, get) => ({
     } catch (err) {
       // o main LANÇA nas recusas (caminho inválido, clone falho, pasta com
       // Git): sem este catch o modal ficava preso em "criando" para sempre
-      return { ok: false, error: ipcErrorMessage(err) }
+      return { ok: false, error: plainIpcError(err) }
     }
     await get().loadProjects()
     return { ok: true, projectId: res.id, warning: projectCreateWarning(res) }
@@ -2471,16 +2486,19 @@ export const useStore = create<SynkoraState>((set, get) => ({
   // backlog.json). Nunca dispara no laço de render: quem chama é a Home no
   // mount (escalonado) e os canais de mudança. A terceira leitura era
   // tasks.json, para contar CARDS — que morreram na purga F6 (2026-08-17).
+  // Quando a régua de versão morava no corpo desta ação, o chip de identidade
+  // elegia a aberta mais antiga e o dono lia "◈ V1.0" com os números de outra
+  // linha ao lado. Projeto SEM VERSIONAMENTO sai na primeira linha: o retrato
+  // dele é a missão aberta (loadSoloHomeStats), sem ler versão nenhuma.
   loadHomeStats: async (projectId) => {
+    if (await loadSoloHomeStats(projectId)) return
     const [missions, versions] = await Promise.all([
       window.synkora.missions.list(projectId),
       window.synkora.backlog.listVersions(projectId)
     ])
     // A ATRIBUIÇÃO mora em `projectLanding.versionPortrait` (puro e testado):
     // linha por versão contando missão CARIMBADA nela, e o nome do que está NA
-    // MAIN. Aqui fica só a leitura do disco — quando a régua morava neste
-    // corpo, o chip de identidade elegia a aberta mais antiga e o dono lia
-    // "◈ V1.0" com os números de outra linha ao lado.
+    // MAIN. Aqui fica só a leitura do disco.
     // R27 — o registro de release não é missão de superfície: fora do retrato
     // e do ✦ de ativas (o cabeçalho chegou a contar a própria subida).
     const surface = missions.filter((m) => !isReleaseMissionRecord(m))

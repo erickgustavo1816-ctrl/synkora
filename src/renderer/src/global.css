@@ -7689,26 +7689,6 @@ body.pane-docking .pane-bar.draggable {
   color: var(--ink-3);
 }
 
-/* NOVO UNIVERSO (onda D): a linha da pasta — botão + caminho escolhido. */
-.nu-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-}
-
-.nu-path {
-  min-width: 0;
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--ink-3);
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  direction: rtl; /* corta o COMEÇO: o nome da pasta é o que identifica */
-  text-align: left;
-}
-
 .mission-exec-row label {
   display: flex;
   flex-direction: column;

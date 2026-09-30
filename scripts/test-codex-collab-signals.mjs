@@ -4,8 +4,8 @@ import {
   CODEX_SYNKORA_MCP_SERVER_NAME,
   CodexSession,
   codexElicitationVerdict
-} from '../.tmp/codex-collab-signals-test/codexSession.js'
-import { GuiCodexAgentRegistry } from '../.tmp/codex-collab-signals-test/guiCodexAgents.js'
+} from '../.tmp/codex-collab-signals-test/main/codexSession.js'
+import { GuiCodexAgentRegistry } from '../.tmp/codex-collab-signals-test/main/guiCodexAgents.js'
 
 // Sinais de colaboração do `codex app-server` — a forma REAL do 0.147, medida
 // na sonda de 2026-08-18 (relatório probe-codex-fence, seções A.1/A.2/A.5):

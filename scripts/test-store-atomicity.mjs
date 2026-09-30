@@ -4,7 +4,7 @@ import Module, { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
-import { BacklogStore } from '../.tmp/store-atomicity-test/backlog.js'
+import { BacklogStore } from '../.tmp/store-atomicity-test/main/backlog.js'
 
 const require = createRequire(import.meta.url)
 let missionUserData = ''
@@ -17,7 +17,7 @@ try {
     }
     return originalLoad.call(this, request, parent, isMain)
   }
-  ;({ MissionStore } = require('../.tmp/store-atomicity-test/missions.js'))
+  ;({ MissionStore } = require('../.tmp/store-atomicity-test/main/missions.js'))
 } finally {
   Module._load = originalLoad
 }

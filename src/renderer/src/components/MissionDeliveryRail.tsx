@@ -18,7 +18,7 @@ import {
 import MissionCommitHistory from './MissionCommitHistory'
 import MissionCommitDiffViewer from './MissionCommitDiffViewer'
 import DockBrowser, { useMissionBrowser } from './DockBrowser'
-import GuiSubagentSidebar from './GuiSubagentSidebar'
+import GuiSubagentSidebar, { frotaSectionSummary } from './GuiSubagentSidebar'
 import GuiFileContextMenu, { useFileContextMenu } from './GuiFileContextMenu'
 import GuiFileQuickReader from './GuiFileQuickReader'
 import { fileContextOptions, type FileContextTarget } from '../guiFileContextMenu'
@@ -410,17 +410,7 @@ export default function MissionDeliveryRail({
     helpers: frota,
     workspace: fingerprintRef.current?.id === mission.id ? summary : null
   }, browserAvailable)
-  const frotaRunning = frota.filter((entry) => entry.status === 'running').length
-  const frotaSummary =
-    frota.length === 0
-      ? undefined
-      : frotaRunning === frota.length
-        ? `${frotaRunning} trabalhando`
-        : frotaRunning === 0
-          ? `${frota.length} encerrada${frota.length === 1 ? '' : 's'}`
-          : `${frotaRunning} trabalhando · ${frota.length - frotaRunning} encerrada${
-              frota.length - frotaRunning === 1 ? '' : 's'
-            }`
+  const frotaSummary = frotaSectionSummary(frota)
 
   // (c) GATILHO DE SEMPRE: entrar na missão e cada sinal do Board (⇪,
   // arquivar…). Abrir a lista re-mede também: quem abre quer o estado de

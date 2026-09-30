@@ -1,0 +1,64 @@
+/* O CARD DO UNIVERSO — o que o modo SEM VERSIONAMENTO acrescenta (mockup
+   aprovado: docs/mockups/projeto-sem-versao-2026-09-30.html, cena 7). O
+   resto do card mora em global.css (.universe-card, .uc-*). */
+
+/* a moldura da foto: o selo de pasta senta no canto de baixo à esquerda */
+.uc-photo {
+  position: relative;
+  display: grid;
+  width: 42px;
+  height: 42px;
+}
+
+/* a linha "missão" do universo sem versionamento: o NOME da missão aberta
+   (é ela que o dono procura), com o ponto do turno. Sem barra: não há versão
+   para medir, e barra vazia mentiria. */
+.uc-work-text.uc-solo {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.uc-solo > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.uc-solo .dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+/* movimento é sinal: o ponto só pulsa com um agente rodando */
+.uc-solo .dot.run {
+  animation: uc-solo-turn 1.05s ease-in-out infinite;
+}
+
+@keyframes uc-solo-turn {
+  0%,
+  80%,
+  100% {
+    opacity: 0.3;
+  }
+  40% {
+    opacity: 1;
+  }
+}
+
+.uc-work-text.uc-idle {
+  color: var(--ink-2);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .uc-solo .dot.run {
+    animation: none;
+  }
+}
