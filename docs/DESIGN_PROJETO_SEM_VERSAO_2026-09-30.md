@@ -82,8 +82,15 @@ Num projeto sem versionamento **nenhum processo git é iniciado pelo Synkora**
 
 ## 5. A tela (o mockup é o contrato visual)
 
-`docs/mockups/projeto-sem-versao-2026-09-30.html`, aprovado pelo dono antes de
-qualquer tela virar código. Cenas: modal de criação com o interruptor (ligado,
+`docs/mockups/projeto-sem-versao-2026-09-30.html`, APROVADO pelo dono em
+2026-09-30 com uma troca: a "orelha" do avatar saiu (parecia documento) e a
+marca do modo é o **selo de pasta** (opção B de
+`docs/mockups/projeto-sem-versao-marca-2026-09-30.html`) no rail, no cabeçalho
+e no card da Home, sempre com o selo textual "sem versionamento" onde há
+espaço. Mais decisões da aprovação: Arquivos segue como ABA; apagar missão do
+histórico entra nesta entrega (na tela de leitura, confirmação na própria
+linha); o botão "Pedir revisão" NÃO existe neste modo; o objetivo no Início é
+opcional; o contraste do botão laranja da casa fica para missão própria. Cenas: modal de criação com o interruptor (ligado,
 desligado, travado por Git) · Início sem missão · Início com histórico · missão
 aberta em tela cheia (sem trilho de missões, sem chips de versão/fila, com
 FINALIZAR) · confirmação de finalizar · missão finalizada aberta em leitura ·
