@@ -125,3 +125,20 @@ Mudança fora da fronteira = relatar, nunca editar.
 - versões/planejamento/release/integração/reviewer recusados com a receita;
 - boot/recovery/Hub/anexos não iniciam git num projeto `'none'`;
 - persona/catálogo do dev sem versionamento não anunciam commit/⇪/versão/mapa.
+
+## 8. Limites conhecidos (registrados na integração do back, 2026-09-30)
+
+- **Saída dos processos.** `missions:finish` derruba chat, ajudantes (inclusive
+  os órfãos, pelo motor real) e terminais antes de gravar a conclusão; a morte
+  da árvore de processos do SO é assíncrona e não é aguardada. A próxima missão
+  só nasce depois de o dono escrever o título e escolher a conta, então a
+  janela é desprezível — tornar o encerramento aguardável atravessaria
+  `guiSessions`/`maestroSession`/`codexSession`/`guiHelperSessions`/
+  `guiProcessTree` e fica para quando houver motivo.
+- **Pastas internas.** Como em todo projeto, o Synkora grava `.synkora/`
+  (entregas de ajudantes, capturas, baseline de segurança) e as skills em
+  `.claude/` e `.agents/` dentro da pasta. Num projeto versionado o Git as
+  esconde; aqui elas aparecem na pasta do dono.
+- **Testes nativos.** Módulos de `src/main` importam `shared/` sem extensão (o
+  que os builds tsc/bundler exigem); as suítes que os carregam com
+  `--experimental-strip-types` usam `scripts/test-unversioned-agent-loader.mjs`.

@@ -66,6 +66,8 @@ import type { MissionEngine } from '../missionEngine'
 import { needsMissionFinalization } from '../missionFinalization'
 import type { MaestroEngine } from '../maestroEngine'
 import type { ReleaseWorkspaceResult } from '../releaseWorkspace'
+import { isUnversionedProject, projectVersioning, unversionedRefusal } from '../../shared/projectVersioning'
+import { soloMissionOpeningRefusal } from '../soloMission'
 
 /** Dependências do closure do index ainda não migradas (mesmo padrão dos
  * outros ipc/*). Os dois engines viajam inteiros; o lado maestro do
@@ -181,6 +183,7 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
   const lifecycle = extras.lifecycle ?? buildMissionLifecycle(ctx, extras)
   const closeGuiPanesInBackground = lifecycle.closeInBackground
   const workspaceFor = async (mission: Mission): Promise<{ dir: string; base?: string; error?: never } | { error: string; dir?: never; base?: never }> => {
+    if (isUnversionedProject(projects.get(mission.projectId))) return { error: unversionedRefusal('history') }
     if (missionTypeOf(mission) === 'release') return extras.resolveReleaseWorkspace(mission)
     if (!mission.worktree || !existsSync(mission.worktree)) return { error: 'esta missão não tem worktree aberto' }
     return { dir: mission.worktree, base: mission.baseBranch }
@@ -206,7 +209,7 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
   // A tela recebe o mesmo recorte que o motor aceita. Versoes lancadas nunca
   // aparecem como destino de uma missao nova, e a primeira e o padrao atual.
   ipcMain.handle('missions:versionChoices', (_e, projectId: string) =>
-    projects.get(projectId)
+    projects.get(projectId) && !isUnversionedProject(projects.get(projectId))
       ? backlog.missionVersionChoices(projectId)
       : { versions: [], defaultVersionId: undefined }
   )
@@ -261,6 +264,12 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
     if (!mission) return { ok: false, error: 'missão não encontrada' }
     const project = projects.get(mission.projectId)
     if (!project) return { ok: false, error: 'projeto não encontrado' }
+    if (isUnversionedProject(project)) {
+      const refusal = soloMissionOpeningRefusal(ctx, missionId)
+      if (refusal) return { ok: false, error: refusal }
+      if (!existsSync(project.path)) return { ok: false, error: 'a pasta do projeto não existe mais — relocalize o universo' }
+      return { ok: true, mission, project, cwd: project.path, workspace: 'root' }
+    }
     const projectPath = project.path
     if (!existsSync(project.path))
       return { ok: false, error: 'a pasta do projeto não existe mais — relocalize o universo' }
@@ -501,11 +510,14 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
   ipcMain.handle('missions:shellSpec', async (_e, missionId: string): Promise<MissionShellSpecResult> => {
     const proved = await proveMissionWorkspace(missionId)
     if (!proved.ok) return { ok: false, error: proved.error }
+    const refusal = soloMissionOpeningRefusal(ctx, missionId)
+    if (refusal) return { ok: false, error: refusal }
     const { mission, cwd } = proved
     const paneId = randomUUID()
     const title = `>_ ${mission.title.slice(0, 26)}`
     ctx.testServerPanes.set(paneId, {
       projectId: mission.projectId,
+      missionId,
       cwd,
       label: mission.title,
       purpose: 'mission-shell'
@@ -566,14 +578,17 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
       await staggerPaneSpawn()
       const proved = await proveMissionWorkspace(missionId)
       if (!proved.ok) return { ok: false, error: proved.error }
+      const refusal = soloMissionOpeningRefusal(ctx, missionId)
+      if (refusal) return { ok: false, error: refusal }
       // `mission` já vem com o worktree provado quando é missão de dev; na de
       // planejamento vem como está, porque worktree ela não tem.
-      const { mission, project, cwd } = proved
+      const { mission, project } = proved
       // Roteamento por TIPO antes de qualquer coisa nascer. Missão de
       // planejamento não abre reviewer nem ajudante — e a recusa chega aqui,
       // sem worktree criado e sem sessão gasta.
-      const route = routeGuiMissionPane(mission, role)
+      const route = routeGuiMissionPane(mission, role, projectVersioning(project))
       if (!route.ok) return { ok: false, error: route.error }
+      const cwd = route.workspace === 'root' ? project.path : proved.cwd
 
       // CONTA DA CONVERSA (2.0): missão DIRETA só usa a conta que o dono
       // escolheu PARA ELA — herdar o seat do Maestro em silêncio foi banido
@@ -631,6 +646,7 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
       const mcpInput = {
         paneId,
         projectId: mission.projectId,
+        projectVersioning: projectVersioning(project),
         cwd,
         cli: seat.cli,
         missionId,
@@ -651,7 +667,7 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
       // orientation and source queries. Older hosts without it keep the R16
       // dependency briefing for the development pane.
       const dependencyDeliveries =
-        !extras.projectContextBriefing && route.missionType === 'dev' && role === 'dev'
+        !isUnversionedProject(project) && !extras.projectContextBriefing && route.missionType === 'dev' && role === 'dev'
           ? dependencyDeliveriesOf(mission)
           : undefined
 
@@ -677,6 +693,12 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
         // o planejamento recebe o caderno plano/ e o recorte do dono.
         firstPrompt: resumeSessionId
           ? undefined
+          : route.workspace === 'root'
+            ? guiMissionFirstPrompt(
+                role,
+                { title: mission.title, goal: mission.goal, scope: mission.scope },
+                projectVersioning(project)
+              )
           : route.missionType === 'planejamento'
             ? planningMissionFirstPrompt(mission, project)
             : route.missionType === 'release'
@@ -962,6 +984,7 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
   )
 
   ipcMain.handle('missions:update', (_e, id: string, patch: MissionMetadataPatch) => lifecycle.update(id, patch))
+  ipcMain.handle('missions:finish', (_e, id: string) => lifecycle.finish(id))
 
   // R17 (2026-08-19): o ⇪ virou ASSÍNCRONO — cada git dele viaja pelo
   // gitWorker em vez de travar o main em rajada (809ms medidos no instante do

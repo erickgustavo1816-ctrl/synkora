@@ -14,6 +14,15 @@
  */
 import { existsSync, readdirSync, statSync } from 'node:fs'
 import { resolve } from 'node:path'
+import type { ProjectFolderInspection } from '../shared/projectVersioning'
+
+export function inspectProjectFolder(projectRoot: string): ProjectFolderInspection {
+  return {
+    exists: existsSync(projectRoot),
+    hasGit: existsSync(resolve(projectRoot, '.git')),
+    empty: isEffectivelyEmptyProject(projectRoot)
+  }
+}
 
 /**
  * Metadados que Git, Synkora e os runtimes dos agentes criam sozinhos. O

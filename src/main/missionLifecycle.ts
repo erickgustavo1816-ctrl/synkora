@@ -11,6 +11,8 @@ import type { GuiSessionRegistry } from './guiSessions'
 import type { MissionRemovalResult } from '../shared/missionRemoval'
 import { MissionRemovalAuthorization } from './missionRemovalAuthorization'
 import { discardMissionWorktreeChanges, missionWorktreeSnapshot } from './missionWorktreeDiscard'
+import { isUnversionedProject, unversionedRefusal } from '../shared/projectVersioning'
+import { buildSoloMissionLifecycle } from './soloMission'
 
 export interface MissionMetadataPatch {
   title?: string
@@ -36,18 +38,23 @@ export function buildMissionLifecycle(ctx: MainContext, extras: MissionLifecycle
   const { emitMissionsChanged, scheduleIntegrationDrain, stopMissionExecution } = engine
   const removing = new Set<string>()
   const discardAuthorization = new MissionRemovalAuthorization()
+  const solo = buildSoloMissionLifecycle(ctx, extras)
   const closeGuiPanesInBackground = (missionId: string): void => {
     void Promise.resolve(killMissionGuiPanes(missionId)).catch(() => {
       blackbox.record({ cat: 'app', event: 'mission-process-cleanup-failed', actor: 'harness', ids: { missionId } })
     })
   }
   return {
+    finish: solo.finish,
+    stopSolo: solo.stop,
     closeInBackground: closeGuiPanesInBackground,
     update(id: string, input: MissionMetadataPatch): Mission | null {
       if (removing.has(id)) return null
       const patch = { ...input }
       const mission = missions.get(id)
       if (!mission) return null
+      if (isUnversionedProject(projects.get(mission.projectId)) && patch.status && patch.status !== mission.status)
+        throw new Error(unversionedRefusal(mission.status === 'concluida' ? 'reopen' : 'integration'))
       if (patch.status && mission.status !== 'ativa' && mission.status !== 'arquivada')
         delete patch.status
       if (patch.status === 'concluida' && missionTypeOf(mission) !== 'planejamento')
@@ -144,6 +151,15 @@ export function buildMissionLifecycle(ctx: MainContext, extras: MissionLifecycle
           return { ok: false, error: 'Esta missão está ativa. Arquive a missão antes de excluir.' }
         const project = projects.get(mission.projectId)
         if (!project) return { ok: false, error: 'O projeto desta missão não foi encontrado. Reabra o projeto e confira a lista de missões.' }
+        if (isUnversionedProject(project)) {
+          if (mission.status !== 'concluida') return { ok: false, error: unversionedRefusal('integration') }
+          // Concluded solo missions own history only, even if an old record
+          // happens to contain stale worktree metadata. Never inspect that path.
+          guiSessions.forgetWhere((paneId) => isGuiMissionPaneId(paneId, missionId))
+          missions.remove(missionId)
+          emitMissionsChanged(mission.projectId)
+          return { ok: true }
+        }
         const removal = { projectId: mission.projectId, rootPath: project.path, worktree: mission.worktree, branch: mission.branch, title: mission.title, status: mission.status, updatedAt: mission.updatedAt }
         try {
           ensureSynkoraGitExcludes(project.path)

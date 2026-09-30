@@ -92,6 +92,7 @@ import {
   type GuiInlineImageDataResult
 } from '../guiInlineImageData'
 import { ensureSynkoraGitExcludes } from '../worktree'
+import { projectVersioning, type ProjectVersioning } from '../../shared/projectVersioning'
 import {
   GUI_OWNER_MAIL_STORE_FILE,
   createGuiOwnerMailStore,
@@ -187,7 +188,8 @@ function writeAttachment(
   cwd: string,
   paneId: string,
   payload: GuiAttachPayload,
-  capabilities: GuiAttachmentCapabilityStore
+  capabilities: GuiAttachmentCapabilityStore,
+  versioning: ProjectVersioning = 'git'
 ): GuiAttachResult {
   // Pastas chegam somente pelo handler `gui:attachFolder`, depois do diálogo
   // nativo. Nunca trate um path enviado pelo renderer como seleção válida.
@@ -213,7 +215,7 @@ function writeAttachment(
     bytes = Buffer.from(base64, 'base64')
     name = payload.name
   }
-  return storeAttachmentBytes(cwd, paneId, name, bytes, capabilities)
+  return storeAttachmentBytes(cwd, paneId, name, bytes, capabilities, versioning)
 }
 
 /** A metade com DISCO de verdade, comum ao print/arquivo do composer e ao
@@ -223,7 +225,8 @@ function storeAttachmentBytes(
   paneId: string,
   name: string,
   bytes: Buffer,
-  capabilities: GuiAttachmentCapabilityStore
+  capabilities: GuiAttachmentCapabilityStore,
+  versioning: ProjectVersioning = 'git'
 ): GuiAttachResult {
   if (bytes.length === 0) return { ok: false, error: 'anexo sem conteúdo' }
   if (bytes.length > GUI_ATTACHMENT_MAX_BYTES) {
@@ -233,7 +236,7 @@ function storeAttachmentBytes(
   // O `.synkora` do worktree tem de ser git-invisível ANTES da primeira
   // escrita: anexo do dono nunca pode sujar a fotografia da missão.
   try {
-    ensureSynkoraGitExcludes(cwd)
+    if (versioning !== 'none') ensureSynkoraGitExcludes(cwd)
   } catch {
     // Erro bruto de disco pode carregar uma árvore/local de usuário. O detalhe
     // não entra nem na UI nem no blackbox; o handler já registra só ok/kind.
@@ -284,7 +287,8 @@ function writeDroppedAttachment(
   cwd: string,
   paneId: string,
   droppedPath: unknown,
-  capabilities: GuiAttachmentCapabilityStore
+  capabilities: GuiAttachmentCapabilityStore,
+  versioning: ProjectVersioning = 'git'
 ): GuiAttachResult {
   const target = resolveGuiDroppedTarget(droppedPath)
   if (!target.ok) return { ok: false, error: target.error }
@@ -299,7 +303,7 @@ function writeDroppedAttachment(
   } catch {
     return { ok: false, error: 'não consegui ler o arquivo solto — tente pelo + do composer' }
   }
-  return storeAttachmentBytes(cwd, paneId, basename(target.path), bytes, capabilities)
+  return storeAttachmentBytes(cwd, paneId, basename(target.path), bytes, capabilities, versioning)
 }
 
 /**
@@ -1166,7 +1170,8 @@ export function registerGuiIpc(ctx: MainContext, extras: GuiIpcExtras): GuiSessi
     const cwd = registry.cwdOf(paneId)
     if (!cwd) return { ok: false, error: 'este pane não tem sessão aberta' }
 
-    const result = writeAttachment(cwd, paneId, payload, attachmentCapabilities)
+    const project = ctx.projects.get(registry.projectOf(paneId) ?? '')
+    const result = writeAttachment(cwd, paneId, payload, attachmentCapabilities, projectVersioning(project))
     blackbox.record({
       cat: 'pane',
       event: result.ok ? 'gui-attachment-saved' : 'gui-attachment-failed',
@@ -1226,7 +1231,8 @@ export function registerGuiIpc(ctx: MainContext, extras: GuiIpcExtras): GuiSessi
       const cwd = registry.cwdOf(paneId)
       if (!cwd) return { ok: false, error: 'este pane não tem sessão aberta' }
 
-      const result = writeDroppedAttachment(cwd, paneId, droppedPath, attachmentCapabilities)
+      const project = ctx.projects.get(registry.projectOf(paneId) ?? '')
+      const result = writeDroppedAttachment(cwd, paneId, droppedPath, attachmentCapabilities, projectVersioning(project))
       blackbox.record({
         cat: 'pane',
         event: result.ok ? 'gui-attachment-saved' : 'gui-attachment-failed',

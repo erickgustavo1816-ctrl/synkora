@@ -82,6 +82,8 @@ export interface MainContext {
     {
       projectId: string
       cwd: string
+      /** Owner of a mission shell/test; required for solo teardown by identity. */
+      missionId?: string
       /** ausente = terminal avulso da missão (2.0): não há script a digitar. */
       command?: string
       port?: number

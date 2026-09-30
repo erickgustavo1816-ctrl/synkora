@@ -126,17 +126,26 @@ test('a origem só oferece missão viva — encerrada não é raiz navegável', 
 
   // A cerca read-only (files:preview/files:listTree) recusa a mesma coisa e
   // deixou de herdar a raiz do projeto no ramo de missão.
-  const readOnly = ipc.match(/const readOnlyRootPath = \([\s\S]*?\n  \}/u)?.[0] ?? ''
+  const readOnly = ipc.match(/const readOnlyRootPath = (?:async )?\([\s\S]*?\n  \}/u)?.[0] ?? ''
   assert.ok(readOnly.includes("root.kind === 'project'"), 'região do readOnlyRootPath não foi isolada')
   assert.equal(readOnly.includes('files:listDocs'), false, 'a região vazou para fora da função')
   assert.match(readOnly, /mission\.status !== 'ativa'\) return null/u)
   assert.match(readOnly, /!mission\.worktree\) return null/u)
   const missionAt = readOnly.indexOf('missions.get(')
   assert.notEqual(missionAt, -1, 'o ramo de missão precisa ser localizável na região')
+  // PROJETO SEM VERSIONAMENTO (2026-09-30): lá a raiz da missão É a pasta do
+  // projeto, por desenho — e só depois da régua de missão viva.
+  const missionBranch = readOnly.slice(missionAt)
+  const soloRoot = "if (isUnversionedProject(project)) return { kind: 'mission', path: project.path }"
+  assert.ok(missionBranch.includes(soloRoot), 'missão solo usa a raiz do projeto')
+  assert.ok(
+    missionBranch.indexOf("mission.status !== 'ativa') return null") < missionBranch.indexOf(soloRoot),
+    'missão solo encerrada continua fechada'
+  )
   assert.equal(
-    readOnly.slice(missionAt).includes('project.path'),
+    missionBranch.replace(soloRoot, '').includes('project.path'),
     false,
-    'missão sem worktree não pode herdar a raiz do projeto'
+    'missão versionada sem worktree não pode herdar a raiz do projeto'
   )
 })
 

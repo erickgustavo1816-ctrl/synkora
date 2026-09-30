@@ -19,6 +19,7 @@ import { ensureReleaseMission } from '../releaseChat'
 import type { ReleaseRecord } from '../releasesStore'
 import type { MainContext } from '../mainContext'
 import { readProjectManifestVersion } from '../projectManifestVersion'
+import { isUnversionedProject, unversionedRefusal } from '../../shared/projectVersioning'
 
 /**
  * Resposta do `backlog:createVersion`. Ela deixou de ser `Version | null`
@@ -67,6 +68,7 @@ export function registerBacklogIpc(ctx: MainContext, extras: BacklogIpcExtras): 
     listProjectReleases
   } = extras
   const createVersion = (projectId: string, input: { name: string; theme?: string; goal?: string }): CreateVersionResult => {
+    if (isUnversionedProject(projects.get(projectId))) return { ok: false, error: unversionedRefusal('versions') }
     const name = input.name.trim()
     const refusal = backlog.validateNewVersion(projectId, name)
     if (refusal) return { ok: false, error: refusal }
@@ -81,6 +83,8 @@ export function registerBacklogIpc(ctx: MainContext, extras: BacklogIpcExtras): 
   })
   ipcMain.handle('backlog:directRelease', (_e, projectId: string, input: DirectReleaseInput) => directRelease(projectId, input))
   ipcMain.handle('backlog:releaseVersion', (e, versionId: string) => {
+    const version = backlog.getVersion(versionId)
+    if (version && isUnversionedProject(projects.get(version.projectId))) return unversionedRefusal('release')
     return releaseVersionImpl(versionId, 'user')
   })
 
@@ -107,6 +111,7 @@ export function registerBacklogIpc(ctx: MainContext, extras: BacklogIpcExtras): 
     (_e, versionId: string): { ok: true; missionId: string } | { ok: false; error: string } => {
       const version = backlog.getVersion(versionId)
       if (!version) return { ok: false, error: 'esta versão não existe mais' }
+      if (isUnversionedProject(projects.get(version.projectId))) return { ok: false, error: unversionedRefusal('release') }
       const result = ensureReleaseMission({
         version,
         missions: missions.list(version.projectId),
@@ -125,7 +130,7 @@ export function registerBacklogIpc(ctx: MainContext, extras: BacklogIpcExtras): 
   )
 
   ipcMain.handle('backlog:listVersions', (_e, projectId: string) =>
-    backlog.listVersions(projectId)
+    isUnversionedProject(projects.get(projectId)) ? [] : backlog.listVersions(projectId)
   )
 
   // A versão que o produto JÁ TEM, lida do package.json da pasta do projeto
@@ -152,6 +157,7 @@ export function registerBacklogIpc(ctx: MainContext, extras: BacklogIpcExtras): 
     // junto — exclusão é explícita e confirmada na UI)
     const version = backlog.getVersion(id)
     const project = projects.get(projectId)
+    if (isUnversionedProject(project)) return unversionedRefusal('versions')
     if (!version || version.projectId !== projectId || !project)
       return 'versão não encontrada neste projeto'
     try {

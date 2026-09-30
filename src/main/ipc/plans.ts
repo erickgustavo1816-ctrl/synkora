@@ -28,6 +28,7 @@ import {
   type PlanView
 } from '../plans'
 import type { MainContext } from '../mainContext'
+import { isUnversionedProject, unversionedRefusal } from '../../shared/projectVersioning'
 
 export interface PlansIpcExtras {
   /** F3-c4: host OU view de panes — o card de proposta mora no canvas. */
@@ -47,6 +48,7 @@ export function planMissionSnapshots(ctx: MainContext, projectId: string): PlanM
  * porque o caminho de aprovação do card responde com a mesma visão.
  */
 export function planViewsOf(ctx: MainContext, projectId: string): PlanView[] {
+  if (isUnversionedProject(ctx.projects.get(projectId))) return []
   const missions = planMissionSnapshots(ctx, projectId)
   const known = new Set(missions.map((mission) => mission.id))
   const healed = ctx.plans.reconcile(projectId, known)
@@ -94,6 +96,7 @@ export function registerPlansIpc(ctx: MainContext, extras: PlansIpcExtras): void
       return { ok: false, error: 'projeto não encontrado' }
     }
     if (!ctx.projects.get(projectId)) return { ok: false, error: 'projeto não encontrado' }
+    if (isUnversionedProject(ctx.projects.get(projectId))) return { ok: false, error: unversionedRefusal('planning') }
     const normalized = normalizePlanDraft(draft)
     if (!normalized.ok) return { ok: false, error: normalized.error }
     const created = ctx.plans.create(projectId, normalized.draft, { manual: true })
@@ -121,6 +124,7 @@ export function registerPlansIpc(ctx: MainContext, extras: PlansIpcExtras): void
       if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
         return { ok: false, error: 'alteração em formato inválido' }
       }
+      if (isUnversionedProject(ctx.projects.get(projectId))) return { ok: false, error: unversionedRefusal('planning') }
       const result = ctx.plans.update(planId, patch as PlanPatch, expected(expectedUpdatedAt))
       if (result.ok) changed(projectId)
       return result
@@ -135,6 +139,7 @@ export function registerPlansIpc(ctx: MainContext, extras: PlansIpcExtras): void
       if (!projectId || typeof planId !== 'string') {
         return { ok: false, error: PLAN_NOT_FOUND_ERROR }
       }
+      if (isUnversionedProject(ctx.projects.get(projectId))) return { ok: false, error: unversionedRefusal('planning') }
       const result = ctx.plans.archive(planId, expected(expectedUpdatedAt))
       if (result.ok) changed(projectId)
       return result
@@ -158,6 +163,7 @@ export function registerPlansIpc(ctx: MainContext, extras: PlansIpcExtras): void
       if (kind !== 'mestre' && kind !== 'livre') {
         return { ok: false, error: 'natureza de plano desconhecida' }
       }
+      if (isUnversionedProject(ctx.projects.get(projectId))) return { ok: false, error: unversionedRefusal('planning') }
       const before = ctx.plans.get(planId)?.kind
       const result = ctx.plans.setKind(planId, kind, expected(expectedUpdatedAt))
       if (result.ok) {
@@ -185,6 +191,7 @@ export function registerPlansIpc(ctx: MainContext, extras: PlansIpcExtras): void
       if (!projectId || typeof planId !== 'string') {
         return { ok: false, error: PLAN_NOT_FOUND_ERROR }
       }
+      if (isUnversionedProject(ctx.projects.get(projectId))) return { ok: false, error: unversionedRefusal('planning') }
       const result = ctx.plans.remove(planId, expected(expectedUpdatedAt))
       if (result.ok) {
         ctx.blackbox.record({
@@ -221,6 +228,7 @@ export function registerPlansIpc(ctx: MainContext, extras: PlansIpcExtras): void
       if (typeof itemId !== 'string' || !itemId) {
         return { ok: false, error: 'item sem identificador' }
       }
+      if (isUnversionedProject(ctx.projects.get(projectId))) return { ok: false, error: unversionedRefusal('planning') }
       if (typeof missionId !== 'string' || !missionId) {
         return { ok: false, error: 'missão sem identificador' }
       }

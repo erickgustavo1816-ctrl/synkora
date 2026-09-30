@@ -88,6 +88,7 @@ export interface HubEvent {
 }
 
 export interface HubDeps {
+  projectVersioningOf?: (projectId: string) => import('../shared/projectVersioning').ProjectVersioning
   projectPathOf: (projectId: string) => string | undefined
   /** Guarda central: nenhuma escrita/limpeza do runtime pode tocar .synkora
    *  quando o projeto já versiona esse diretório. */
@@ -176,7 +177,7 @@ export class Hub {
     const projectPath = this.deps.projectPathOf(projectId)
     if (!projectPath) return
     try {
-      this.deps.ensureProjectRuntimeWritable(projectPath)
+      if (this.deps.projectVersioningOf?.(projectId) !== 'none') this.deps.ensureProjectRuntimeWritable(projectPath)
       const file = join(projectPath, '.synkora', 'EVENTS.md')
       const tag = `[missão ${missionId.slice(0, 8)}]`
       const lines = readFileSync(file, 'utf-8').split('\n')
@@ -191,7 +192,7 @@ export class Hub {
     const projectPath = this.deps.projectPathOf(evt.projectId)
     if (!projectPath) return
     try {
-      this.deps.ensureProjectRuntimeWritable(projectPath)
+      if (this.deps.projectVersioningOf?.(evt.projectId) !== 'none') this.deps.ensureProjectRuntimeWritable(projectPath)
       const dir = join(projectPath, '.synkora')
       mkdirSync(dir, { recursive: true })
       const file = join(dir, 'EVENTS.md')
