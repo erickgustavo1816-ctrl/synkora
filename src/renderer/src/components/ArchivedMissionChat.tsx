@@ -19,17 +19,15 @@ import { missionTypeOf, useStore, type Mission } from '../store'
 // e ficar com os que existem. Sonda em SÉRIE: o endereço que não existe volta
 // vazio na hora, e assim no máximo UM transcript grande viaja por vez.
 
-interface Props {
-  mission: Mission
-  onClose: () => void
-}
-
-export default function ArchivedMissionChat({ mission, onClose }: Props): React.JSX.Element {
-  const seats = useStore((s) => s.seats)
-  // O status VIVO da missão (a prop é a fotografia do clique): reativar devolve
-  // a conversa ao board, e duas montagens do mesmo paneId brigariam pela mesma
-  // chave de `guiPanes`. Quem sai é a leitura.
-  const liveStatus = useStore((s) => s.missions.find((m) => m.id === mission.id)?.status)
+/** As conversas GRAVADAS de uma missão encerrada, pela sonda que não
+ *  ressuscita nada. Serve a este modal e à leitura no lugar do projeto sem
+ *  versionamento (SoloProjectReading) — a mesma fotografia, duas molduras. */
+export function useFrozenMissionChats(missionId: string): {
+  probing: boolean
+  found: MissionChatAddress[]
+  current: MissionChatAddress | undefined
+  select: (paneId: string) => void
+} {
   const [probing, setProbing] = useState(true)
   const [found, setFound] = useState<MissionChatAddress[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
@@ -39,7 +37,7 @@ export default function ArchivedMissionChat({ mission, onClose }: Props): React.
     setProbing(true)
     void (async () => {
       const survivors: MissionChatAddress[] = []
-      for (const address of missionChatAddresses(mission.id)) {
+      for (const address of missionChatAddresses(missionId)) {
         const state = await guiApi.state(address.paneId)
         if (cancelled) return
         if (state.exists) survivors.push(address)
@@ -51,7 +49,24 @@ export default function ArchivedMissionChat({ mission, onClose }: Props): React.
     return () => {
       cancelled = true
     }
-  }, [mission.id])
+  }, [missionId])
+
+  const current = found.find((address) => address.paneId === activeId) ?? found[0]
+  return { probing, found, current, select: setActiveId }
+}
+
+interface Props {
+  mission: Mission
+  onClose: () => void
+}
+
+export default function ArchivedMissionChat({ mission, onClose }: Props): React.JSX.Element {
+  const seats = useStore((s) => s.seats)
+  // O status VIVO da missão (a prop é a fotografia do clique): reativar devolve
+  // a conversa ao board, e duas montagens do mesmo paneId brigariam pela mesma
+  // chave de `guiPanes`. Quem sai é a leitura.
+  const liveStatus = useStore((s) => s.missions.find((m) => m.id === mission.id)?.status)
+  const { probing, found, current, select } = useFrozenMissionChats(mission.id)
 
   useEffect(() => {
     if (liveStatus === 'arquivada' || liveStatus === 'concluida') return
@@ -68,7 +83,6 @@ export default function ArchivedMissionChat({ mission, onClose }: Props): React.
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
 
-  const current = found.find((address) => address.paneId === activeId) ?? found[0]
   // A conta gravada na missão é a fonte do CLI e do nome no cabeçalho. Conta
   // apagada depois: sobra a marca padrão e NADA mais — nome e plano só
   // aparecem quando o seat existe de verdade.
@@ -107,7 +121,7 @@ export default function ArchivedMissionChat({ mission, onClose }: Props): React.
                   aria-selected={address.paneId === current?.paneId}
                   className={`stage-pill${address.paneId === current?.paneId ? ' active' : ''}`}
                   data-tip={`Ler a conversa "${address.label}" desta missão`}
-                  onClick={() => setActiveId(address.paneId)}
+                  onClick={() => select(address.paneId)}
                 >
                   {address.label}
                 </button>

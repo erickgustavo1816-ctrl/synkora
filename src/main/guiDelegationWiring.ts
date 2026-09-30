@@ -183,9 +183,15 @@ export function GUI_HELPER_PORT_PERSONA_LINE(port: number): string {
 export function guiHelperPersonaFor(
   lspArmed: boolean,
   port?: number,
-  harnessBriefing?: string
+  harnessBriefing?: string,
+  versioning: import('../shared/projectVersioning').ProjectVersioning = 'git'
 ): string {
-  const lines = [GUI_HELPER_PERSONA]
+  const lines = [versioning === 'none' ? GUI_HELPER_PERSONA
+    .replace('inside this worktree', 'inside this permanent project folder')
+    .replace('  .synkora/, which git ignores — NEVER into a versioned folder (docs/, plano/, reports/, src/).',
+      '  .synkora/reports/. The project folder is permanent; your edits take effect immediately.')
+    .replace('  You write a versioned file only when the TASK you were given is to CHANGE CODE, and then that',
+      '  Cancelling a helper does not undo its edits. Write a product file only when the task asks for it; that') : GUI_HELPER_PERSONA]
   if (lspArmed) lines.push(GUI_HELPER_LSP_PERSONA_LINE)
   if (lspArmed) lines.push(`\n${GUI_MOBILE_ORDER}`)
   if (port !== undefined) lines.push(GUI_HELPER_PORT_PERSONA_LINE(port))
@@ -435,6 +441,7 @@ export interface GuiHelperLspJournalEntry {
 }
 
 export interface GuiHelperAdapterDeps {
+  projectVersioning?: (projectId: string) => import('../shared/projectVersioning').ProjectVersioning
   /** Materializa a persona do claude em arquivo (teto de argv no Windows). */
   systemPromptFile(name: string, content: string): string | undefined
   /** Prepara o config dir do seat antes do spawn (sandbox do codex). */
@@ -741,7 +748,9 @@ export function createClaudeHelperAdapter(deps: GuiHelperAdapterDeps) {
     // encaixar ferramenta nem endereço.
     const port = reserveGuiHelperPort(deps, request)
     const kit = armGuiHelperKit(deps, request)
-    const persona = guiHelperPersonaFor(kit !== undefined, port, missionHarnessBriefing(request.cwd))
+    const persona = deps.projectVersioning?.(request.projectId) === 'none'
+      ? guiHelperPersonaFor(kit !== undefined, port, missionHarnessBriefing(request.cwd), 'none')
+      : guiHelperPersonaFor(kit !== undefined, port, missionHarnessBriefing(request.cwd))
     const file = deps.systemPromptFile(`helper-${request.helperId}.system.md`, persona)
     let session: MaestroSession
     try {
@@ -776,10 +785,13 @@ export function createCodexHelperAdapter(deps: GuiHelperAdapterDeps) {
     const port = reserveGuiHelperPort(deps, request)
     const kit = armGuiHelperKit(deps, request)
     let session: CodexSession
+    const persona = deps.projectVersioning?.(request.projectId) === 'none'
+      ? guiHelperPersonaFor(kit !== undefined, port, missionHarnessBriefing(request.cwd), 'none')
+      : guiHelperPersonaFor(kit !== undefined, port, missionHarnessBriefing(request.cwd))
     try {
       session = new CodexSession(
         codexHelperSessionOptions(request, kit, port),
-        guiHelperPersonaFor(kit !== undefined, port, missionHarnessBriefing(request.cwd)),
+        persona,
         (evt) => {
           const translated = guiHelperEventFor(evt)
           if (translated) emit(translated)
@@ -1396,6 +1408,7 @@ export function guiHelperSeatsText(
 // ————— as tools do McpApi —————
 
 export interface GuiDelegationApiDeps {
+  projectVersioning?: (projectId: string) => import('../shared/projectVersioning').ProjectVersioning
   engine: GuiHelperEngine
   /** O chat vivo do pane (modelo/effort/conta atuais) — `undefined` = sem sessão. */
   delegator(paneId: string): GuiHelperDelegator | undefined
@@ -1724,7 +1737,9 @@ export function buildGuiDelegationApi(deps: GuiDelegationApiDeps): {
       return withInbox(
         id.paneId,
         cancelled.ok
-          ? `ajudante ${helperId} DESCARTADO: a sessão morreu e o arquivo de entrega dele saiu do ` +
+          ? deps.projectVersioning?.(id.projectId) === 'none'
+            ? `ajudante ${helperId} DESCARTADO: a sessão parou e o arquivo de entrega saiu. As edições continuam na pasta permanente do projeto; cancelar não desfaz nada. Confira os arquivos antes de continuar.`
+            : `ajudante ${helperId} DESCARTADO: a sessão morreu e o arquivo de entrega dele saiu do ` +
               'worktree. O que ele chegou a MUDAR no código continua lá — desfazer isso é git, e é ' +
               'seu: peça ao dono antes de mexer.'
           : cancelled.error

@@ -120,7 +120,12 @@ export class BacklogStore {
   private readonly file: string
   private data: BacklogData = { versions: [], items: [] }
 
-  constructor(file = join(app.getPath('userData'), 'backlog.json')) {
+  constructor(
+    file = join(app.getPath('userData'), 'backlog.json'),
+    /** The project owner supplies its capability refusal; legacy standalone
+     * stores remain versioned. No project cache or filesystem inference. */
+    private readonly versionRefusal: (projectId: string) => string | undefined = () => undefined
+  ) {
     this.file = file
     const loaded = loadJsonStore(
       this.file,
@@ -147,6 +152,7 @@ export class BacklogStore {
     // vai para a versão corrente.
     for (let index = 0; index < next.items.length; index++) {
       const item = next.items[index]
+      if (this.versionRefusal(item.projectId)) continue
       if (item.status === 'feito') continue
       const version = item.versionId
         ? next.versions.find((candidate) => candidate.id === item.versionId)
@@ -174,16 +180,20 @@ export class BacklogStore {
   }
 
   listVersions(projectId: string): Version[] {
+    if (this.versionRefusal(projectId)) return []
     return this.data.versions.filter((v) => v.projectId === projectId)
   }
 
   /** Fonte Ãºnica para o seletor e para a criaÃ§Ã£o de missÃµes. */
   missionVersionChoices(projectId: string): MissionVersionChoices {
+    if (this.versionRefusal(projectId)) return { versions: [], defaultVersionId: undefined }
     const versions = eligibleMissionVersions(this.data.versions, projectId)
     return { versions, defaultVersionId: versions[0]?.id }
   }
 
   createVersion(projectId: string, input: { name: string; theme?: string; goal?: string }): Version {
+    const refusal = this.versionRefusal(projectId)
+    if (refusal) throw new Error(refusal)
     const now = new Date().toISOString()
     const version: Version = {
       id: randomUUID(),
@@ -233,6 +243,8 @@ export class BacklogStore {
     name: string,
     excludeVersionId?: string
   ): string | null {
+    const refusal = this.versionRefusal(projectId)
+    if (refusal) return refusal
     const trimmed = name.trim()
     if (!trimmed) return 'o nome da versão não pode ficar vazio'
     if (
@@ -269,6 +281,8 @@ export class BacklogStore {
     data: BacklogData,
     projectId: string
   ): { data: BacklogData; version: Version } {
+    const refusal = this.versionRefusal(projectId)
+    if (refusal) throw new Error(refusal)
     const open = eligibleMissionVersions(data.versions, projectId)
     if (open[0]) return { data, version: open[0] }
 

@@ -3,6 +3,7 @@ import type { Version } from './backlog'
 import type { CreateVersionResult } from './ipc/backlog'
 import { currentReleasedVersion, directReleaseInputError, type DirectReleaseInput, type DirectReleaseResult } from '../shared/directRelease'
 import { ensureReleaseMission } from './releaseChat'
+import { isUnversionedProject, unversionedRefusal } from '../shared/projectVersioning'
 
 interface DirectReleaseDeps {
   context: Pick<MainContext, 'projects' | 'backlog' | 'missions' | 'blackbox'>
@@ -22,6 +23,7 @@ export function buildDirectRelease(deps: DirectReleaseDeps) {
   const RETRY_OR_NEW = 'tente de novo; se repetir, escolha uma versão nova no ⇪ release'
 
   async function create(projectId: string, input: DirectReleaseInput): Promise<DirectReleaseResult> {
+    if (isUnversionedProject(projects.get(projectId))) return { ok: false, error: unversionedRefusal('release') }
     const error = directReleaseInputError(input)
     if (error) return refuse(error, 'preencha o título e escolha um destino no ⇪ release')
     const project = typeof projectId === 'string' ? projects.get(projectId) : undefined

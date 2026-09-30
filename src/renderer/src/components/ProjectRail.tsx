@@ -9,7 +9,10 @@ import { railDropHint, railDropOp, type RailDragSource } from '../railDragModel'
 import { railEntries, railProjectTip, railRenderedCount } from '../railGroupPresentation'
 import { useRailDrag, type RailDragState } from '../useRailDrag'
 import { hueOf, initialsOf } from '../util'
+import { isUnversionedProject } from '../../../shared/projectVersioning'
+import { projectNameWithMode, railTipWithMode } from '../unversionedPresentation'
 import SynkoraMark from './SynkoraMark'
+import UnversionedFolderSeal from './UnversionedFolderSeal'
 import NewUniverseModal from './NewUniverseModal'
 import GuiPanelErrorBoundary from './GuiPanelErrorBoundary'
 import AppUpdateBadge from './AppUpdateBadge'
@@ -51,6 +54,9 @@ function RailItem({ projectId, groupId, tipsOff, isDragging, dropCombine }: Rail
 
   if (!project) return null
   const missing = project.missing === true
+  // SEM VERSIONAMENTO (2026-09-30): o selo de pasta no canto de baixo à
+  // esquerda (o direito é do ponto da missão) e o modo dito no nome acessível
+  const unversioned = isUnversionedProject(project)
   const activityLabel = projectMissionActivityLabel(activity)
   const className = [
     'rail-item',
@@ -73,8 +79,13 @@ function RailItem({ projectId, groupId, tipsOff, isDragging, dropCombine }: Rail
       data-child={groupId === null ? undefined : ''}
       data-gid={groupId ?? undefined}
       data-pid={project.id}
-      aria-label={`${project.name} — ${missing ? 'pasta não encontrada' : activityLabel}`}
-      data-tip-side="right" data-tip={tipsOff ? undefined : railProjectTip({ name: project.name, missing, attention, activityLabel })}
+      aria-label={`${projectNameWithMode(project.name, unversioned)} — ${missing ? 'pasta não encontrada' : activityLabel}`}
+      data-tip-side="right"
+      data-tip={
+        tipsOff
+          ? undefined
+          : railTipWithMode(railProjectTip({ name: project.name, missing, attention, activityLabel }), unversioned)
+      }
       // pasta morta: abrir o universo só geraria panes quebrados — vai para a
       // Home, onde o card oferece a relocação
       onClick={() => openProject(missing ? null : project.id)}
@@ -84,6 +95,7 @@ function RailItem({ projectId, groupId, tipsOff, isDragging, dropCombine }: Rail
       ) : (
         <span className="rail-initials">{initialsOf(project.name)}</span>
       )}
+      {unversioned && <UnversionedFolderSeal size="rail" />}
       {attention && !missing && !activity && (
         <span className="rail-ask-dot" data-tip-side="right" data-tip={tipsOff ? undefined : 'Um agente precisa de você'} />
       )}
@@ -189,6 +201,7 @@ function RailDragOverlay({
         ) : (
           <span className="rail-initials">{initialsOf(project.name)}</span>
         )}
+        {isUnversionedProject(project) && <UnversionedFolderSeal size="rail" />}
       </div>
     )
   } else if (group) {
@@ -250,8 +263,8 @@ export default function ProjectRail(): React.JSX.Element {
   const openGroupSheet = useProjectLayout((s) => s.openGroupSheet)
   const sheetGroupId = useProjectLayout((s) => s.sheetGroupId)
   const sheetSelectName = useProjectLayout((s) => s.sheetSelectName)
-  // ONDA D: o "+" abre o MESMO modal da Home — a pasta continua sendo o
-  // essencial, mas agora existe uma decisão a mais (link do GitHub).
+  // O "+" abre o MESMO modal da Home — a pasta continua sendo o essencial,
+  // com as decisões do nascimento (versionar com Git, link do GitHub).
   const [adding, setAdding] = useState(false)
   const [menu, setMenu] = useState<RailMenuRequest | null>(null)
   const menuRef = useRef<RailMenuRequest | null>(null)
@@ -406,7 +419,7 @@ export default function ProjectRail(): React.JSX.Element {
         <button
           type="button"
           className={`rail-item rail-add${adding ? ' busy' : ''}`}
-          data-tip-side="right" data-tip={'Novo universo\npasta do projeto · link do GitHub opcional'}
+          data-tip-side="right" data-tip={'Novo universo\npasta do projeto · com ou sem Git'}
           aria-label="Novo universo"
           onClick={() => setAdding(true)}
         >

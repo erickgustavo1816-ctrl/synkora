@@ -20,6 +20,7 @@ import {
 import { basename, extname, join } from 'path'
 import { type SeatCli } from '../seats'
 import { ensureSynkoraGitExcludes } from '../worktree'
+import { isUnversionedProject, projectVersioning } from '../../shared/projectVersioning'
 import { getCatalog } from '../catalog'
 import { getCliStatus, updateAllClis, type CliStatus } from '../cliUpdate'
 import { copyFileSync, existsSync, mkdirSync, statSync, writeFileSync } from 'fs'
@@ -163,7 +164,7 @@ export function registerMiscIpc(ctx: MainContext, extras: MiscIpcExtras): void {
         clis: getCliStatus(),
         mcp: { state: ctx.internalMcpState, port: ctx.mcpPort }
       },
-      projects: projects.list().map((p) => ({ id: p.id, name: p.name, path: p.path }))
+      projects: projects.list().map((p) => ({ id: p.id, name: p.name, path: p.path, versioning: projectVersioning(p) }))
     })
   })
 
@@ -179,7 +180,7 @@ export function registerMiscIpc(ctx: MainContext, extras: MiscIpcExtras): void {
     const project = projects.get(projectId)
     if (!project) return null
     try {
-      ensureSynkoraGitExcludes(project.path)
+      if (!isUnversionedProject(project)) ensureSynkoraGitExcludes(project.path)
     } catch {
       return null
     }
@@ -201,7 +202,7 @@ export function registerMiscIpc(ctx: MainContext, extras: MiscIpcExtras): void {
     const project = projects.get(projectId)
     if (!project || !Array.isArray(paths)) return []
     try {
-      ensureSynkoraGitExcludes(project.path)
+      if (!isUnversionedProject(project)) ensureSynkoraGitExcludes(project.path)
     } catch {
       return []
     }

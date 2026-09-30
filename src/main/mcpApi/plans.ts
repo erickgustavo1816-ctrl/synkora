@@ -16,6 +16,7 @@
  * Escopo: toda tool enxerga somente os planos do `projectId` da identidade.
  */
 import { normalizePlanDraft, type PlanDraft } from '../planDraft'
+import { isUnversionedProject, unversionedRefusal } from '../../shared/projectVersioning'
 import { releaseConversationError } from '../releaseAuthority'
 import {
   planView,
@@ -100,6 +101,7 @@ export function buildPlansApi(
   extras: PlansApiExtras
 ): Pick<McpApi, 'listPlans' | 'getPlan' | 'proposePlan' | 'updatePlan' | 'deletePlan'> {
   const refusal = (id: PaneIdentity): string | undefined => {
+    if (isUnversionedProject(ctx.projects.get(id.projectId))) return unversionedRefusal('planning')
     if (id.role !== 'gui-release') return undefined
     const live = ctx.hub.identityByPane(id.paneId)
     const mission = id.missionId ? ctx.missions.get(id.missionId) : undefined

@@ -1,3 +1,5 @@
+import type { ProjectVersioning } from '../../shared/projectVersioning'
+
 export const WORKSPACE_PANELS = [
   { id: 'browser', title: 'Browser' },
   { id: 'mobile', title: 'Mobile' },
@@ -157,8 +159,17 @@ export function readWorkspacePreference(storage: Pick<Storage, 'getItem'> | null
  * worktree, so no Trabalho/Histórico. Release (direct release, 2026-09-28:
  * "igual uma missão normal, mas é de release") opens the mission's panels plus
  * its own; Trabalho/Histórico read where it works (version worktree before the
- * ascent, project folder after), resolved by the main. */
-export function availableWorkspacePanels(type: WorkspaceMissionType, browser: boolean): WorkspacePanelId[] {
+ * ascent, project folder after), resolved by the main.
+ * A non-versioned project (2026-09-30) has no diff base, commits or release:
+ * its mission opens Browser, Mobile and Frota only. */
+export function availableWorkspacePanels(
+  type: WorkspaceMissionType, browser: boolean, versioning: ProjectVersioning = 'git'
+): WorkspacePanelId[] {
+  if (versioning === 'none') {
+    return WORKSPACE_PANELS.filter((panel) =>
+      panel.id === 'frota' || (browser && (panel.id === 'browser' || panel.id === 'mobile'))
+    ).map((panel) => panel.id)
+  }
   return WORKSPACE_PANELS.filter((panel) => {
     if (panel.id === 'release') return type === 'release'
     if (panel.id === 'mobile') return type !== 'planejamento' && browser

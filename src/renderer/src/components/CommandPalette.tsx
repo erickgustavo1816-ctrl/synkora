@@ -8,6 +8,7 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { isPaletteNavigationTarget } from '../../../shared/commandPalette'
+import { projectVersioning } from '../../../shared/projectVersioning'
 import type {
   DocFile,
   HistoryLoadResult,
@@ -26,8 +27,8 @@ import {
   navigateFromCommandPalette,
   onPaletteNavigationFailure
 } from '../commandPaletteNavigation'
+import { paletteMissionDetail, paletteScope, type PaletteSource } from '../commandPaletteScope'
 
-type PaletteSource = 'acoes' | 'arquivos' | 'sessoes' | 'commits' | 'branches'
 type PaletteFilter = 'tudo' | PaletteSource
 
 interface PaletteEntry {
@@ -180,6 +181,13 @@ export default function CommandPalette(): React.JSX.Element | null {
   const currentProject = projects.find((project) => project.id === projectId)
   const currentMissions = missions.filter((mission) => mission.projectId === projectId)
   const context: CommandPaletteContext = { projectId }
+  // Projeto SEM VERSIONAMENTO (2026-09-30): sem Mapa/Versões, sem commits nem
+  // branches — a paleta nem mostra, nem pede ao main o que ele recusaria.
+  const versioning = projectVersioning(currentProject)
+  const scope = paletteScope(versioning)
+  const searchesCommits = scope.sources.includes('commits')
+  const filters = FILTERS.filter((item) => item.id === 'tudo' || scope.sources.includes(item.id))
+  const activeFilter: PaletteFilter = filters.some((item) => item.id === filter) ? filter : 'tudo'
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
@@ -244,6 +252,12 @@ export default function CommandPalette(): React.JSX.Element | null {
       .listDocs(projectId)
       .then((list) => alive && setDocs(list.slice(0, 240)))
       .catch(() => alive && setDocs([]))
+    if (!searchesCommits) {
+      setCommits([])
+      return () => {
+        alive = false
+      }
+    }
     void Promise.all(
       currentMissions.slice(0, 16).map(async (mission) => {
         const result = await window.synkora.missions.commits(mission.id).catch(() => null)
@@ -255,13 +269,13 @@ export default function CommandPalette(): React.JSX.Element | null {
     return () => {
       alive = false
     }
-  }, [open, projectId, currentMissions.map((mission) => mission.id).join('|')])
+  }, [open, projectId, searchesCommits, currentMissions.map((mission) => mission.id).join('|')])
 
   useEffect(() => {
     if (
       !open ||
       query.trim().length < 2 ||
-      (filter !== 'tudo' && filter !== 'sessoes')
+      (activeFilter !== 'tudo' && activeFilter !== 'sessoes')
     ) {
       setHistory([])
       setHistoryLoading(false)
@@ -297,7 +311,7 @@ export default function CommandPalette(): React.JSX.Element | null {
       window.clearTimeout(timer)
       window.synkora.history.cancel(requestId)
     }
-  }, [filter, open, projectId, query])
+  }, [activeFilter, open, projectId, query])
 
   const entries = useMemo(() => {
     const output: PaletteEntry[] = [
@@ -329,30 +343,27 @@ export default function CommandPalette(): React.JSX.Element | null {
       })
     }
     if (currentProject && projectId) {
-      for (const page of [
-        ['board', 'Board', 'missões e conversas'],
-        ['mapa', 'Mapa', 'visão do universo'],
-        ['backlog', 'Versões', 'backlog e entregas'],
-        ['arquivos', 'Arquivos', 'documentos do projeto']
-      ] as const) {
+      for (const page of scope.pages) {
         output.push({
-          id: `page:${projectId}:${page[0]}`,
+          id: `page:${projectId}:${page.tab}`,
           source: 'acoes',
-          title: `Abrir ${page[1]}`,
-          detail: `${currentProject.name} · ${page[2]}`,
-          keywords: `${page[0]} ${page[1]} ${page[2]}`,
-          target: { kind: 'project', projectId, tab: page[0] }
+          title: `Abrir ${page.title}`,
+          detail: `${currentProject.name} · ${page.detail}`,
+          keywords: `${page.tab} ${page.title} ${page.detail}`,
+          target: { kind: 'project', projectId, tab: page.tab }
         })
       }
+      const searchesBranches = scope.sources.includes('branches')
       for (const mission of currentMissions) {
         output.push({
           id: `mission:${mission.id}`,
           source: 'sessoes',
           title: mission.title,
-          detail: `Missão · ${mission.status}`,
+          detail: paletteMissionDetail(versioning, mission.status),
           keywords: `${mission.title} ${mission.goal ?? ''} ${mission.scope ?? ''}`,
           target: { kind: 'project', projectId, tab: 'board', missionId: mission.id }
         })
+        if (!searchesBranches) continue
         if (mission.branch) {
           output.push({
             id: `branch:${mission.id}:${mission.branch}`,
@@ -415,13 +426,13 @@ export default function CommandPalette(): React.JSX.Element | null {
     output.push(...history.map(historyEntry))
     const normalizedQuery = searchable(query.trim())
     return output
-      .filter((entry) => filter === 'tudo' || entry.source === filter)
+      .filter((entry) => activeFilter === 'tudo' || entry.source === activeFilter)
       .map((entry) => ({ entry, score: scoreEntry(entry, normalizedQuery) }))
       .filter(({ score }) => score >= 0)
       .sort((a, b) => b.score - a.score || a.entry.title.localeCompare(b.entry.title, 'pt-BR'))
       .slice(0, 90)
       .map(({ entry }) => entry)
-  }, [commits, currentMissions, currentProject, docs, filter, history, projectId, projects, query, registeredActions])
+  }, [activeFilter, commits, currentMissions, currentProject, docs, history, projectId, projects, query, registeredActions, scope, versioning])
 
   useEffect(() => {
     setSelectedIndex((index) => Math.max(0, Math.min(index, Math.max(0, entries.length - 1))))
@@ -517,7 +528,7 @@ export default function CommandPalette(): React.JSX.Element | null {
             ref={inputRef}
             value={query}
             maxLength={240}
-            placeholder="Buscar ações, arquivos, sessões, commits e branches…"
+            placeholder={scope.placeholder}
             aria-label="Buscar em toda a Synkora"
             aria-controls="command-palette-results"
             aria-activedescendant={active && !preview ? `command-entry-${active.id}` : undefined}
@@ -531,10 +542,10 @@ export default function CommandPalette(): React.JSX.Element | null {
           <kbd>esc</kbd>
         </div>
         <div className="command-palette-filters" aria-label="Fontes da busca">
-          {FILTERS.map((item) => (
+          {filters.map((item) => (
             <button
               key={item.id}
-              className={filter === item.id ? 'active' : ''}
+              className={activeFilter === item.id ? 'active' : ''}
               onClick={() => {
                 setFilter(item.id)
                 setSelectedIndex(0)

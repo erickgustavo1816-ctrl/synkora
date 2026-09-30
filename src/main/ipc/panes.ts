@@ -25,6 +25,8 @@ import { formatPortMap } from '../portMap'
 import type { Mission } from '../missions'
 import type { MainContext } from '../mainContext'
 import type { PaneLifecycleEngine } from '../paneLifecycle'
+import { isUnversionedProject, openSoloMission, unversionedRefusal } from '../../shared/projectVersioning'
+import { soloMissionIsStopping } from '../soloMission'
 
 /** Dependências do closure do index ainda não migradas (mesmo padrão dos
  * outros ipc/*). */
@@ -37,7 +39,8 @@ export interface PanesIpcExtras {
 export function registerPanesIpc(ctx: MainContext, extras: PanesIpcExtras): void {
   const { projects, backlog, blackbox, hub } = ctx
   const { engine, ensureMissionWorktree } = extras
-  const { livePaneSpecs, closingPaneIds, testServerPanes, harnessPortsInUse } = engine
+  const { livePaneSpecs, closingPaneIds, harnessPortsInUse } = engine
+  const { testServerPanes } = ctx
 
   ipcMain.handle(
     'panes:testServerSpec',
@@ -62,7 +65,16 @@ export function registerPanesIpc(ctx: MainContext, extras: PanesIpcExtras): void
       let cwd: string | undefined
       let label = ''
       let missionId: string | undefined
-      if (target.missionId) {
+      if (isUnversionedProject(project)) {
+        if (target.versionId) return { ok: false, msg: unversionedRefusal('versions') }
+        const mission = openSoloMission(ctx.missions.list(projectId), projectId)
+        if (!mission || mission.status !== 'ativa' || (target.missionId && target.missionId !== mission.id))
+          return { ok: false, msg: unversionedRefusal('reopen') }
+        if (soloMissionIsStopping(ctx.missions, projectId)) return { ok: false, msg: unversionedRefusal('second-mission') }
+        cwd = project.path
+        label = mission.title
+        missionId = mission.id
+      } else if (target.missionId) {
         const mission = await ensureMissionWorktree(target.missionId)
         if (!mission || mission.projectId !== projectId)
           return { ok: false, msg: 'missão não encontrada' }
@@ -130,6 +142,7 @@ export function registerPanesIpc(ctx: MainContext, extras: PanesIpcExtras): void
       const paneId = randomUUID()
       testServerPanes.set(paneId, {
         projectId,
+        missionId,
         cwd,
         command,
         port: chosenPort,

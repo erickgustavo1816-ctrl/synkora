@@ -1,4 +1,5 @@
 import { sessionSpawnFailureText } from './sessionSpawnError'
+import { isUnversionedProject, unversionedRefusal } from '../shared/projectVersioning'
 import { CodexUserInputRequests } from './codexUserInput'
 import { codexAsyncQuestionEvent } from './codexAsyncQuestions'
 import { existsSync } from 'fs'
@@ -995,6 +996,10 @@ export class CodexSession {
   }
 
   private cmdDiff(): Promise<void> {
+    if (isUnversionedProject({ versioning: this.opts.extraEnv?.SYNKORA_PROJECT_VERSIONING === 'none' ? 'none' : 'git' })) {
+      this.finishCommand(unversionedRefusal('history'))
+      return Promise.resolve()
+    }
     // Igual ao TUI: git diff + untracked, direto do repo.
     return new Promise((resolve) => {
       const child = spawn(

@@ -40,7 +40,6 @@ import {
   type Pane,
   type Version
 } from '../store'
-import type { GuiPaneSpawn, GuiPermissionMode } from '../guiApi'
 import { isReleaseMissionRecord } from '../missionCardAccess'
 import { canSendGuiMessage } from '../guiTransport'
 import { guiItemId } from '../guiItemIdentity'
@@ -50,8 +49,8 @@ import {
   integrationQueueNote,
   integrationQueueRows
 } from '../integrationQueuePresentation'
-import { missionGui, type MissionGuiRole } from '../missionGui'
-import { GuiRequestEpoch, withoutMissionGuiSlots } from '../guiRequestEpoch'
+import { missionGui } from '../missionGui'
+import { MISSION_GUI_ROLE_LABEL, useMissionChatSlots } from '../useMissionChatSlots'
 import GuiSeatPick from './GuiSeatPick'
 import { projectLanding } from '../projectLanding'
 import { plansApi } from '../plansApi'
@@ -65,18 +64,10 @@ import { focusProgressDelivery, onProgressOpen, resolveBoardProgressTarget } fro
 // preload, dormente e alcançável direto por `window.synkora.projects`; a ponte
 // de renderer que o embrulhava saiu por não ter mais nenhum importador.
 
-/** Uma conversa aberta de uma missão DIRETA (onda B). O papel não viaja na
- *  spec — é o Board que sabe por que pediu cada uma. */
-interface MissionGuiSlot {
-  role: MissionGuiRole
-  spawn: GuiPaneSpawn
-}
-
-const MISSION_GUI_ROLE_LABEL: Record<MissionGuiRole, string> = {
-  dev: 'agente',
-  reviewer: 'revisor',
-  helper: 'ajudante'
-}
+// Os SLOTS de conversa da missão direta (spec do agente ao entrar, escolha e
+// troca de conta, épocas, soltura de missão encerrada) moram em
+// `useMissionChatSlots` desde 2026-09-30: o projeto sem versionamento abre a
+// mesma conversa pelo mesmo caminho.
 
 // O mapa de papel→chrome (MISSION_GUI_PANE_ROLE) e o LED da sessão
 // (GUI_ACTIVITY) morreram com o titlebar escuro sobre o chat: no palco 2.0 a
@@ -147,27 +138,10 @@ export default function Board({ projectId }: Props): React.JSX.Element {
   const isActive = useStore((s) => s.openProjectId === projectId)
   const appPage = useStore((s) => s.appPage)
   const projectFlow = useStore((s) => s.projects.find((p) => p.id === projectId))
-  // MISSÃO DIRETA (2.0): no lugar do orquestrador TUI, uma ou mais CONVERSAS
-  // GUI no worktree — o agente (dev), o revisor de sessão limpa e ajudantes.
-  // Todas ficam MONTADAS depois de abertas (a conversa É o trabalho); trocar
-  // de papel só troca qual slot está visível.
-  const [missionGuiSlots, setMissionGuiSlots] = useState<Record<string, MissionGuiSlot[]>>({})
-  const [missionGuiActive, setMissionGuiActive] = useState<Record<string, string>>({})
-  const [missionGuiError, setMissionGuiError] = useState<Record<string, string>>({})
-  // Missão sem conta escolhida (2.0): não é erro — é o CARD de escolha no
-  // lugar da conversa. `seatBusy` trava o card enquanto o main troca a conta.
-  const [missionNeedsSeat, setMissionNeedsSeat] = useState<Record<string, boolean>>({})
-  const [seatBusy, setSeatBusy] = useState<string | null>(null)
-  // A geração é o valor, não só uma trava booleana: uma Promise velha
-  // nunca pode apagar a trava do pedido novo que reutilizou a mesma chave.
-  const missionGuiInFlight = useRef<Map<string, number>>(new Map())
-  const missionGuiEpoch = useRef(new GuiRequestEpoch())
-  const seatChangeInFlight = useRef(false)
   // O 🧐 revisar é UM toque por clique: sem esta trava, dois cliques rápidos
   // colocariam duas falas iguais do dono no fio (o envio é IPC, leva ms, mas o
   // dedo é mais rápido que ele).
   const reviewNudgeInFlight = useRef(false)
-  const dropGuiPane = useStore((s) => s.dropGuiPane)
   const sendGuiMessage = useStore((s) => s.sendGuiMessage)
   // PLANEJAMENTO (2.0): o estado da sessão avulsa saiu daqui. Planejar é uma
   // MISSÃO de tipo 'planejamento' — o chat dela nasce e vive nos mesmos
@@ -177,6 +151,46 @@ export default function Board({ projectId }: Props): React.JSX.Element {
   // missão ocupa a coluna, como antes.
   const [missionTerm, setMissionTerm] = useState<Record<string, string | null>>({})
   const [generalTerm, setGeneralTerm] = useState<string | null>(null)
+
+  // Missão selecionada (aba). SÓ missão VIVA vale: com selMission apontando para
+  // uma missão concluída/arquivada a aba 🚀 dela desaparecia da fila mas nenhuma
+  // aba ficava ativa — a página ✦ geral não renderizava e o terminal do PM
+  // continuava montado e ESCONDIDO, deixando o usuário sem terminal nenhum.
+  // TODAS as missões deste universo, conservadas mesmo fora de vista. É a base do painel
+  // do ✦ geral: ele conta integradas e arquivadas, que `liveMissions` descarta.
+  const projectMissions = missions.filter((m) => m.projectId === projectId)
+  const liveMissions = projectMissions.filter(
+    (m) => m.status === 'ativa' || m.status === 'integrando'
+  )
+  // R27 — RELEASE É RELEASE: o registro que carrega a conversa da subida fica
+  // FORA de toda superfície de missão (retrato, contadores). O Board continua
+  // sendo o HOST do pane dele (desmontar mataria a conversa), então
+  // `selMission`/slots seguem enxergando o registro — só as listas o escondem.
+  // R30 — mas o release VIVO precisa de ENDEREÇO: sem entrada na coluna, um
+  // clique em geral perdia o caminho de volta ao chat da subida (bug do dono,
+  // 2026-08-21 — "o chat tá invisível"). Vivo, ele entra PRIMEIRO na coluna,
+  // com cara de release; concluiu, some — retrato e contadores seguem sem ele.
+  const releaseMissions = liveMissions.filter((m) => isReleaseMissionRecord(m))
+  const surfaceMissions = liveMissions.filter((m) => !isReleaseMissionRecord(m))
+  const selMission = missionTab ? liveMissions.find((m) => m.id === missionTab) : undefined
+  const selIsRelease = Boolean(selMission && isReleaseMissionRecord(selMission))
+
+  // MISSÃO DIRETA (2.0): no lugar do orquestrador TUI, uma ou mais CONVERSAS
+  // GUI no worktree. A mecânica dos slots mora no hook; o Board diz qual
+  // missão está em cena e tira o terminal da frente quando um chat volta.
+  const chat = useMissionChatSlots({
+    projectId,
+    isActive,
+    mission: selMission,
+    missions,
+    onChatFocus: (missionId) => setMissionTerm((prev) => ({ ...prev, [missionId]: null }))
+  })
+  const missionGuiSlots = chat.slots
+  const missionGuiActive = chat.active
+  const missionGuiError = chat.errors
+  const missionNeedsSeat = chat.needsSeat
+  const seatBusy = chat.seatBusy
+  const focusMissionChat = chat.focus
   // O trilho de entrega re-mede o diff quando isto muda (⇪, arquivar…).
   const [railReload, setRailReload] = useState(0)
   const [newMissionOpen, setNewMissionOpen] = useState(false)
@@ -211,7 +225,7 @@ export default function Board({ projectId }: Props): React.JSX.Element {
     setMissionTab(projectId, missionId)
     if (missionId) {
       setMissionTerm((prev) => ({ ...prev, [missionId]: null }))
-      if (paneId) setMissionGuiActive((prev) => ({ ...prev, [missionId]: paneId }))
+      if (paneId) focusMissionChat(missionId, paneId)
     }
     if (target.unavailable)
       pushNotice({
@@ -222,7 +236,7 @@ export default function Board({ projectId }: Props): React.JSX.Element {
       })
     setProgressDeliveryMission(target.delivery ? target.missionId : null)
     setProgressTarget(null)
-  }, [isActive, progressTarget, missions, missionGuiSlots, projectId, setMissionTab, pushNotice])
+  }, [isActive, progressTarget, missions, missionGuiSlots, projectId, setMissionTab, pushNotice, focusMissionChat])
   useEffect(() => {
     if (!isActive || !progressDeliveryMission || missionTab !== progressDeliveryMission || !boardRef.current) return
     return focusProgressDelivery(boardRef.current, () => setProgressDeliveryMission(null))
@@ -406,29 +420,6 @@ export default function Board({ projectId }: Props): React.JSX.Element {
   // O poller de TAREFAS e o reconciliador de 30s saíram na purga F6: não há
   // mais card para reconciliar — o estado da missão 2.0 é a conversa.
 
-  // Missão selecionada (aba). SÓ missão VIVA vale: com selMission apontando para
-  // uma missão concluída/arquivada a aba 🚀 dela desaparecia da fila mas nenhuma
-  // aba ficava ativa — a página ✦ geral não renderizava e o terminal do PM
-  // continuava montado e ESCONDIDO, deixando o usuário sem terminal nenhum.
-  // TODAS as missões deste universo, conservadas mesmo fora de vista. É a base do painel
-  // do ✦ geral: ele conta integradas e arquivadas, que `liveMissions` descarta.
-  const projectMissions = missions.filter((m) => m.projectId === projectId)
-  const liveMissions = projectMissions.filter(
-    (m) => m.status === 'ativa' || m.status === 'integrando'
-  )
-  // R27 — RELEASE É RELEASE: o registro que carrega a conversa da subida fica
-  // FORA de toda superfície de missão (retrato, contadores). O Board continua
-  // sendo o HOST do pane dele (desmontar mataria a conversa), então
-  // `selMission`/slots seguem enxergando o registro — só as listas o escondem.
-  // R30 — mas o release VIVO precisa de ENDEREÇO: sem entrada na coluna, um
-  // clique em geral perdia o caminho de volta ao chat da subida (bug do dono,
-  // 2026-08-21 — "o chat tá invisível"). Vivo, ele entra PRIMEIRO na coluna,
-  // com cara de release; concluiu, some — retrato e contadores seguem sem ele.
-  const releaseMissions = liveMissions.filter((m) => isReleaseMissionRecord(m))
-  const surfaceMissions = liveMissions.filter((m) => !isReleaseMissionRecord(m))
-  const selMission = missionTab ? liveMissions.find((m) => m.id === missionTab) : undefined
-  const selIsRelease = Boolean(selMission && isReleaseMissionRecord(selMission))
-
   // O PULSO DAS ABAS saiu inteiro na purga F6 (2026-08-17): a heurística do
   // "?" lia panes TUI que não existem mais, e o canal ask_user morreu com o
   // papel que o usava (R-18). A pergunta do agente na era 2.0 é o
@@ -439,79 +430,6 @@ export default function Board({ projectId }: Props): React.JSX.Element {
   // O SPAWN EM SEGUNDO PLANO dos orquestradores TUI saiu na purga F6, e com
   // ele o anti-loop de 3 mortes em 30s e a liberação de spec de missão
   // concluída. Missão 2.0 não tem orquestrador: tem conversa.
-
-  // ————— MISSÃO DIRETA: as conversas do worktree —————
-  // Nada nasce em segundo plano (cada slot é um CLI de verdade): o chat do
-  // agente abre quando o dono ENTRA na missão pela primeira vez e daí em
-  // diante fica montado. A guarda de voo evita o fetch duplo enquanto o 1º
-  // `guiSpec` viaja — o efeito redispara antes de o estado chegar.
-  useEffect(() => {
-    if (!isActive || !selMission?.direct) return
-    const mid = selMission.id
-    if (missionGuiSlots[mid]?.length) return
-    const key = `${mid}:dev`
-    const epoch = missionGuiEpoch.current.capture(mid)
-    if (missionGuiInFlight.current.get(key) === epoch) return
-    missionGuiInFlight.current.set(key, epoch)
-    void missionGui
-      .spec(mid, 'dev')
-      .then((res) => {
-        if (!missionGuiEpoch.current.isCurrent(mid, epoch)) return
-        if (!res.ok || !res.spawn) {
-          // Falta de conta tem tela PRÓPRIA (o card de escolha) — tratá-la
-          // como erro mandaria o dono procurar um problema que não existe.
-          if (res.needsSeat) {
-            setMissionNeedsSeat((prev) => ({ ...prev, [mid]: true }))
-            return
-          }
-          setMissionGuiError((prev) => ({
-            ...prev,
-            [mid]: res.error ?? 'não deu para abrir a conversa desta missão'
-          }))
-          return
-        }
-        setMissionNeedsSeat((prev) => {
-          if (!prev[mid]) return prev
-          const next = { ...prev }
-          delete next[mid]
-          return next
-        })
-        const spawn = res.spawn
-        setMissionGuiSlots((prev) =>
-          prev[mid]?.length ? prev : { ...prev, [mid]: [{ role: 'dev', spawn }] }
-        )
-        setMissionGuiActive((prev) => ({ ...prev, [mid]: spawn.paneId }))
-        setMissionGuiError((prev) => {
-          if (!prev[mid]) return prev
-          const next = { ...prev }
-          delete next[mid]
-          return next
-        })
-      })
-      .finally(() => {
-        if (missionGuiInFlight.current.get(key) === epoch) {
-          missionGuiInFlight.current.delete(key)
-        }
-      })
-  }, [isActive, selMission?.id, selMission?.direct, missionGuiSlots])
-
-  // Missão saiu de viva: as sessões dela morrem no main (gui:kill) e os slots
-  // somem. Mesma cautela do efeito dos orquestradores — missão AUSENTE da
-  // lista não conta: uma fotografia incompleta não autoriza encerrar a conversa.
-  useEffect(() => {
-    setMissionGuiSlots((prev) => {
-      let changed = false
-      const next = { ...prev }
-      for (const id of Object.keys(next)) {
-        const m = missions.find((x) => x.id === id)
-        if (!m || (m.status !== 'concluida' && m.status !== 'arquivada')) continue
-        for (const slot of next[id]) dropGuiPane(slot.spawn.paneId)
-        delete next[id]
-        changed = true
-      }
-      return changed ? next : prev
-    })
-  }, [missions, dropGuiPane])
 
   // ————— TERMINAIS COMO SLOT (onda D) —————
   // Com a aba PANES fora, o único lugar SEMPRE MONTADO do universo é esta
@@ -558,192 +476,10 @@ export default function Board({ projectId }: Props): React.JSX.Element {
     for (const id of seenTermPanes.current) if (!live.has(id)) seenTermPanes.current.delete(id)
   }, [isActive, termPaneKey])
 
-  /** Abre (ou volta o foco para) uma conversa da missão direta.
-   *
-   *  ONDA W3 (ordem do dono, 2026-08-18): o AJUDANTE saiu daqui. Ele não nasce
-   *  mais de clique nenhum — quem o abre é o agente do chat, pelo `delegate` do
-   *  MCP, e ele nunca vira aba. A cerca é o TIPO do parâmetro: pedir 'helper'
-   *  por este caminho virou erro de compilação, não de revisão. O papel segue
-   *  vivo no contrato do main (pane já aberto vive até fechar, e o dispose da
-   *  missão encerra todos), só o renderer é que parou de criá-los. */
-  async function openMissionGuiRole(
-    missionId: string,
-    role: Exclude<MissionGuiRole, 'helper'>
-  ): Promise<void> {
-    const slots = missionGuiSlots[missionId] ?? []
-    // Todo papel que a UI ainda abre é ÚNICO por missão: clicar de novo volta o
-    // foco para a rodada em andamento, em vez de jogar fora o que já estava
-    // escrito naquela conversa.
-    const existing = slots.find((s) => s.role === role)
-    if (existing) {
-      // Abrir uma conversa FOCA a pílula dela: se um terminal estava no ar,
-      // ele sai da frente (senão o clique no trilho parecia não fazer nada).
-      setMissionTerm((prev) => ({ ...prev, [missionId]: null }))
-      setMissionGuiActive((prev) => ({ ...prev, [missionId]: existing.spawn.paneId }))
-      return
-    }
-    const key = `${missionId}:${role}`
-    const epoch = missionGuiEpoch.current.capture(missionId)
-    if (missionGuiInFlight.current.get(key) === epoch) return
-    missionGuiInFlight.current.set(key, epoch)
-    const res = await missionGui.spec(missionId, role)
-    if (missionGuiInFlight.current.get(key) === epoch) {
-      missionGuiInFlight.current.delete(key)
-    }
-    if (!missionGuiEpoch.current.isCurrent(missionId, epoch)) return
-    if (!res.ok || !res.spawn) {
-      // Sem conta escolhida NENHUM papel abre — e a resposta é o card de
-      // escolha, não um erro (o revisor abre sozinho depois da escolha).
-      if (res.needsSeat) {
-        setMissionNeedsSeat((prev) => ({ ...prev, [missionId]: true }))
-        return
-      }
-      setMissionGuiError((prev) => ({
-        ...prev,
-        [missionId]: res.error ?? `não deu para abrir ${MISSION_GUI_ROLE_LABEL[role]}`
-      }))
-      return
-    }
-    const spawn = res.spawn
-    setMissionGuiSlots((prev) => {
-      const cur = prev[missionId] ?? []
-      if (cur.some((s) => s.spawn.paneId === spawn.paneId)) return prev
-      return { ...prev, [missionId]: [...cur, { role, spawn }] }
-    })
-    setMissionTerm((prev) => ({ ...prev, [missionId]: null }))
-    setMissionGuiActive((prev) => ({ ...prev, [missionId]: spawn.paneId }))
-  }
-
   // O TERMINAL CRU do worktree (o antigo "▷ terminal" do trilho) saiu daqui na
   // rodada 2 do dock (2026-08-22): ordem do dono — "o único que tem necessidade
   // é o terminal de teste". O canal `missions:shellSpec` continua de pé no
   // main, dormente; o que morreu foi a alavanca e a costura que a servia.
-
-  /** Guarda o modo de permissão que o dono escolheu NO CHAT (onda D). O motor
-   *  também persiste do lado dele; aqui é para o slot remontado nascer com a
-   *  regra certa em vez de voltar ao padrão. */
-  function setMissionSlotPermission(
-    missionId: string,
-    paneId: string,
-    permissionMode: GuiPermissionMode
-  ): void {
-    setMissionGuiSlots((prev) => {
-      const cur = prev[missionId]
-      if (!cur) return prev
-      return {
-        ...prev,
-        [missionId]: cur.map((s) =>
-          s.spawn.paneId === paneId ? { ...s, spawn: { ...s.spawn, permissionMode } } : s
-        )
-      }
-    })
-  }
-
-  /** R11: o toggle ⚡ fast do chat — o slot guarda a escolha, irmão exato do
-   *  setMissionSlotPermission (o fast também é flag de spawn). */
-  function setMissionSlotFast(missionId: string, paneId: string, fast: boolean): void {
-    setMissionGuiSlots((prev) => {
-      const cur = prev[missionId]
-      if (!cur) return prev
-      return {
-        ...prev,
-        [missionId]: cur.map((s) =>
-          s.spawn.paneId === paneId
-            ? { ...s, spawn: { ...s.spawn, fast: fast || undefined } }
-            : s
-        )
-      }
-    })
-  }
-
-  /** Modelo/effort trocados NO CHAT: o slot guarda a escolha para a
-   *  remontagem não voltar ao executor antigo (par do setMissionSlotPermission
-   *  — o motor também grava do lado dele, por pane). */
-  function setMissionSlotExecutor(
-    missionId: string,
-    paneId: string,
-    patch: { model?: string; effort?: string }
-  ): void {
-    setMissionGuiSlots((prev) => {
-      const cur = prev[missionId]
-      if (!cur) return prev
-      return {
-        ...prev,
-        [missionId]: cur.map((s) =>
-          s.spawn.paneId === paneId ? { ...s, spawn: { ...s.spawn, ...patch } } : s
-        )
-      }
-    })
-  }
-
-  /**
-   * A CONTA DA CONVERSA (2.0): vale para o card da missão sem conta e para o
-   * menu do cabeçalho do chat. O main transplanta a conversa quando o CLI é o
-   * mesmo e MATA as sessões vivas (elas falavam pela conta antiga) — aqui os
-   * slots são descartados e o chat reabre já no seat novo.
-   */
-  async function chooseChatSeat(missionId: string, seatId: string): Promise<void> {
-    if (seatChangeInFlight.current) return
-    seatChangeInFlight.current = true
-    // Specs pedidas antes deste ponto pertencem à conta anterior.
-    missionGuiEpoch.current.invalidate(missionId)
-    setMissionGuiError((prev) => {
-      if (!prev[missionId]) return prev
-      const next = { ...prev }
-      delete next[missionId]
-      return next
-    })
-    setSeatBusy(seatId)
-    try {
-      const res = await missionGui.setChatSeat(projectId, missionId, seatId)
-      if (!res.ok) {
-        setMissionGuiError((prev) => ({
-          ...prev,
-          [missionId]: res.msg ?? 'não deu para escolher a conta desta conversa'
-        }))
-        return
-      }
-      for (const slot of missionGuiSlots[missionId] ?? []) dropGuiPane(slot.spawn.paneId)
-      setMissionGuiSlots((prev) => withoutMissionGuiSlots(prev, missionId))
-      setMissionNeedsSeat((prev) => {
-        const next = { ...prev }
-        delete next[missionId]
-        return next
-      })
-      setMissionGuiError((prev) => {
-        if (!prev[missionId]) return prev
-        const next = { ...prev }
-        delete next[missionId]
-        return next
-      })
-      await loadMissions(projectId)
-      // NÃO chamar openMissionGuiRole daqui: esta closure ainda enxerga os
-      // slots antigos e focaria o pane que o main acabou de matar. A remoção
-      // acima dispara o efeito canônico de slots vazios, que pede uma spec nova
-      // já resolvida para o seat novo.
-    } catch {
-      setMissionGuiError((prev) => ({
-        ...prev,
-        [missionId]: 'não deu para trocar a conta desta conversa'
-      }))
-    } finally {
-      setSeatBusy(null)
-      seatChangeInFlight.current = false
-    }
-  }
-
-  /** Fecha UMA conversa (revisor/ajudante). O chat do agente não fecha por
-   *  aqui: ele é a missão. */
-  function closeMissionGuiSlot(missionId: string, paneId: string): void {
-    dropGuiPane(paneId)
-    const rest = (missionGuiSlots[missionId] ?? []).filter((s) => s.spawn.paneId !== paneId)
-    setMissionGuiSlots((prev) => ({ ...prev, [missionId]: rest }))
-    setMissionGuiActive((prev) =>
-      prev[missionId] === paneId
-        ? { ...prev, [missionId]: rest[0]?.spawn.paneId ?? '' }
-        : prev
-    )
-  }
 
   // Missão saiu de VIVA (integrada/arquivada) com a aba dela aberta → volta para
   // ✦ geral. Sem isso a aba 🚀 desaparecia da fila e nenhuma aba ficava ativa:
@@ -845,7 +581,7 @@ export default function Board({ projectId }: Props): React.JSX.Element {
     // O toque é VISÍVEL: a conversa do agente vem para a frente antes de a
     // mensagem entrar (com um terminal no ar, o clique pareceria não fazer nada).
     setMissionTerm((prev) => ({ ...prev, [mission.id]: null }))
-    setMissionGuiActive((prev) => ({ ...prev, [mission.id]: paneId }))
+    focusMissionChat(mission.id, paneId)
     try {
       // messageId PRÓPRIO, cunhado pelo `guiItemIdentity`: é ele que dá
       // idempotência à entrega no main — uma repetição do MESMO envio nunca
@@ -927,13 +663,13 @@ export default function Board({ projectId }: Props): React.JSX.Element {
         tip: `Ver a conversa "${label}" desta missão`,
         onSelect: () => {
           setMissionTerm((prev) => ({ ...prev, [selMission.id]: null }))
-          setMissionGuiActive((prev) => ({ ...prev, [selMission.id]: slot.spawn.paneId }))
+          focusMissionChat(selMission.id, slot.spawn.paneId)
         },
         // O chat do AGENTE é a missão: ele não se fecha por aqui.
         onClose:
           slot.role === 'dev'
             ? undefined
-            : () => closeMissionGuiSlot(selMission.id, slot.spawn.paneId),
+            : () => chat.closeSlot(selMission.id, slot.spawn.paneId),
         closeTip: `Encerrar a conversa "${label}" (o worktree e os commits ficam)`
       })
     })
@@ -994,7 +730,7 @@ export default function Board({ projectId }: Props): React.JSX.Element {
         changing={seatBusy !== null}
         locked={directGui?.composerBusy ?? false}
         turnOpen={directGui?.status === 'working' || directGui?.status === 'waiting-you'}
-        onChange={(next) => void chooseChatSeat(selMission.id, next)}
+        onChange={(next) => void chat.chooseSeat(selMission.id, next)}
       />
     ) : undefined
 
@@ -1187,10 +923,10 @@ export default function Board({ projectId }: Props): React.JSX.Element {
                     missionType={missionTypeOf(missions.find((mission) => mission.id === mid))}
                     fast={slot.spawn.fast}
                     mcp={slot.spawn.mcp}
-                    onPermissionMode={(pm) => setMissionSlotPermission(mid, slot.spawn.paneId, pm)}
-                    onFastMode={(on) => setMissionSlotFast(mid, slot.spawn.paneId, on)}
+                    onPermissionMode={(pm) => chat.setPermission(mid, slot.spawn.paneId, pm)}
+                    onFastMode={(on) => chat.setFast(mid, slot.spawn.paneId, on)}
                     onExecutorChange={(patch) =>
-                      setMissionSlotExecutor(mid, slot.spawn.paneId, patch)
+                      chat.setExecutor(mid, slot.spawn.paneId, patch)
                     }
                     seats={seats}
                     seatId={slot.spawn.seatId}
@@ -1221,7 +957,7 @@ export default function Board({ projectId }: Props): React.JSX.Element {
                   hint="a conta manda no modelo e no limite gasto — dá para trocar depois, no cabeçalho do chat"
                   busySeatId={seatBusy}
                   error={missionGuiError[selMission.id]}
-                  onPick={(seatId) => void chooseChatSeat(selMission.id, seatId)}
+                  onPick={(seatId) => void chat.chooseSeat(selMission.id, seatId)}
                 />
               </div>
             )}
@@ -1244,14 +980,7 @@ export default function Board({ projectId }: Props): React.JSX.Element {
                   <span>// {missionGuiError[selMission.id]}</span>
                   <button
                     className="term-btn"
-                    onClick={() => {
-                      setMissionGuiError((prev) => {
-                        const next = { ...prev }
-                        delete next[selMission.id]
-                        return next
-                      })
-                      void openMissionGuiRole(selMission.id, 'dev')
-                    }}
+                    onClick={() => chat.retry(selMission.id)}
                   >
                     ⟳ tentar de novo
                   </button>

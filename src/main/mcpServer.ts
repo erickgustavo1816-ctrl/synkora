@@ -18,6 +18,7 @@ import {   join } from 'path'
 import type { Hub, PaneIdentity } from './hub'
 import type { PlanPatch } from './plans'
 import { registerPlanKit } from './planToolCatalog'
+import { unversionedToolRefusal, unversionedToolDescription } from './mcpApi/unversionedTools'
 import { registerReleaseMissionKit, type ReleaseMissionToolkit } from './releaseMissionTools'
 // Os números que o catálogo ENSINA ao agente saem do motor, nunca de uma
 // cópia à mão: teto de espera, teto de prompt e a trava anti-laço. Se o motor
@@ -85,6 +86,7 @@ const requireFromMain = createRequire(
 
 /** Implementada em index.ts — as tools delegam para o harness real. */
 export interface McpApi {
+  projectVersioning?: (projectId: string) => import('../shared/projectVersioning').ProjectVersioning
   hub: Hub
   // Planos: mesmo serviço para planejamento e Release.
   /** Todos os planos do universo com o progresso derivado das missões. */
@@ -502,12 +504,24 @@ function registerDelegationKit(server: McpServer, api: McpApi, identity: PaneIde
 }
 
 function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
+  const solo = api.projectVersioning?.(identity.projectId) === 'none'
   // SEM cacheHints de tools/list (CHECK 14, 2026-08-07): o hint de cache da
   // spec 2026-07-28 estava anunciado sem nenhum cliente validado usando — e
   // no mistério "runtime_control sumiu SÓ em pane resumado" um cliente
   // recém-atualizado honrando TTL de catálogo é gatilho plausível. Custo de
   // remover: um tools/list por boot de pane. Só re-anunciar com sonda.
   const server = new McpServer({ name: 'synkora', version: '1.0.0' })
+  if (solo) {
+    const setRequestHandler = server.server.setRequestHandler.bind(server.server)
+    server.server.setRequestHandler = ((method: string, handler: (...args: unknown[]) => unknown) => {
+      const guarded = method === 'tools/call' ? (...args: unknown[]) => {
+        const request = args[0] as { params?: { name?: string } }
+        const refusal = unversionedToolRefusal(request.params?.name ?? '')
+        return refusal ? { ...text(refusal), isError: true } : handler(...args)
+      } : handler
+      return (setRequestHandler as (method: string, handler: (...args: unknown[]) => unknown) => unknown)(method, guarded)
+    }) as typeof server.server.setRequestHandler
+  }
 
   // INSTRUMENTAÇÃO DO CATÁLOGO (CHECK 14): coleciona os nomes registrados
   // NESTA construção e avisa o app (dedupe por pane lá) — a caixa-preta
@@ -516,6 +530,14 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
   const servedTools: string[] = []
   const originalRegisterTool = server.registerTool.bind(server)
   server.registerTool = ((name: string, ...rest: unknown[]) => {
+    if (solo && rest[0] && typeof rest[0] === 'object') {
+      const config = rest[0] as { description?: string; inputSchema?: Record<string, unknown> }
+      if (config.description) config.description = unversionedToolDescription(name, config.description)
+      if (name === 'context_search' && config.inputSchema) {
+        delete config.inputSchema.versionId
+        config.inputSchema.scope = z.enum(['base', 'project']).optional()
+      }
+    }
     servedTools.push(name)
     const handler = rest[rest.length - 1]
     if (api.context && typeof handler === 'function') {
@@ -527,6 +549,15 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
   const finishCatalog = (): McpServer => {
     api.noteCatalogServed?.(identity, servedTools)
     return server
+  }
+  if (solo && (identity.role === 'gui-planner' || identity.role === 'gui-release' ||
+    identity.role === 'gui-delegator' && guiMissionRoleOf(identity.paneId) !== 'dev')) {
+    server.server.registerCapabilities({ tools: {} })
+    server.server.setRequestHandler('tools/list', () => ({ tools: [] }))
+    server.server.setRequestHandler('tools/call', () => ({
+      ...text('Esta conversa não está disponível neste projeto. Abra o chat de desenvolvimento da missão.'), isError: true
+    }))
+    return finishCatalog()
   }
 
   if (['gui-planner', 'gui-delegator', 'gui-release'].includes(identity.role)) {
@@ -639,14 +670,16 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
       server.registerTool(
         'mission_summary',
         {
-          description: 'Registra o resumo DESTA missão para o histórico da versão. Ao terminar o trabalho, escreva duas ou três frases curtas em linguagem leiga sobre o resultado entregue e salve aqui, antes de encerrar a conversa ou aguardar o ⇪ do dono. Atualize se o resultado mudar. Funciona também em projetos sem Git. Não conclui a missão nem autoriza integração.',
+          description: solo
+            ? 'Registra o resumo DESTA missão no histórico do projeto. Antes de dizer que o trabalho está pronto, salve duas ou três frases curtas em PT-BR sobre o resultado. Atualize se mudar. Quem finaliza a missão é o dono.'
+            : 'Registra o resumo DESTA missão para o histórico da versão. Ao terminar o trabalho, escreva duas ou três frases curtas em linguagem leiga sobre o resultado entregue e salve aqui, antes de encerrar a conversa ou aguardar o ⇪ do dono. Atualize se o resultado mudar. Não conclui a missão nem autoriza integração.',
           inputSchema: { summary: summarySchema }
         },
         async ({ summary }) => api.missionSummary
           ? text(api.missionSummary(identity, summary))
           : text('O registro de resumo ainda não está disponível. Reinicie o Synkora e repita mission_summary { summary }.')
       )
-      server.registerTool(
+      if (!solo) server.registerTool(
         'integration_status',
         {
           description:
@@ -658,7 +691,7 @@ function buildServer(api: McpApi, identity: PaneIdentity): McpServer {
             : text(INTEGRATION_ENGINE_OFF)
       )
 
-      server.registerTool(
+      if (!solo) server.registerTool(
         'integration_run',
         {
           description:

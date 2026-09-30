@@ -1,0 +1,172 @@
+/* A FOLHA DE PAPEL — o modal de decisão NÃO destrutiva (mockup aprovado:
+   docs/mockups/projeto-sem-versao-2026-09-30.html, `.sheet-modal`). O novo
+   universo herdava o filete vermelho do `.confirm-modal` (o de exclusão) por
+   acidente; aqui a moldura é a tinta de sempre. Vai por portal dentro do
+   `.overlay` da casa (global.css), que já escurece o fundo e sobe a folha.
+   Pele compartilhada: a confirmação de FINALIZAR a missão (cena 5) usa a
+   mesma folha. */
+
+.sheet-modal {
+  width: min(560px, 100%);
+  max-height: calc(100vh - 40px);
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 18px 20px;
+  background: var(--card);
+  border: 1px solid var(--ink);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.sm-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sm-kind {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+
+.sm-kind svg {
+  width: 14px;
+  height: 14px;
+}
+
+.sm-close {
+  margin-left: auto;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+
+.sm-close:hover {
+  background: var(--paper-2);
+  color: var(--ink);
+}
+
+.sm-close:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.sm-lead {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--ink);
+  text-wrap: pretty;
+}
+
+.sm-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--line-strong);
+}
+
+.sm-meta {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--ink-2);
+}
+
+.sheet-modal .btn svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+
+.sheet-modal .btn.tiny svg {
+  width: 13px;
+  height: 13px;
+}
+
+.sheet-modal button:focus-visible,
+.sheet-modal input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* os campos da folha */
+.sheet-modal .field-label {
+  display: block;
+  margin: 0 0 5px;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+
+.sheet-modal .field-label small {
+  font-size: inherit;
+  font-weight: 400;
+  letter-spacing: 0.06em;
+}
+
+.sheet-modal .text-input {
+  width: 100%;
+  padding: 9px 11px;
+  background: #fffdf6;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  color: var(--ink);
+  font: 700 14px/1.3 var(--mono);
+  outline: none;
+}
+
+.sheet-modal .text-input::placeholder {
+  color: var(--ink-3);
+  font-weight: 400;
+}
+
+.sheet-modal .text-input:focus {
+  border-color: var(--ink);
+}
+
+.sheet-modal .text-input.is-err {
+  border-color: var(--err);
+  box-shadow: 0 0 0 1px var(--err);
+}
+
+.sheet-modal .link-btn {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sheet-modal,
+  .sheet-modal * {
+    transition-duration: 1ms !important;
+    animation-duration: 1ms !important;
+  }
+}

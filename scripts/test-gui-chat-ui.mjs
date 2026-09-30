@@ -2113,10 +2113,13 @@ test('troca de seat reabre pelo efeito canônico, sem closure do pane morto', ()
     new URL('../src/renderer/src/components/Board.tsx', import.meta.url),
     'utf8'
   )
-  const start = board.indexOf('async function chooseChatSeat')
-  const end = board.indexOf('/** Fecha UMA conversa', start)
+  // A lógica dos slots de chat mora no hook compartilhado com a tela do
+  // projeto sem versionamento (2026-09-30); o Board só a consome.
+  const slots = readFileSync(new URL('../src/renderer/src/useMissionChatSlots.ts', import.meta.url), 'utf8')
+  const start = slots.indexOf('async function chooseChatSeat')
+  const end = slots.indexOf('/** Fecha UMA conversa', start)
   assert.ok(start >= 0 && end > start, 'função de troca não encontrada')
-  const body = board.slice(start, end)
+  const body = slots.slice(start, end)
   assert.doesNotMatch(body, /openMissionGuiRole\s*\(/u)
   assert.match(body, /withoutMissionGuiSlots\(prev, missionId\)/u)
   assert.match(body, /efeito canônico de slots vazios/u)
@@ -2129,8 +2132,8 @@ test('troca de seat reabre pelo efeito canônico, sem closure do pane morto', ()
   assert.match(missionIpc, /rememberedExecutor = remembered\?\.cli === seat\.cli/u)
   assert.match(missionIpc, /guiSessions\.forgetSession\(paneId\)/u)
   assert.match(missionIpc, /resetExecutor/u)
-  assert.match(board, /missionGuiEpoch\.current\.invalidate\(missionId\)/u)
-  assert.match(board, /useRef<Map<string, number>>/u, 'trava em voo precisa conhecer a geração')
+  assert.match(slots, /missionGuiEpoch\.current\.invalidate\(missionId\)/u)
+  assert.match(slots, /useRef<Map<string, number>>/u, 'trava em voo precisa conhecer a geração')
 })
 
 test('texto final conserva o item vivo até o revelador terminar', () => {

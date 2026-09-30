@@ -1,6 +1,7 @@
 import type { Mission, MissionStore } from './missions'
 import { guiMissionPaneId, missionTypeOf } from './guiMissionContracts'
 import { redactSensitiveText } from './securityRedaction'
+import { unversionedRefusal, type ProjectVersioning } from '../shared/projectVersioning'
 
 export const MISSION_SUMMARY_MAX = 600
 
@@ -12,6 +13,7 @@ interface SummaryIdentity {
 }
 
 interface MissionSummaryDeps {
+  projectVersioning?: (projectId: string) => ProjectVersioning
   missions: Pick<MissionStore, 'get' | 'update'>
   reconcile(mission: Mission): boolean
   changed(projectId: string): void
@@ -34,10 +36,11 @@ export function buildMissionSummaries(deps: MissionSummaryDeps) {
   }
 
   function save(identity: SummaryIdentity, input: unknown): SummaryResult {
+    const solo = deps.projectVersioning?.(identity.projectId) === 'none'
     const mission = ownMission(identity)
     if (!mission) return { ok: false, text: 'O resumo só pode ser registrado pelo chat de desenvolvimento da própria missão. Abra esse chat e use mission_summary { summary }.' }
     if (typeof input !== 'string' || !input.trim() || input.length > MISSION_SUMMARY_MAX) {
-      return { ok: false, text: `O resumo da missão ainda precisa ser registrado. ${summaryRecipe}` }
+      return { ok: false, text: `O resumo da missão ainda precisa ser registrado. ${solo ? 'Escreva até 600 caracteres em PT-BR sobre o resultado e salve com mission_summary { summary }.' : summaryRecipe}` }
     }
     const summary = redactSensitiveText(input.trim().replace(/\s+/gu, ' '))
     try {
@@ -46,10 +49,10 @@ export function buildMissionSummaries(deps: MissionSummaryDeps) {
       if (mission.summary !== summary) deps.audit(saved)
       // The mission is the durable source. Repeating the tool repairs a failed
       // version projection without changing completion or delivery timestamps.
-      const reconciled = saved.status !== 'concluida' || deps.reconcile(saved)
+      const reconciled = solo || saved.status !== 'concluida' || deps.reconcile(saved)
       deps.changed(saved.projectId)
       return reconciled
-        ? { ok: true, text: 'Resumo salvo na missão. Ele aparece abaixo da entrega na versão quando a missão é concluída.' }
+        ? { ok: true, text: solo ? 'Resumo salvo no histórico do projeto. Quem finaliza a missão é o dono.' : 'Resumo salvo na missão. Ele aparece abaixo da entrega na versão quando a missão é concluída.' }
         : { ok: false, text: 'O resumo foi salvo na missão, mas a cópia no histórico ainda está pendente. Repita mission_summary com o mesmo summary para concluir o registro.' }
     } catch {
       return { ok: false, text: 'Não confirmei o registro completo do resumo. Confira se o armazenamento do Synkora está disponível e repita mission_summary com o mesmo summary.' }
@@ -57,6 +60,7 @@ export function buildMissionSummaries(deps: MissionSummaryDeps) {
   }
 
   function prepareIntegration(identity: SummaryIdentity, summary?: string): SummaryResult {
+    if (deps.projectVersioning?.(identity.projectId) === 'none') return { ok: false, text: unversionedRefusal('integration') }
     const mission = ownMission(identity)
     return save(identity, summary ?? mission?.summary)
   }

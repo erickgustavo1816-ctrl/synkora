@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { CodexSession } from '../.tmp/codex-skill-signals-test/codexSession.js'
+import { CodexSession } from '../.tmp/codex-skill-signals-test/main/codexSession.js'
 import {
   codexSkillSignals,
   codexSkillsRoot,
   skillNameUnderSkillsRoot
-} from '../.tmp/codex-skill-signals-test/codexSkillSignals.js'
-import { GuiCodexAgentRegistry } from '../.tmp/codex-skill-signals-test/guiCodexAgents.js'
+} from '../.tmp/codex-skill-signals-test/main/codexSkillSignals.js'
+import { GuiCodexAgentRegistry } from '../.tmp/codex-skill-signals-test/main/guiCodexAgents.js'
 
 // O USO DE SKILL NO CODEX — as duas superfícies que a sonda de 2026-08-30 mediu
 // (`.synkora/reports/PROBE_SKILL_USE_2026-08-30.md`, capturas cruas em
