@@ -111,10 +111,11 @@ test('o Início: título vazio diz o que falta, Ctrl+Enter cria, e a recusa do m
   assert.equal(calls.length, 0, 'título vazio não cria nada')
   assert.equal(textOf(tree.root.findByProps({ role: 'alert' })), 'Dê um título para a missão.')
 
-  const title = tree.root.findByProps({ className: 'ss-title' })
+  const field = (name) => tree.root.find((n) => n.type !== undefined && String(n.props.className ?? '').split(' ').includes(name))
+  const title = field('ss-title')
   await act(async () => { title.props.onChange({ target: { value: '  Reescrever preços ' } }) })
   assert.equal(tree.root.findAll((n) => n.props.role === 'alert').length, 0, 'digitar apaga o aviso')
-  await act(async () => { tree.root.findByProps({ className: 'ss-goal' }).props.onChange({ target: { value: 'três planos' } }) })
+  await act(async () => { field('ss-goal').props.onChange({ target: { value: 'três planos' } }) })
   await act(async () => { form.props.onKeyDown({ key: 'Enter', ctrlKey: true, preventDefault() {} }) })
   assert.deepEqual(calls, [{ title: 'Reescrever preços', goal: 'três planos', direct: true, missionType: 'dev' }])
 
@@ -287,4 +288,24 @@ test('a tela do modo hospeda os slots de chat e mantém a Missão montada fora d
   const board = read('src/renderer/src/components/Board.tsx')
   assert.match(board, /useMissionChatSlots\(\{/u)
   assert.doesNotMatch(board, /missionGui\s*\.spec\(|missionGui\.setChatSeat\(/u, 'o Board não abre conversa por fora do hook')
+})
+
+// Reprovado pelo dono (2026-09-30): o contorno do destino do SynVoice virava
+// um retângulo laranja colado no texto do título, e o filete da recém-
+// finalizada encostava na data. A folha mostra o foco pela borda; o filete
+// mora no respiro à esquerda da coluna.
+test('a folha de Início mostra o foco pela borda e o filete não encosta no texto', () => {
+  const start = read('src/renderer/src/components/SoloProjectStart.tsx')
+  assert.match(start, /className="ss-title synvoice-quiet"/u)
+  assert.match(start, /className="ss-goal synvoice-quiet"/u)
+  const global = read('src/renderer/src/global.css')
+  assert.match(global, /input\.synvoice-target:not\(\[type='password'\]\):not\(\.gui-input\):not\(\.synvoice-quiet\)/u)
+  assert.match(global, /textarea\.synvoice-target:not\(\.gui-input\):not\(\.synvoice-quiet\)/u)
+
+  const css = read('src/renderer/src/components/SoloProject.css')
+  assert.match(css, /\.ss-sheet:focus-within\s*\{[^}]*border-color/su, 'o foco aparece na borda da folha')
+  const edge = css.match(/\.log-list li\.just::before\s*\{[^}]*\}/su)?.[0] ?? ''
+  assert.match(edge, /left:\s*-\d+px/u, 'o filete fica fora da coluna de texto')
+  assert.doesNotMatch(css, /\.log-row\s*\{[^}]*box-shadow/su)
+  assert.doesNotMatch(css, /li\.just \.log-row\s*\{[^}]*box-shadow/su, 'nada de filete dentro da linha')
 })

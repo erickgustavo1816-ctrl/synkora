@@ -299,12 +299,24 @@
   transform: translateX(2px);
 }
 /* a missão que ACABOU de ser finalizada chega no topo com o filete de 2px do
-   acento, que some sozinho — o sinal de "foi para cá" */
+   acento, que some sozinho — o sinal de "foi para cá". O filete mora no
+   respiro à ESQUERDA da coluna, nunca dentro da linha: colado na data ele
+   parecia parte do texto (reprovado pelo dono, 2026-09-30). */
+.log-list li {
+  position: relative;
+}
 .log-list li.just {
   animation: solo-log-in 420ms var(--ease-out, ease) both;
 }
-.log-list li.just .log-row {
-  box-shadow: inset 2px 0 0 var(--accent);
+.log-list li.just::before {
+  content: '';
+  position: absolute;
+  left: -12px;
+  top: 10px;
+  bottom: 10px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--accent);
   animation: solo-log-edge 2.4s ease 600ms both;
 }
 @keyframes solo-log-in {
@@ -315,7 +327,7 @@
 }
 @keyframes solo-log-edge {
   to {
-    box-shadow: inset 2px 0 0 transparent;
+    opacity: 0;
   }
 }
 
@@ -694,7 +706,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .log-list li.just,
-  .log-list li.just .log-row,
+  .log-list li.just::before,
   .solo-finish-btn.is-ready {
     animation-duration: 1ms;
   }

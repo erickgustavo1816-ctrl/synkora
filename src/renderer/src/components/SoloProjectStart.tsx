@@ -97,7 +97,7 @@ export default function SoloProjectStart({
             <span className="ss-label">Título</span>
             <input
               ref={titleRef}
-              className="ss-title"
+              className="ss-title synvoice-quiet"
               type="text"
               value={title}
               placeholder="ex.: reescrever a seção de preços"
@@ -120,7 +120,7 @@ export default function SoloProjectStart({
               Objetivo <small>(opcional) · o agente lê antes de começar</small>
             </span>
             <textarea
-              className="ss-goal"
+              className="ss-goal synvoice-quiet"
               rows={2}
               value={goal}
               placeholder="ex.: três planos lado a lado, sem o desconto anual"
