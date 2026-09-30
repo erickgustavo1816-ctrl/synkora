@@ -3,6 +3,8 @@ import type { WorkspacePanelId } from '../workspacePanels'
 export default function WorkspaceIcon({ name }: {
   name: WorkspacePanelId | 'menu' | 'sidebar' | 'expand' | 'restore' | 'close' | 'upload' | 'terminal' | 'review' | 'archive' | 'check' | 'discard'
     | 'play' | 'plus' | 'branch' | 'chevron' | 'arrow' | 'ask' | 'queue' | 'plan'
+    | 'back' | 'reload' | 'code' | 'popout' | 'redock' | 'width' | 'bolt' | 'alert' | 'info'
+    | 'lock' | 'download' | 'tabs' | 'frozen' | 'gone'
 }): React.JSX.Element {
   const paths: Record<typeof name, React.ReactNode> = {
     browser: <><circle cx="10" cy="10" r="7" /><ellipse cx="10" cy="10" rx="3" ry="7" /><path d="M3 10h14" /></>,
@@ -29,7 +31,21 @@ export default function WorkspaceIcon({ name }: {
     arrow: <path d="M4 10h12m-4.5-4.5L16 10l-4.5 4.5" />,
     ask: <><circle cx="10" cy="10" r="7" /><path d="M7.9 7.9a2.2 2.2 0 1 1 3 2c-.6.3-.9.7-.9 1.3v.4M10 14.2v.1" /></>,
     queue: <><circle cx="10" cy="10" r="7" /><path d="M10 6v4l2.6 1.6" /></>,
-    plan: <><path d="M5 3.5h7l3 3v10H5z" /><path d="M8 10h5M8 13h3" /></>
+    plan: <><path d="M5 3.5h7l3 3v10H5z" /><path d="M8 10h5M8 13h3" /></>,
+    back: <path d="M16 10H4m4.5-4.5L4 10l4.5 4.5" />,
+    reload: <><path d="M16 10a6 6 0 1 1-1.76-4.24" /><path d="M16.2 3.2v3.3h-3.3" /></>,
+    code: <path d="m7 6-4 4 4 4m6-8 4 4-4 4" />,
+    popout: <><path d="M11.5 3.5h5v5m0-5-7 7" /><path d="M8.5 4.5h-4v11h11v-4" /></>,
+    redock: <><path d="M16.5 3.5l-7 7m0-5v5h5" /><path d="M8.5 4.5h-4v11h11v-4" /></>,
+    width: <path d="M3 10h14M6.5 6.5 3 10l3.5 3.5M13.5 6.5 17 10l-3.5 3.5" />,
+    bolt: <path d="M11.4 2.4 4.6 11.2h5l-1 6.4 6.8-8.8h-5z" fill="currentColor" stroke="none" />,
+    alert: <><circle cx="10" cy="10" r="7" /><path d="M10 6.4v4.4M10 13.5v.1" /></>,
+    info: <><circle cx="10" cy="10" r="7" /><path d="M10 9.2v4.4M10 6.5v.1" /></>,
+    lock: <><rect x="4.5" y="9" width="11" height="8" rx="1.5" /><path d="M7 9V6.5a3 3 0 0 1 6 0V9" /></>,
+    download: <path d="M10 3v10m-4-4 4 4 4-4M3.5 16.5h13" />,
+    tabs: <><rect x="2.5" y="6" width="15" height="11" rx="1.5" /><path d="M2.5 9.5h15M6 6V3.5h8V6" /></>,
+    frozen: <><rect x="3" y="3" width="14" height="14" rx="2" /><path d="M8 7v6m4-6v6" /></>,
+    gone: <><rect x="2.5" y="4" width="15" height="12" rx="1.5" /><path d="m7.5 8.5 5 5m0-5-5 5" /></>
   }
   return <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>
 }

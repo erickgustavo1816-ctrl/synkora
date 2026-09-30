@@ -27,7 +27,7 @@
  * primeiro, e IMPLEMENTADO em `./browserPopoutWindow`: assim o motor continua
  * sem uma linha de Electron e o gate injeta pop-out de mentira.
  */
-import { BrowserWindow, WebContentsView, session } from 'electron'
+import { BrowserWindow, WebContentsView, session, webContents } from 'electron'
 import type { WebContents } from 'electron'
 import type { BrowserPanelRect } from './browserPane'
 import { attachBrowserSurface, browserSurfaceOwner, browserSurfaceWindow, createBrowserBackgroundSurface, detachBrowserSurface } from './browserBackgroundSurface'
@@ -47,10 +47,16 @@ export interface BrowserViewHandle {
   readonly webContents: WebContents
 }
 
+/** O que o pedido de permissão diz além do nome — só o que muda a frase do
+ *  dono: QUAIS dispositivos um `media` quer (câmera, microfone ou os dois). */
+export interface BrowserPermissionDetails {
+  mediaTypes?: readonly string[]
+}
+
 /** Ganchos que a SESSION do projeto dispara de volta para o motor. */
 export interface BrowserSessionHooks {
   onDownloadBlocked(filename: string, url: string, webContentsId: number | null): void
-  onPermissionDenied(permission: string, webContentsId: number | null): void
+  onPermissionDenied(permission: string, webContentsId: number | null, details?: BrowserPermissionDetails): void
 }
 
 export interface BrowserWindowHooks {
@@ -220,14 +226,23 @@ export function electronBrowserViewHost(window: () => BrowserWindow | null): Bro
       const ses = session.fromPartition(partition)
       // NEGA TUDO. Sem exceção e sem card de permissão para o dono: mic,
       // câmera, geo, notificações, clipboard-read, midi, serial, usb, hid.
-      ses.setPermissionRequestHandler((wc, permission, callback) => {
-        hooks.onPermissionDenied(permission, wc && !wc.isDestroyed() ? wc.id : null)
+      ses.setPermissionRequestHandler((wc, permission, callback, details) => {
+        const mediaTypes = details && 'mediaTypes' in details ? details.mediaTypes : undefined
+        hooks.onPermissionDenied(permission, wc && !wc.isDestroyed() ? wc.id : null, mediaTypes ? { mediaTypes } : undefined)
         callback(false)
       })
       ses.setPermissionCheckHandler(() => false)
       ses.setDevicePermissionHandler(() => false)
-      ses.setDisplayMediaRequestHandler((_request, callback) => {
-        hooks.onPermissionDenied('display-capture', null)
+      ses.setDisplayMediaRequestHandler((request, callback) => {
+        // A aba vem do frame que pediu: sem ela a nota não acha a missão e o
+        // dono nunca sabe que a página quis capturar a tela.
+        let wc: WebContents | undefined
+        try {
+          wc = request.frame ? webContents.fromFrame(request.frame) : undefined
+        } catch {
+          // frame já navegado ou destruído — o diário registra sem missão
+        }
+        hooks.onPermissionDenied('display-capture', wc && !wc.isDestroyed() ? wc.id : null)
         // objeto vazio = pedido cancelado
         callback({})
       })

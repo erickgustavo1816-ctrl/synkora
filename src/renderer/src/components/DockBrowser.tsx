@@ -10,11 +10,14 @@ import {
 } from 'react'
 import { useStore } from '../store'
 import { WorkspacePanelVisibility } from '../workspace/WorkspacePanelContext'
+import WorkspaceIcon from '../workspace/WorkspaceIcon'
 import BrowserChrome, {
+  BrowserMessage,
+  BrowserNoticeStrip,
   BrowserPageBands,
   BrowserPageOverlay,
   browserApi,
-  useBrowserHint,
+  useBrowserFailureWait,
   useBrowserRunner
 } from './BrowserChrome'
 import {
@@ -22,6 +25,7 @@ import {
   BROWSER_PAGE_KEYBOARD_STEP,
   EMPTY_BROWSER_PANEL,
   activeBrowserTab,
+  browserAgentDriving,
   browserIsPopout,
   browserPageFraction,
   browserPageHeight,
@@ -63,12 +67,9 @@ import { BROWSER_DOCK_CONTEXT_CHANGED } from '../browserDockVisibility'
 // componente, e por isso o efeito de geometria reporta `visible:false` na
 // própria faxina: a saída é declarada, não deduzida.
 //
-// O QUE FICOU AQUI DEPOIS DO ⧉ (P2 do pop-out, 2026-08-29): só o que é do DOCK
-// — a fração da coluna, a alça, a medida contra o trilho, o relato de geometria
-// e o RECIBO de quando a página está destacada. Abas, barra e linha do pé
-// moraram neste arquivo até hoje e agora são do `BrowserChrome`, porque a janela
-// destacada usa exatamente as mesmas (e um instrumento copiado vira dois
-// instrumentos na terceira correção).
+// Aqui fica só o que é do DOCK — a fração da coluna, a alça, a medida contra o
+// trilho, o relato de geometria e o RECIBO de quando a página está destacada.
+// Abas, barra e avisos são do `BrowserChrome`, que a janela destacada também usa.
 //
 // Par declarado: `src/preload/index.ts` (api.browser) ↔ `src/main/ipc/browser.ts`.
 
@@ -243,7 +244,7 @@ export default function DockBrowser({
   visible: boardVisible
 }: {
   missionId: string
-  /** A SESSÃO (cookies/logins) é do PROJETO — é o que a linha do pé conta. */
+  /** a altura da página é preferência do PROJETO */
   projectId: string
   state: BrowserPanelState
   engine: BrowserEngineState
@@ -262,21 +263,26 @@ export default function DockBrowser({
   const popout = browserIsPopout(state)
 
   // Recado do motor para o gesto que o dono acabou de fazer (recusa do teto,
-  // missão sem worktree…) e a barra de status do chrome: os dois hosts do
-  // browser usam os mesmos hooks, e é o host quem tem onde mostrar.
+  // missão sem worktree…): os dois hosts usam o mesmo executor, e a faixa de
+  // avisos do chrome o mostra.
   const { notice, setNotice, run } = useBrowserRunner()
-  const { hint, hints } = useBrowserHint()
   // O que a MEDIDA concluiu: com a página escondida (overlay do host por cima,
-  // seção fora de vista) o retângulo vira superfície falante em vez de um
-  // buraco escuro sem explicação.
+  // seção fora de vista, aba em erro) o retângulo vira superfície falante em
+  // vez de um buraco escuro sem explicação.
   const [painted, setPainted] = useState(false)
+  // VARIANTE B: aba à vista em erro = página nativa ESCONDIDA (ela seria um
+  // branco mudo) e o cartão de erro no retângulo — até o dono escolher ESPERAR
+  // a página travada. Ref porque a medida é uma closure do efeito de geometria.
+  const { failureShown, wait } = useBrowserFailureWait(state)
+  const failureShownRef = useRef(failureShown)
+  failureShownRef.current = failureShown
 
   // ————— ALTURA DA PÁGINA: a fatia do trilho que o dono escolheu —————
   //
   // A altura era um `clamp()` do CSS com teto de 460px — travada, sem gesto e
   // sem adaptação (a reprovação de 2026-08-29). Agora ela é uma FRAÇÃO do
   // trilho, guardada por PROJETO: encolher a janela reescala a página junto, e
-  // a alça do pé ajusta a fatia. As contas moram todas no modelo puro.
+  // a alça embaixo da página ajusta a fatia. As contas moram no modelo puro.
   const pageKey = useMemo(() => browserPageStorageKey(projectId), [projectId])
   const [fraction, setFraction] = useState(() =>
     readBrowserPageFraction(typeof window === 'undefined' ? null : window.localStorage, pageKey)
@@ -623,7 +629,7 @@ export default function DockBrowser({
       if (stopped) return
       const box = browserRect(el.getBoundingClientRect(), 'inward')
       lastRectRef.current = box
-      if (!visible || !elementIsPainted(el)) {
+      if (!visible || failureShownRef.current || !elementIsPainted(el)) {
         report(mission, box, false)
         return
       }
@@ -684,6 +690,10 @@ export default function DockBrowser({
     // é o TRILHO que muda de tamanho, e a página precisa acompanhar quadro a
     // quadro em vez de esperar o reconciliador.
     for (const node of clips) sizes.observe(node)
+    // O PAINEL inteiro também: a faixa de avisos mora ACIMA da página, e no
+    // trilho legado (página de altura fixa) um aviso EMPURRA o retângulo sem
+    // mudar o tamanho dele — só o do painel.
+    if (rootRef.current) sizes.observe(rootRef.current)
 
     // ————— AS IRMÃS (o "pulo atrasado", medido) —————
     //
@@ -768,40 +778,29 @@ export default function DockBrowser({
     // ele está (o ResizeObserver morreu junto com o nó anterior).
   }, [missionId, report, measureRail, popout, visible, forceReport])
 
-  // Três mudanças que NENHUM observador de tamanho enxerga:
+  // Mudanças que NENHUM observador de tamanho enxerga:
   //  · o trilho saiu/voltou de vista (o Board mantém o dock montado);
-  //  · a tira de abas ganhou/perdeu uma linha e EMPURROU o retângulo (a caixa
-  //    não muda de tamanho, só de lugar);
-  //  · a view acabou de NASCER e precisa ouvir a geometria de novo — o dedupe
-  //    teria calado a repetição, e o main não pode adivinhar o retângulo.
+  //  · a tira de abas mudou e EMPURROU o retângulo (lugar, não tamanho);
+  //  · a view acabou de NASCER e precisa ouvir a geometria de novo;
+  //  · a aba à vista caiu em erro, voltou ou o dono escolheu ESPERAR (a página
+  //    troca de lugar com o cartão).
   useLayoutEffect(() => {
     forceReport()
-  }, [forceReport, visible, state.alive, state.tabs.length])
-
-  // ————— gestos do chrome —————
-  const openBrowser = useCallback((): void => {
-    run((api) => api.newTab(missionId))
-    // Quem abriu o browser quer digitar um endereço: o foco já cai na barra.
-    urlRef.current?.focus()
-  }, [missionId, run])
+  }, [forceReport, visible, state.alive, state.tabs.length, failureShown])
 
   if (engine === 'missing') {
     return (
       <div className="dock-browser">
-        <span className="dock-browser-notice">// {BROWSER_NO_API}</span>
+        <BrowserMessage text={BROWSER_NO_API} />
       </div>
     )
   }
 
   // ————— O RECIBO: a página está DESTACADA —————
   //
-  // "No dock fica o RECIBO: destacado — trazer de volta" (design §fluxo). Com a
-  // página numa janela própria, repetir aqui a tira de abas e a barra de
-  // endereço criaria um SEGUNDO painel de controle da mesma página — duas barras
-  // de endereço para uma página só, e nenhuma das duas com a página embaixo. O
-  // que fica é o cartão quieto: onde ela está, o que ela tem, e as DUAS portas
-  // de volta. Papel (não o painel escuro) porque não há página nenhuma aqui —
-  // um retângulo preto vazio prometeria uma que está em outra janela.
+  // Repetir aqui a tira e a barra criaria um SEGUNDO painel de controle da mesma
+  // página, sem a página embaixo. Fica o cartão quieto: onde ela está, o que ela
+  // tem, e as DUAS portas de volta. Papel, porque não há página nenhuma aqui.
   if (popout) {
     const awayTab = activeBrowserTab(state)
     const awayDetail = awayTab
@@ -811,58 +810,45 @@ export default function DockBrowser({
       <div className="dock-browser">
         <div className="dock-browser-shell dock-browser-away">
           <span className="dock-browser-away-head">
-            <i className="dock-browser-away-mark" aria-hidden="true">
-              ⧉
-            </i>
+            <WorkspaceIcon name="popout" />
             destacado numa janela própria
           </span>
           <span className="dock-browser-away-fine">{awayDetail}</span>
+          {browserAgentDriving(state) && (
+            <span className="dock-browser-away-fine dock-browser-away-driving">
+              <WorkspaceIcon name="bolt" />o agente segue dirigindo a página destacada
+            </span>
+          )}
           <div className="dock-browser-away-acts">
-            {/* FOCAR: o ⧉ do motor é idempotente de propósito — com a missão já
-                destacada ele FOCA a janela em vez de abrir uma segunda
-                (`browserPane.popOut`, §P1). É por isso que a porta de trazer a
-                janela para a frente é o MESMO verbo. */}
+            {/* FOCAR: o ⧉ do motor é idempotente — com a missão já destacada ele
+                FOCA a janela em vez de abrir uma segunda. */}
             <button
               type="button"
               className="dock-browser-away-btn"
+              title="traz a janela do browser para a frente"
               onClick={() => run((api) => api.popOut(missionId))}
-              {...hints('traz a janela do browser para a frente')}
             >
               focar a janela
             </button>
             <button
               type="button"
               className="dock-browser-away-btn on"
+              title="a página volta para este painel e a janela fecha"
               onClick={() => run((api) => api.dockBack(missionId))}
-              {...hints('a página volta para este painel e a janela fecha')}
             >
               trazer de volta
             </button>
           </div>
-          {/* A mesma linha do pé do instrumento: é onde as duas frases acima
-              aparecem no hover E no foco, e onde o ⚡ continua contando que o
-              agente está dirigindo — a página destacada segue sendo dele. */}
-          <div className="dock-browser-foot">
-            {state.agentDriving && (
-              <span
-                className="dock-browser-driving"
-                data-tip="O agente está usando este browser agora, na janela destacada. Você pode assumir quando quiser: a página recebe o seu mouse e o seu teclado direto, sem trava nenhuma."
-              >
-                <i className="dock-browser-driving-dot" aria-hidden="true" />
-                <b>⚡</b> agente dirigindo
-              </span>
-            )}
-            {hint ? (
-              <span className="dock-browser-hint">{hint}</span>
-            ) : (
-              <span className="dock-browser-session">o X da janela também reencaixa</span>
-            )}
-          </div>
+          <span className="dock-browser-away-fine">o X da janela também reencaixa</span>
+          <BrowserNoticeStrip
+            missionId={missionId}
+            state={state}
+            error={error}
+            notice={notice}
+            notify={setNotice}
+            run={run}
+          />
         </div>
-
-        {state.notice && <span className="dock-browser-notice">// {state.notice.text}</span>}
-        {error && <span className="dock-browser-notice stale">// {error}</span>}
-        {notice && <span className="dock-browser-notice">// {notice}</span>}
       </div>
     )
   }
@@ -873,64 +859,54 @@ export default function DockBrowser({
       className={`dock-browser${dragging ? ' is-dragging' : ''}`}
       style={pageStyle}
     >
-      {/* O INSTRUMENTO (H7, reprovação de 2026-08-29: "ta estranho esse browser
-          flutuando… ta no vale da estranheza"). Abas, barra, página, alça e pé
-          são UM corpo com UMA borda e UM raio; as costuras de dentro são fio de
-          cabelo. O corpo e o chrome moram no `BrowserChrome` — a janela
-          destacada usa os mesmos. O que entra aqui como `children` é o que é DO
-          DOCK: o retângulo medido (com o mesmo `ref` de sempre) e a alça. */}
+      {/* O INSTRUMENTO (H7): abas, barra, avisos, página e alça são UM corpo
+          com UMA borda e UM raio. O que entra como `children` é o que é DO
+          DOCK: o retângulo medido e a alça. */}
       <BrowserChrome
         missionId={missionId}
-        projectId={projectId}
         state={state}
-        hint={hint}
-        hints={hints}
         run={run}
+        notice={notice}
         notify={setNotice}
+        error={error}
         urlRef={urlRef}
         tools={
-          /* ⧉ DESTACAR — "tirar ele dali e desfixar, como o microfone que eu
-             clico e ele sai" (ordem do dono, 2026-08-29). A MESMA página salta
-             para uma janela própria: nada recarrega, o agente nem percebe.
-             Desabilitado sem página aberta porque é o que o motor responderia
-             — e a frase do pé ensina a saída em vez de deixar o clique mudo. */
+          /* ⧉ DESTACAR — "tirar ele dali e desfixar, como o microfone" (dono,
+             2026-08-29): a MESMA página salta para uma janela própria, sem
+             recarregar. */
           <button
             type="button"
             className="dock-browser-btn"
             disabled={!state.alive}
             aria-label="destacar o browser numa janela própria"
-            onClick={() => run((api) => api.popOut(missionId))}
-            {...hints(
+            title={
               state.alive
                 ? 'destacar numa janela própria · o X dela reencaixa'
                 : 'abra uma página (+) antes de destacar'
-            )}
+            }
+            onClick={() => run((api) => api.popOut(missionId))}
           >
-            ⧉
+            <WorkspaceIcon name="popout" />
           </button>
         }
       >
-        {/* O RETÂNGULO. Vazio por contrato: a view nativa compõe por cima dele.
-            O que está pintado aqui só aparece quando ela NÃO está — e então diz
-            por quê. Painel escuro (família .term-window) porque é isso que a
-            página vai ser: a única superfície não-papel do dock. */}
+        {/* O RETÂNGULO. Vazio por contrato: a view nativa compõe por cima dele,
+            e o que está pintado aqui só aparece quando ela NÃO está. */}
         <div ref={pageRef} className={`dock-browser-page${state.alive ? ' live' : ''}`}>
-          {/* As faixas da MOLDURA DE DISPOSITIVO: com a largura pedida cabendo
-              no painel, a view fica em tamanho real e centralizada, e isto marca
-              onde ela começa e termina. */}
           <BrowserPageBands state={state} painted={painted} />
           <BrowserPageOverlay
+            missionId={missionId}
             state={state}
             painted={painted}
-            hints={hints}
-            onOpen={openBrowser}
+            failureShown={failureShown}
+            onWait={wait}
+            run={run}
+            urlRef={urlRef}
           />
         </div>
 
-        {/* A ALÇA. Mora na borda de BAIXO da página, entre ela e a barra de
-            status — o lugar da divisória no dock do Claude Code que o dono
-            apontou como referência. Ela é um `separator` de verdade: anuncia
-            valor, mínimo e máximo, e o teclado a move como o mouse. */}
+        {/* A ALÇA (trilho legado): um `separator` de verdade — anuncia valor,
+            mínimo e máximo, e o teclado a move como o mouse. */}
         <div
           className="dock-browser-grip"
           role="separator"
@@ -941,21 +917,13 @@ export default function DockBrowser({
           aria-valuemax={pageRange.max}
           aria-valuenow={pageHeight}
           aria-valuetext={`${pageHeight} pixels`}
+          title="altura da página · arraste ou use ↑ ↓"
           onPointerDown={onGripPointerDown}
           onKeyDown={onGripKeyDown}
-          {...hints('altura da página · arraste ou use ↑ ↓')}
         >
           <i className="dock-browser-grip-line" aria-hidden="true" />
         </div>
       </BrowserChrome>
-
-      {/* A VOZ DO MOTOR. Download barrado, página que caiu, teto de abas: a
-          nota viaja dentro do state (durável, com carimbo), então ela aparece
-          mesmo que o painel só tenha sido aberto depois do fato. Vem primeiro
-          — é o que o dono não tem como descobrir de outro jeito. */}
-      {state.notice && <span className="dock-browser-notice">// {state.notice.text}</span>}
-      {error && <span className="dock-browser-notice stale">// {error}</span>}
-      {notice && <span className="dock-browser-notice">// {notice}</span>}
     </div>
   )
 }

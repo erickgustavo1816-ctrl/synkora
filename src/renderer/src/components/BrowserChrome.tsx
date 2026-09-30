@@ -1,54 +1,61 @@
 import {
   useCallback,
+  useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type CSSProperties,
   type ReactNode,
   type RefObject
 } from 'react'
+import WorkspaceIcon from '../workspace/WorkspaceIcon'
 import {
   BROWSER_NO_API,
   BROWSER_TAB_CAP,
-  BROWSER_VIEWPORT_CHOICES,
   activeBrowserTab,
+  activeBrowserTabFailure,
+  browserFailureIdentity,
+  browserPageHidden,
+  browserTabFailureTitle,
   browserTabLabel,
   browserTabOwnerPhrase,
   browserTabOwnerTag,
+  browserTabSentence,
+  browserTabTitle,
   browserViewportBand,
-  browserViewportHint,
   browserViewportIsCustom,
   browserViewportLabel,
-  browserViewportNote,
   browserViewportOf,
+  browserViewportOptionLabel,
+  browserViewportOptions,
+  browserViewportShortfall,
+  browserViewportTitle,
+  liveBrowserWait,
   readBrowserAck,
+  readViewportMode,
   tabCapNotice,
   trimUrlInput
 } from '../dockBrowserModel'
-import type { BrowserPanelState, SynkoraApi } from '../../../preload/index'
+import {
+  BROWSER_NOTICE_ACTION_WORDS,
+  browserFailureLook,
+  browserNoticeRows,
+  liveNoticeDismissals,
+  type BrowserNoticeRow
+} from '../browserNoticePresentation'
+import type { BrowserPanelState, BrowserTab, SynkoraApi } from '../../../preload/index'
+import './BrowserChrome.css'
+import './BrowserNotices.css'
 
-// O CHROME DO INSTRUMENTO — a tira de abas, a barra e a linha do pé que os DOIS
-// hosts do browser da missão usam (fatia P2 do
-// `.synkora/reports/DESIGN_BROWSER_POPOUT_2026-08-29.md`).
+// O CHROME DO INSTRUMENTO — abas, barra, faixa de avisos e o que se pinta no
+// retângulo da página, comum aos DOIS hosts do browser da missão (o painel do
+// dock e a janela destacada): um instrumento copiado vira dois na terceira
+// correção. O desenho é o `docs/mockups/browser-chrome-2026-09-29.html`.
 //
-// Por que este arquivo existe: com o ⧉ a mesma página passou a morar em dois
-// lugares — o painel do dock (`DockBrowser.tsx`) e a janela própria
-// (`BrowserPopout.tsx`). O que muda entre eles é só a MOLDURA e a GEOMETRIA
-// (fração da coluna + alça no dock; a janela inteira no pop-out); abas, setas,
-// endereço, devtools e barra de status são o MESMO instrumento, e um instrumento
-// copiado em dois arquivos vira dois instrumentos diferentes na terceira
-// correção.
-//
-// A LEI DO H7 CONTINUA VALENDO AQUI (reprovação do dono, 2026-08-29: "ta
-// estranho esse browser flutuando… ta no vale da estranheza"): UM corpo
-// (`.dock-browser-shell`) com UMA borda e UM raio, costuras de fio de cabelo por
-// dentro, e NADA de caixa-dentro-de-caixa. Por isso o `children` deste
-// componente entra ENTRE a barra e a linha do pé: o retângulo da página é uma
-// FAIXA do mesmo corpo, nunca um cartão próprio.
-//
-// SEM `data-tip` (a divergência declarada da H3): o tooltip da casa nasce 7px
-// abaixo do que se aponta e a `WebContentsView` nativa o engoliria inteiro.
-// Cada controle escreve sua frase na LINHA DO PÉ, que mora ABAIXO da página e
-// aparece no hover E no foco.
+// A lei que manda aqui: NADA que aparece por causa do MOUSE muda a altura da
+// página. Dica é `title` nativo — o Windows o desenha POR CIMA da
+// `WebContentsView`, que engoliria um tooltip do DOM —, e recado é linha da
+// faixa, entre a barra e a página, que só existe enquanto há o que dizer.
 //
 // Par declarado: `src/preload/index.ts` (api.browser) ↔ `src/main/ipc/browser.ts`.
 
@@ -58,37 +65,8 @@ export function browserApi(): SynkoraApi['browser'] | null {
 }
 
 /** O que uma alavanca do chrome faz com o motor. O host injeta o executor
- *  (`useBrowserRunner`) porque é ELE quem tem onde mostrar a recusa. */
+ *  (`useBrowserRunner`) porque é ELE quem guarda o recado da recusa. */
 export type BrowserRunner = (action: (api: SynkoraApi['browser']) => Promise<unknown>) => void
-
-/** Ligação de um controle à barra de status: hover E foco, sempre juntos. */
-export interface BrowserHintBinding {
-  onMouseEnter: () => void
-  onMouseLeave: () => void
-  onFocus: () => void
-  onBlur: () => void
-}
-
-export type BrowserHintBinder = (text: string) => BrowserHintBinding
-
-/**
- * A BARRA DE STATUS: a frase do controle sob o cursor OU sob o foco. Mora num
- * hook porque os dois hosts precisam do mesmo par (o estado e o ligador) — o
- * dock ainda liga a alça, e o pop-out liga o reencaixe.
- */
-export function useBrowserHint(): { hint: string | null; hints: BrowserHintBinder } {
-  const [hint, setHint] = useState<string | null>(null)
-  const hints = useCallback(
-    (text: string): BrowserHintBinding => ({
-      onMouseEnter: () => setHint(text),
-      onMouseLeave: () => setHint((current) => (current === text ? null : current)),
-      onFocus: () => setHint(text),
-      onBlur: () => setHint((current) => (current === text ? null : current))
-    }),
-    []
-  )
-  return { hint, hints }
-}
 
 /**
  * O EXECUTOR das alavancas + o recado do motor para o gesto que o dono acabou de
@@ -112,12 +90,8 @@ export function useBrowserRunner(): {
     try {
       pending = action(api)
     } catch (cause: unknown) {
-      // VERBO QUE AINDA NÃO EXISTE no preload EM EXECUÇÃO. Caso real desta
-      // rodada: o ⧉ chega ao app do dono por HMR, mas `api.browser.popOut` só
-      // existe no preload NOVO — a chamada joga um `TypeError` na hora, sem
-      // promessa nenhuma para o `.catch` de baixo pegar. Sem esta cerca o
-      // clique não faria nada e não diria nada, que é a definição de beco sem
-      // saída. A recusa nomeia a receita: reiniciar o app.
+      // Verbo que o preload EM EXECUÇÃO ainda não tem (chegou por HMR) joga um
+      // `TypeError` síncrono: sem esta cerca o clique seria mudo.
       const detail = cause instanceof Error ? cause.message.trim() : ''
       setNotice(cause instanceof TypeError ? BROWSER_NO_API : detail || 'o browser recusou a ação')
       return
@@ -135,14 +109,287 @@ export function useBrowserRunner(): {
   return { notice, setNotice, run }
 }
 
+/**
+ * A ESPERA da página travada, comum aos dois hosts: `failureShown` diz se a
+ * página nativa sai de cena para o cartão; `wait` é o ESPERAR do cartão (o
+ * dono escolhe olhar a página travada). A espera morre com a falha que a
+ * motivou — mudou ou sumiu, a próxima volta ao cartão.
+ */
+export function useBrowserFailureWait(state: BrowserPanelState): {
+  failureShown: boolean
+  wait: () => void
+} {
+  const [waited, setWaited] = useState<string | null>(null)
+  const live = liveBrowserWait(state, waited)
+  // No RENDER, não num efeito: um quadro com a espera velha mostraria a página
+  // de uma falha nova que ninguém escolheu esperar.
+  if (live !== waited) setWaited(live)
+  const identity = browserFailureIdentity(state)
+  const wait = useCallback(() => setWaited(identity), [identity])
+  return { failureShown: browserPageHidden(state, live), wait }
+}
+
+const ADDRESS_SESSION_TITLE =
+  'cookies e logins são da sessão deste universo — entrar uma vez vale para as próximas missões'
+
+const DRIVING_TITLE =
+  'o agente está dirigindo esta aba agora — você pode assumir quando quiser: a página recebe o seu mouse e o seu teclado, sem trava'
+
+/** Recado sem instrumento em volta (preload velho, janela sem missão): mesma
+ *  gramática da faixa, sem ×, porque não há o que dispensar. */
+export function BrowserMessage({ text }: { text: string }): React.JSX.Element {
+  return (
+    <div className="dock-browser-info neutral dock-browser-message" role="status">
+      <WorkspaceIcon name="info" />
+      <span className="dock-browser-info-text">{text}</span>
+    </div>
+  )
+}
+
+const NO_DISMISSALS: ReadonlySet<string> = new Set()
+
+/**
+ * A FAIXA DE AVISOS: os recados do motor, da leitura, do gesto e da largura,
+ * cada um com o tom, o ícone e a saída da SUA espécie
+ * (`browserNoticePresentation`) e um ×. Dispensar vale para AQUELE recado: o
+ * que some e volta — ou um carimbo novo do motor — aparece de novo. O recado do
+ * gesto é do host, então o × dele o apaga lá.
+ */
+export function BrowserNoticeStrip({
+  missionId,
+  state,
+  error,
+  notice,
+  notify,
+  run
+}: {
+  missionId: string
+  state: BrowserPanelState
+  /** falha de leitura do motor — a fotografia anterior FICA na tela */
+  error: string | null
+  /** recado do gesto recusado (o `notice` do `useBrowserRunner` do host) */
+  notice: string | null
+  notify: (text: string | null) => void
+  run: BrowserRunner
+}): React.JSX.Element | null {
+  const rows = browserNoticeRows(state, {
+    readError: error,
+    gesture: notice,
+    viewport: browserViewportShortfall(state)
+  })
+  const [dismissed, setDismissed] = useState(NO_DISMISSALS)
+  const rowKeys = rows.map((row) => row.key).join('\n')
+  const rowsRef = useRef(rows)
+  rowsRef.current = rows
+  useEffect(() => {
+    setDismissed((current) => liveNoticeDismissals(current, rowsRef.current))
+  }, [rowKeys])
+
+  const dismiss = (row: BrowserNoticeRow): void => {
+    if (row.source === 'gesture') notify(null)
+    else setDismissed((current) => new Set([...current, row.key]))
+  }
+
+  const act = (row: BrowserNoticeRow): void => {
+    const action = row.action
+    if (!action) return
+    if (action.kind === 'reload') {
+      run((api) => api.reload(missionId))
+      return
+    }
+    // REABRIR resolve o recado: a linha sai junto, e um segundo clique não
+    // abre uma segunda aba do mesmo endereço.
+    run((api) => api.newTab(missionId, action.url))
+    dismiss(row)
+  }
+
+  const shown = rows.filter((row) => !dismissed.has(row.key))
+  if (shown.length === 0) return null
+  return (
+    <div className="dock-browser-infos">
+      {shown.map((row) => (
+        <div
+          key={row.key}
+          className={`dock-browser-info ${row.tone}`}
+          role={row.tone === 'error' ? 'alert' : 'status'}
+        >
+          <WorkspaceIcon name={row.icon} />
+          <span className="dock-browser-info-text">
+            {row.title && <b>{row.title}</b>}
+            {row.title ? ` — ${row.text}` : row.text}
+          </span>
+          {row.count && (
+            <span className="dock-browser-info-count" title={row.count.title}>
+              {row.count.label}
+            </span>
+          )}
+          {row.action && (
+            <button
+              type="button"
+              className="dock-browser-info-act"
+              title={BROWSER_NOTICE_ACTION_WORDS[row.action.kind].title}
+              onClick={() => act(row)}
+            >
+              {BROWSER_NOTICE_ACTION_WORDS[row.action.kind].label}
+            </button>
+          )}
+          <button
+            type="button"
+            className="dock-browser-info-x"
+            aria-label="dispensar este aviso"
+            title="dispensar"
+            onClick={() => dismiss(row)}
+          >
+            <WorkspaceIcon name="close" />
+          </button>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/**
+ * A tira ROLA na horizontal quando as abas já encolheram até o piso, e a borda
+ * que ESCONDE aba esmaece (nunca um corte seco). A aba ativa é trazida à vista
+ * a cada troca — rolando SÓ a tira: `scrollIntoView` rolaria o trilho do dock.
+ */
+function useTabListEdges(listRef: RefObject<HTMLDivElement | null>, tabsKey: string): string {
+  const [edges, setEdges] = useState('')
+  const measureRef = useRef<() => void>(() => undefined)
+  useLayoutEffect(() => {
+    const list = listRef.current
+    if (!list) return
+    const measure = (): void => {
+      const start = list.scrollLeft > 1
+      const end = list.scrollLeft + list.clientWidth < list.scrollWidth - 1
+      const next = `${start ? ' fade-start' : ''}${end ? ' fade-end' : ''}`
+      setEdges((current) => (current === next ? current : next))
+    }
+    measureRef.current = measure
+    list.addEventListener('scroll', measure, { passive: true })
+    const sizes = new ResizeObserver(measure)
+    sizes.observe(list)
+    return () => {
+      measureRef.current = () => undefined
+      list.removeEventListener('scroll', measure)
+      sizes.disconnect()
+    }
+  }, [listRef])
+  useLayoutEffect(() => {
+    const list = listRef.current
+    const active = list?.querySelector<HTMLElement>('.dock-browser-tab-wrap.on')
+    if (list && active) {
+      const right = active.offsetLeft + active.offsetWidth
+      if (active.offsetLeft < list.scrollLeft) list.scrollLeft = active.offsetLeft
+      else if (right > list.scrollLeft + list.clientWidth) list.scrollLeft = right - list.clientWidth
+    }
+    measureRef.current()
+  }, [listRef, tabsKey])
+  return edges
+}
+
+function BrowserTabItem({
+  missionId,
+  tab,
+  run
+}: {
+  missionId: string
+  tab: BrowserTab
+  run: BrowserRunner
+}): React.JSX.Element {
+  const label = browserTabLabel(tab)
+  const tag = browserTabOwnerTag(tab)
+  const phrase = browserTabOwnerPhrase(tab)
+  const sentence = browserTabSentence(tab)
+  const driving = tab.driving === true
+  return (
+    <div className={`dock-browser-tab-wrap${tab.active ? ' on' : ''}`} role="presentation">
+      <button
+        type="button"
+        role="tab"
+        aria-selected={tab.active}
+        // A aba do DONO sem sinal nenhum fica com o próprio texto como nome; a
+        // ficha, o ⚡ e a marca de erro são desenho e voltam como PALAVRA.
+        aria-label={sentence === label ? undefined : sentence}
+        title={browserTabTitle(tab)}
+        className="dock-browser-tab"
+        onClick={() => run((api) => api.selectTab(missionId, tab.tabId))}
+      >
+        {tab.loading && <i className="dock-browser-tab-dot" aria-hidden="true" />}
+        {tab.failure && <WorkspaceIcon name="alert" />}
+        {/* UMA ficha para as duas verdades da identidade (de quem é, e se está
+            agindo AGORA): o ⚡ acender não empurra o rótulo de lugar. */}
+        {(tag || driving) && (
+          <span className={`dock-browser-tab-owner${tag ? '' : ' is-bare'}`} aria-hidden="true">
+            {driving && <WorkspaceIcon name="bolt" />}
+            {tag && <span className="dock-browser-tab-owner-name">{tag}</span>}
+          </span>
+        )}
+        <span className="dock-browser-tab-name">{label}</span>
+      </button>
+      {/* O × vale em TODA aba, inclusive na de um ajudante: o painel é do dono.
+          A guarda NOMEIA de quem é a aba antes do gesto, nunca esconde a porta. */}
+      <button
+        type="button"
+        className="dock-browser-tab-x"
+        aria-label={phrase ? `fechar a ${phrase} · ${label}` : `fechar a aba ${label}`}
+        title={phrase ? `fechar a ${phrase}` : 'fechar esta aba'}
+        onClick={() => run((api) => api.closeTab(missionId, tab.tabId))}
+      >
+        <WorkspaceIcon name="close" />
+      </button>
+    </div>
+  )
+}
+
+function BrowserTabStrip({
+  missionId,
+  state,
+  run
+}: {
+  missionId: string
+  state: BrowserPanelState
+  run: BrowserRunner
+}): React.JSX.Element {
+  const listRef = useRef<HTMLDivElement>(null)
+  const tabsKey = state.tabs.map((tab) => `${tab.tabId}${tab.active ? '*' : ''}`).join(' ')
+  const edges = useTabListEdges(listRef, tabsKey)
+  const capNotice = tabCapNotice(state.tabs.length)
+  return (
+    <div className="dock-browser-tabbar">
+      <div
+        ref={listRef}
+        className={`dock-browser-tabs${edges}`}
+        role="tablist"
+        aria-label="abas do browser"
+      >
+        {state.tabs.map((tab) => (
+          <BrowserTabItem key={tab.tabId} missionId={missionId} tab={tab} run={run} />
+        ))}
+      </div>
+      {/* O + mora colado à ÚLTIMA aba (como no Chrome) e FORA da rolagem: com a
+          tira cheia ele encosta na borda em vez de sumir junto com as abas. */}
+      <button
+        type="button"
+        className="dock-browser-tab-add"
+        disabled={Boolean(capNotice)}
+        aria-label="abrir uma aba"
+        title={capNotice ?? `abrir aba em branco · até ${BROWSER_TAB_CAP}`}
+        onClick={() => run((api) => api.newTab(missionId))}
+      >
+        <WorkspaceIcon name="plus" />
+      </button>
+    </div>
+  )
+}
+
 export default function BrowserChrome({
   missionId,
-  projectId,
   state,
-  hint,
-  hints,
   run,
+  notice,
   notify,
+  error,
   urlRef,
   shellClass,
   tools,
@@ -150,20 +397,20 @@ export default function BrowserChrome({
   children
 }: {
   missionId: string
-  /** A SESSÃO (cookies/logins) é do PROJETO — é o que a linha do pé conta. */
-  projectId: string
   state: BrowserPanelState
-  hint: string | null
-  hints: BrowserHintBinder
   run: BrowserRunner
-  /** recado do gesto que só o host sabe onde mostrar (ex.: endereço vazio) */
+  /** recado do gesto recusado (o `notice` do `useBrowserRunner` do host) */
+  notice: string | null
+  /** o host guarda o recado do gesto: o endereço vazio e o × escrevem nele */
   notify: (text: string | null) => void
+  /** falha de leitura do motor — a fotografia anterior FICA na tela */
+  error: string | null
   /** O campo de endereço é do host: o convite "abrir browser" (que mora dentro
    *  do retângulo, e portanto fora daqui) põe o foco nele. */
   urlRef: RefObject<HTMLInputElement | null>
   /** classe extra do CORPO (o pop-out tira borda e raio: ele É a janela) */
   shellClass?: string
-  /** controles do host DENTRO do grupo de glifos (o ⧉ do dock) */
+  /** ferramenta do host depois das devtools (o ⧉ do dock) */
   tools?: ReactNode
   /** ação do host no FIM da barra (o reencaixe do pop-out) */
   actions?: ReactNode
@@ -171,16 +418,10 @@ export default function BrowserChrome({
   children: ReactNode
 }): React.JSX.Element {
   const tab = activeBrowserTab(state)
-  const capNotice = tabCapNotice(state.tabs.length)
-  // A LARGURA QUE A PÁGINA ENXERGA. Ela mora AQUI, e não em cada host, porque a
-  // pergunta é a mesma nos dois: o painel do dock é estreito e a janela
-  // destacada é larga, mas em ambos o dono precisa poder dizer "me mostre isto
-  // como desktop" — e VER quando foi o agente que disse.
   const viewport = browserViewportOf(state)
-  const viewportNote = browserViewportNote(state)
   // A barra de endereço só é do DONO enquanto ele está nela: fora do foco, ela
-  // conta a URL da aba ativa. Sem esta separação, uma navegação do AGENTE
-  // apagaria o que ele estivesse digitando (e ele PODE assumir quando quiser).
+  // conta a URL da aba ativa — uma navegação do AGENTE nunca apaga o que ele
+  // estiver digitando.
   const [draft, setDraft] = useState('')
   const [editing, setEditing] = useState(false)
 
@@ -192,117 +433,17 @@ export default function BrowserChrome({
     }
     setEditing(false)
     urlRef.current?.blur()
-    // Sem aba ativa o gesto ABRE o browser: pedir `navigate` a uma missão sem
-    // view seria contar com o motor adivinhando o que o dono quis.
+    // Sem aba ativa o gesto ABRE o browser: `navigate` numa missão sem view
+    // contaria com o motor adivinhando.
     if (tab) run((api) => api.navigate(missionId, url))
     else run((api) => api.newTab(missionId, url))
   }, [draft, missionId, notify, run, tab, urlRef])
 
-  const urlValue = editing ? draft : (tab?.url ?? '')
-  const urlHint = tab ? 'endereço · Enter navega' : 'endereço · Enter abre o browser'
-  // O campo é o único controle que precisa fazer DUAS coisas no foco (assumir o
-  // rascunho e escrever na barra de status): a ligação é lida uma vez e chamada
-  // no meio dos dois gestos.
-  const urlHints = hints(urlHint)
+  const driving = tab?.driving === true
 
   return (
     <div className={shellClass ? `dock-browser-shell ${shellClass}` : 'dock-browser-shell'}>
-      {/* A TIRA DE ABAS quebra em vez de rolar: numa coluna de 176px um
-          scroller horizontal esconderia abas atrás de um gesto que o dono não
-          tem motivo para tentar. Mesmo precedente do `.dock-acts`.
-
-          DE QUEM É CADA ABA (2026-09-01 — ordem do dono: *"cada um na sua aba,
-          na sua porta"*, D1/D2 do
-          `.synkora/reports/DESIGN_BROWSER_ABAS_POR_IDENTIDADE_2026-09-01.md`):
-          com dono + dev + frota de ajudantes na mesma missão, a tira deixou de
-          ser uma lista de páginas e virou uma lista de IDENTIDADES. A aba do
-          dono continua exatamente como era (a régua não vira caso); a de um
-          agente ganha o rótulo dele antes do nome da página, e o ⚡ da aba
-          quando é ELE que está dirigindo agora. */}
-      {state.tabs.length > 0 && (
-        <div className="dock-browser-tabbar">
-          <div className="dock-browser-tabs" role="tablist" aria-label="abas do browser">
-            {state.tabs.map((entry) => {
-              const label = browserTabLabel(entry)
-              // As PALAVRAS vêm do modelo puro (`dockBrowserModel`), não do JSX:
-              // é lá que elas se provam em node, sem React e sem DOM.
-              const tag = browserTabOwnerTag(entry)
-              const phrase = browserTabOwnerPhrase(entry)
-              const driving = entry.driving === true
-              // A frase LONGA — a da barra de status e a do leitor de tela. Ela
-              // é a única forma de saber qual aba é qual com doze abertas a
-              // 176px, onde tudo corta.
-              const said = phrase ? [phrase, label] : [label]
-              if (driving) said.push('dirigindo agora')
-              const sentence = said.join(' · ')
-              return (
-                <span className="dock-browser-tab-wrap" key={entry.tabId}>
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={entry.active}
-                    // A aba do DONO fica sem `aria-label`: o nome acessível dela
-                    // continua sendo o próprio texto, como era antes desta
-                    // rodada. Só quem tem dono (ou está dirigindo) precisa que a
-                    // ficha e o ⚡ — que são `aria-hidden`, por serem glifo e
-                    // caixa alta — voltem como PALAVRA.
-                    aria-label={phrase || driving ? sentence : undefined}
-                    className={`dock-browser-tab${entry.active ? ' on' : ''}`}
-                    onClick={() => run((api) => api.selectTab(missionId, entry.tabId))}
-                    {...hints(entry.url ? `${sentence} · ${entry.url}` : sentence)}
-                  >
-                    <i
-                      className={`dock-browser-tab-dot${entry.loading ? ' loading' : ''}`}
-                      aria-hidden="true"
-                    />
-                    {/* UMA ficha só para as duas verdades da identidade: de quem
-                        é a aba, e se essa pessoa está agindo AGORA. Duas peças
-                        separadas empurrariam o rótulo de lugar toda vez que o ⚡
-                        acendesse, e a tira perderia o alinhamento que faz o dono
-                        varrer doze abas de relance. */}
-                    {(tag || driving) && (
-                      <span
-                        className={`dock-browser-tab-owner${driving ? ' driving' : ''}`}
-                        aria-hidden="true"
-                      >
-                        {driving && <b className="dock-browser-tab-bolt">⚡</b>}
-                        {tag && <span className="dock-browser-tab-owner-name">{tag}</span>}
-                      </span>
-                    )}
-                    <span className="dock-browser-tab-name">{label}</span>
-                  </button>
-                  {/* O × FICA em TODA aba, inclusive na de um ajudante: o painel
-                      é do dono, e ele tem autoridade sobre a missão inteira. O
-                      que a guarda faz é NOMEAR de quem é a aba antes do gesto —
-                      nunca esconder a porta. */}
-                  <button
-                    type="button"
-                    className="dock-browser-tab-x"
-                    aria-label={phrase ? `fechar a ${phrase} · ${label}` : `fechar a aba ${label}`}
-                    onClick={() => run((api) => api.closeTab(missionId, entry.tabId))}
-                    {...hints(phrase ? `fechar ${phrase}` : 'fechar esta aba')}
-                  >
-                    ×
-                  </button>
-                </span>
-              )
-            })}
-          </div>
-          {/* O `+` mora FORA do scroller: com doze abas a tira ganha barra de
-              rolagem, e a porta de abrir a próxima não pode ir junto para
-              debaixo dela. */}
-          <button
-            type="button"
-            className="dock-browser-tab-add"
-            disabled={Boolean(capNotice)}
-            aria-label="abrir uma aba"
-            onClick={() => run((api) => api.newTab(missionId))}
-            {...hints(capNotice ?? `abrir aba em branco · até ${BROWSER_TAB_CAP}`)}
-          >
-            +
-          </button>
-        </div>
-      )}
+      {state.tabs.length > 0 && <BrowserTabStrip missionId={missionId} state={state} run={run} />}
 
       <div className="dock-browser-nav">
         <button
@@ -310,203 +451,149 @@ export default function BrowserChrome({
           className="dock-browser-btn"
           disabled={!tab?.canBack}
           aria-label="voltar"
+          title="voltar uma página"
           onClick={() => run((api) => api.back(missionId))}
-          {...hints('voltar uma página')}
         >
-          ←
+          <WorkspaceIcon name="back" />
         </button>
         <button
           type="button"
           className="dock-browser-btn"
           disabled={!tab?.canForward}
           aria-label="avançar"
+          title="avançar uma página"
           onClick={() => run((api) => api.forward(missionId))}
-          {...hints('avançar uma página')}
         >
-          →
+          <WorkspaceIcon name="arrow" />
         </button>
         <button
           type="button"
           className="dock-browser-btn"
           disabled={!tab}
           aria-label="recarregar"
+          title="recarregar a página"
           onClick={() => run((api) => api.reload(missionId))}
-          {...hints('recarregar a página')}
         >
-          ⟳
+          <WorkspaceIcon name="reload" />
         </button>
+        <div className={`dock-browser-url-wrap${driving ? ' driving' : ''}`}>
+          <input
+            ref={urlRef}
+            className="dock-browser-url"
+            type="text"
+            spellCheck={false}
+            autoComplete="off"
+            aria-label="endereço"
+            placeholder={tab ? 'endereço' : 'abrir um endereço'}
+            title={`${tab ? 'Enter navega · Esc devolve o endereço da aba' : 'Enter abre o browser neste endereço'}\n${ADDRESS_SESSION_TITLE}`}
+            value={editing ? draft : (tab?.url ?? '')}
+            onChange={(event) => {
+              setDraft(event.target.value)
+              setEditing(true)
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault()
+                submitUrl()
+                return
+              }
+              // Esc devolve o campo à verdade da aba — e não sobe para o chat,
+              // que trataria a tecla como interrupção do agente.
+              if (event.key === 'Escape') {
+                event.preventDefault()
+                event.stopPropagation()
+                setEditing(false)
+                urlRef.current?.blur()
+              }
+            }}
+            onFocus={() => {
+              setDraft(tab?.url ?? '')
+              setEditing(true)
+            }}
+            onBlur={() => setEditing(false)}
+          />
+          {/* ⚡ DENTRO do campo: acender e apagar não empurra nada. */}
+          {driving && (
+            <span
+              className="dock-browser-url-driving"
+              role="img"
+              aria-label="o agente está dirigindo esta aba"
+              title={DRIVING_TITLE}
+            >
+              <WorkspaceIcon name="bolt" />
+            </span>
+          )}
+        </div>
+        {/* A LARGURA QUE A PÁGINA ENXERGA: o MESMO estado que a tool
+            `browser_viewport` do agente escreve. A lista é a NATIVA — o Windows a
+            abre como janela própria, por cima da página. */}
+        <label
+          className={`dock-browser-width${viewport === 'auto' ? '' : ' on'}${browserViewportIsCustom(viewport) ? ' custom' : ''}`}
+          title={browserViewportTitle(state)}
+        >
+          <WorkspaceIcon name="width" />
+          <span>{browserViewportLabel(viewport)}</span>
+          <WorkspaceIcon name="chevron" />
+          <select
+            aria-label="largura que a página enxerga"
+            value={String(viewport)}
+            disabled={!state.alive}
+            onChange={(event) => {
+              const mode = readViewportMode(Number(event.target.value))
+              run((api) => api.setViewportMode(missionId, mode))
+            }}
+          >
+            {browserViewportOptions(state).map((mode) => (
+              <option key={String(mode)} value={String(mode)}>
+                {browserViewportOptionLabel(mode)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <span className="dock-browser-sep" aria-hidden="true" />
         <button
           type="button"
           className="dock-browser-btn"
           disabled={!tab}
           aria-label="abrir as devtools da página"
+          title="devtools da página, em janela separada"
           onClick={() => {
             if (tab) run((api) => api.devtools(missionId, tab.tabId))
           }}
-          {...hints('devtools DA PÁGINA, em janela separada')}
         >
-          {'</>'}
+          <WorkspaceIcon name="code" />
         </button>
-        {/* O ⧉ do dock entra AQUI, no grupo de glifos: no trilho de 176px a
-            fileira já quebra depois do quarto botão, e um controle depois do
-            campo de endereço nasceria numa terceira linha só dele. */}
         {tools}
-        <input
-          ref={urlRef}
-          className="dock-browser-url"
-          type="text"
-          spellCheck={false}
-          autoComplete="off"
-          aria-label="endereço"
-          placeholder={tab ? 'endereço' : 'abrir um endereço'}
-          value={urlValue}
-          onChange={(event) => {
-            setDraft(event.target.value)
-            setEditing(true)
-          }}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter') {
-              event.preventDefault()
-              submitUrl()
-              return
-            }
-            // Esc devolve o campo à verdade da aba — e não sobe para o chat,
-            // que trataria a tecla como interrupção do agente.
-            if (event.key === 'Escape') {
-              event.preventDefault()
-              event.stopPropagation()
-              setEditing(false)
-              urlRef.current?.blur()
-            }
-          }}
-          onMouseEnter={urlHints.onMouseEnter}
-          onMouseLeave={urlHints.onMouseLeave}
-          onFocus={() => {
-            setDraft(tab?.url ?? '')
-            setEditing(true)
-            urlHints.onFocus()
-          }}
-          onBlur={() => {
-            setEditing(false)
-            urlHints.onBlur()
-          }}
-        />
         {actions}
       </div>
 
-      {/* A LARGURA QUE A PÁGINA ENXERGA (2026-08-29 — "ta meio limitado o quanto
-          consigo deixar ele maior, meio que sempre vou ver o site/app com modo
-          tablet"). O painel é estreito; sem isto todo site responsivo entrega o
-          layout de celular. Esta fileira é uma FAIXA do mesmo corpo (a lei do
-          H7: uma borda, um raio, costuras de fio de cabelo) — nunca um cartão
-          próprio —, e mora colada na página porque é dela que ela fala.
-
-          É o MESMO estado que a tool `browser_viewport` do agente escreve: com
-          ele conferindo uma tela em desktop, o botão 1280 acende aqui sozinho. */}
-      <div
-        className="dock-browser-vp"
-        role="group"
-        aria-label="largura que a página enxerga"
-      >
-        {BROWSER_VIEWPORT_CHOICES.map((mode) => (
-          <button
-            key={String(mode)}
-            type="button"
-            className={`dock-browser-vp-btn${viewport === mode ? ' on' : ''}`}
-            aria-pressed={viewport === mode}
-            disabled={!state.alive}
-            onClick={() => run((api) => api.setViewportMode(missionId, mode))}
-            {...hints(
-              state.alive
-                ? browserViewportHint(mode)
-                : 'abra uma página (+) antes de mudar a largura'
-            )}
-          >
-            {browserViewportLabel(mode)}
-          </button>
-        ))}
-        {/* O AGENTE pode pedir uma largura que não é botão nenhum (`width` da
-            tool). Sem esta ficha, o dono olharia uma página emulada com os
-            quatro botões apagados e nenhuma explicação. */}
-        {browserViewportIsCustom(viewport) && (
-          <span
-            className="dock-browser-vp-custom"
-            {...hints(`o agente pediu ${viewport}px lógicos · AUTO devolve a largura do painel`)}
-          >
-            {browserViewportLabel(viewport)}
-          </span>
-        )}
-        {/* O piso de zoom do Chromium (0,25×, medido na sonda): num painel
-            estreito demais a página recebe MENOS do que se pediu. Mostrar
-            "1280" aceso ao lado de uma página de 1200 seria o seletor mentindo.
-            A nota QUEBRA para uma linha própria dentro da mesma faixa — a
-            moldura da página continua sendo a linha ink de baixo. */}
-        {viewportNote && <span className="dock-browser-vp-note">// {viewportNote}</span>}
-      </div>
+      <BrowserNoticeStrip
+        missionId={missionId}
+        state={state}
+        error={error}
+        notice={notice}
+        notify={notify}
+        run={run}
+      />
 
       {children}
-
-      {/* A LINHA DO PÉ é a barra de status: ⚡ (o fato que não pode sumir) à
-          esquerda e, à direita, a frase do controle apontado — ou, em silêncio,
-          de onde vêm os logins desta página. */}
-      <div className="dock-browser-foot">
-        {state.agentDriving && (
-          <span
-            className="dock-browser-driving"
-            data-tip="O agente está usando este browser agora. Você pode assumir quando quiser: a página recebe o seu mouse e o seu teclado direto, sem trava nenhuma."
-          >
-            <i className="dock-browser-driving-dot" aria-hidden="true" />
-            <b>⚡</b> agente dirigindo
-          </span>
-        )}
-        {hint ? (
-          <span className="dock-browser-hint">{hint}</span>
-        ) : (
-          <span
-            className="dock-browser-session"
-            data-tip={`Cookies e logins ficam na sessão deste universo (${projectId}) — compartilhada por todas as missões dele, então entrar uma vez vale para as próximas.`}
-          >
-            sessão do projeto
-          </span>
-        )}
-      </div>
     </div>
   )
 }
 
 /**
- * AS FAIXAS DA MOLDURA DE DISPOSITIVO (2026-08-29 — ordem do dono, ao vivo:
- * *"Quando estiver destacado e eu colocar opções menores, poderia colocar bordas
- * brancas ou pretas do lado, para que não tenha scroll bar, se não, como vou
- * saber se ta quebrando de vdd ou é o app"*).
- *
- * Com a largura pedida CABENDO na moldura, o motor põe a view em tamanho REAL e
- * CENTRALIZADA (`viewportViewRect`, medido na sonda §P10) — o que sobra do
- * retângulo é o painel escuro do app aparecendo dos dois lados. Este componente
- * não INVENTA essa faixa: ele a MARCA, com uma costura de fio de cabelo na borda
- * exata da página, porque um site de fundo escuro se confundiria com o painel e
- * a pergunta do dono continuaria sem resposta.
- *
- * A repartição de trabalho — e ela é o ponto:
- *  · **a geometria é CSS** (`calc((100% - min(100%, largura)) / 2)`), calculada
- *    pelo layout a cada quadro. Num arrasto da alça a faixa re-centraliza junto
- *    com a página, sem degrau e sem um único render do React;
- *  · **o estado só diz SE existe faixa** (`viewportBand`, que viaja no
- *    `browser:changed` coalescido). Ele pode atrasar um quadro ou dois na
- *    travessia — e no instante em que a moldura cruza a largura pedida a faixa
- *    tem ZERO px, então o atraso é literalmente invisível.
- *
- * Elas NUNCA comem clique (`pointer-events: none`) e nunca cobrem a página: a
- * `WebContentsView` compõe ACIMA de todo este DOM.
+ * AS FAIXAS DA MOLDURA DE DISPOSITIVO (2026-08-29 — "como vou saber se ta
+ * quebrando de vdd ou é o app"). Com a largura pedida CABENDO, o motor põe a
+ * view em tamanho REAL e centralizada; o que sobra é o painel do app. Aqui só se
+ * MARCA a borda da página: a geometria é CSS (re-centraliza sem render num
+ * arrasto) e o estado diz apenas SE existe faixa. Nunca comem clique.
  */
 export function BrowserPageBands({
   state,
   painted
 }: {
   state: BrowserPanelState
-  /** a medida concluiu que a página está à vista AGORA — sem view por cima não
-   *  há borda de página para marcar, e duas listras num retângulo vazio só
-   *  fariam o dono procurar o que elas emolduram */
+  /** a medida concluiu que a página está à vista AGORA */
   painted: boolean
 }): React.JSX.Element | null {
   const mode = browserViewportOf(state)
@@ -523,22 +610,32 @@ export function BrowserPageBands({
 
 /**
  * O que se vê DENTRO do retângulo quando a `WebContentsView` não está por cima
- * dele — o convite (nenhuma página aberta) e a explicação de por que a página
- * sumiu. O retângulo em si é do HOST (ele é quem sabe a própria geometria); só
- * o conteúdo é comum.
+ * dele: o convite (nenhuma página aberta), o CARTÃO DE ERRO da aba à vista
+ * (variante B — o host esconde a página nativa, que seria um branco mudo) e a
+ * explicação de por que a página sumiu. O retângulo é do HOST (ele sabe a
+ * própria geometria); o conteúdo é comum.
  */
 export function BrowserPageOverlay({
+  missionId,
   state,
   painted,
-  hints,
-  onOpen,
+  failureShown,
+  onWait,
+  run,
+  urlRef,
   hiddenText = 'a página continua aberta — escondida enquanto esta tela está por cima'
 }: {
+  missionId: string
   state: BrowserPanelState
   /** a medida concluiu que a página está à vista AGORA */
   painted: boolean
-  hints: BrowserHintBinder
-  onOpen: () => void
+  /** a falha da aba à vista toma o lugar da página (`useBrowserFailureWait`) */
+  failureShown: boolean
+  /** ESPERAR: o dono escolhe olhar a página travada */
+  onWait: () => void
+  run: BrowserRunner
+  /** quem abre o browser quer digitar um endereço: o foco cai na barra */
+  urlRef: RefObject<HTMLInputElement | null>
   hiddenText?: string
 }): React.JSX.Element | null {
   if (!state.alive) {
@@ -548,14 +645,54 @@ export function BrowserPageOverlay({
         <button
           type="button"
           className="dock-browser-open"
-          onClick={onOpen}
-          {...hints('abre o browser desta missão numa aba em branco')}
+          title="abre o browser desta missão numa aba em branco"
+          onClick={() => {
+            run((api) => api.newTab(missionId))
+            urlRef.current?.focus()
+          }}
         >
           abrir browser
         </button>
         <span className="dock-browser-empty-fine">
           o agente também abre sozinho, quando o QA visual dele precisa
         </span>
+      </div>
+    )
+  }
+  const failure = failureShown ? activeBrowserTabFailure(state) : null
+  if (failure) {
+    const tab = activeBrowserTab(state)
+    const reloading = tab?.loading === true
+    const look = browserFailureLook(failure)
+    return (
+      <div className="dock-browser-empty dock-browser-failure" role="alert">
+        <WorkspaceIcon name={look.icon} />
+        <span className="dock-browser-failure-title">{browserTabFailureTitle(failure)}</span>
+        <span className="dock-browser-empty-line">{failure.text}</span>
+        <div className="dock-browser-failure-acts">
+          {look.canWait && (
+            <button
+              type="button"
+              className="dock-browser-open quiet"
+              title="voltar a mostrar a página e dar mais tempo a ela — o cartão volta se a falha mudar"
+              onClick={onWait}
+            >
+              esperar
+            </button>
+          )}
+          <button
+            type="button"
+            className="dock-browser-open"
+            disabled={reloading}
+            title="recarregar a página desta aba"
+            onClick={() => run((api) => api.reload(missionId))}
+          >
+            {reloading ? 'recarregando…' : 'recarregar'}
+          </button>
+        </div>
+        {tab?.url && <span className="dock-browser-empty-fine">{tab.url}</span>}
+        {/* O código cru é diagnóstico, não frase: letra miúda, embaixo de tudo. */}
+        {failure.code && <span className="dock-browser-failure-code">{failure.code}</span>}
       </div>
     )
   }

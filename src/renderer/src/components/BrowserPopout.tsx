@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import WorkspaceIcon from '../workspace/WorkspaceIcon'
 import BrowserChrome, {
+  BrowserMessage,
   BrowserPageBands,
   BrowserPageOverlay,
   browserApi,
-  useBrowserHint,
+  useBrowserFailureWait,
   useBrowserRunner
 } from './BrowserChrome'
 import { useMissionBrowser } from './DockBrowser'
@@ -34,8 +36,8 @@ import type { BrowserPanelState, BrowserRect } from '../../../preload/index'
 // TRÊS DIFERENÇAS PARA O DOCK, e só três:
 //  1. não há fração de coluna nem alça — **a JANELA é o controle de tamanho**;
 //  2. o retângulo da página come toda a altura que sobra do instrumento;
-//  3. a ação do host é o REENCAIXE (⇤), não o ⧉.
-// Todo o resto (abas, setas, endereço, devtools, ⚡, barra de status) é o mesmo
+//  3. a ação do host é o REENCAIXE, não o ⧉.
+// Todo o resto (abas, setas, endereço, largura, devtools, avisos) é o mesmo
 // `BrowserChrome` do painel do dock — de propósito: é UM instrumento, e o dono
 // não pode aprender dois.
 //
@@ -84,13 +86,11 @@ function elementIsPainted(el: HTMLElement): boolean {
  */
 export function BrowserPopoutView({
   missionId,
-  projectId,
   state,
   engine,
   error
 }: {
   missionId: string
-  projectId: string
   state: BrowserPanelState
   engine: BrowserEngineState
   /** falha de leitura do motor — a fotografia anterior FICA na tela */
@@ -99,8 +99,12 @@ export function BrowserPopoutView({
   const pageRef = useRef<HTMLDivElement>(null)
   const urlRef = useRef<HTMLInputElement>(null)
   const { notice, setNotice, run } = useBrowserRunner()
-  const { hint, hints } = useBrowserHint()
   const [painted, setPainted] = useState(false)
+  // VARIANTE B, como no dock: aba à vista em erro = página nativa escondida e o
+  // cartão de erro no retângulo — até o dono escolher ESPERAR a página travada.
+  const { failureShown, wait } = useBrowserFailureWait(state)
+  const failureShownRef = useRef(failureShown)
+  failureShownRef.current = failureShown
 
   // ————— GEOMETRIA: o único canal entre esta janela e a view nativa —————
   //
@@ -137,7 +141,7 @@ export function BrowserPopoutView({
       const box = browserRect(el.getBoundingClientRect(), 'inward')
       lastRectRef.current = box
       const clipped = clipBrowserRect(box, [viewportRect()])
-      if (!rectHasArea(clipped) || !elementIsPainted(el)) {
+      if (!rectHasArea(clipped) || failureShownRef.current || !elementIsPainted(el)) {
         report(mission, clipped, false)
         return
       }
@@ -188,17 +192,13 @@ export function BrowserPopoutView({
     }
   }, [missionId, report])
 
-  // A tira de abas ganha/perde uma linha e EMPURRA o retângulo sem mudar o
-  // tamanho dele — nenhum observador de tamanho enxerga isso.
+  // O que nenhum observador de tamanho enxerga: a tira de abas EMPURRA o
+  // retângulo sem mudar o tamanho dele, e a aba à vista cai em erro, volta ou
+  // o dono escolhe ESPERAR.
   useEffect(() => {
     gateRef.current.reset()
     measureRef.current?.()
-  }, [state.alive, state.tabs.length])
-
-  const openBrowser = useCallback((): void => {
-    run((api) => api.newTab(missionId))
-    urlRef.current?.focus()
-  }, [missionId, run])
+  }, [state.alive, state.tabs.length, failureShown])
 
   // Janela sem missão na URL: não existe gesto possível, e um instrumento
   // desenhado por cima de nada seria pior que a verdade. A frase nomeia a
@@ -206,9 +206,7 @@ export function BrowserPopoutView({
   if (!missionId) {
     return (
       <div className="dock-browser browser-popout is-lost">
-        <span className="dock-browser-notice">
-          // esta janela abriu sem missão — feche-a e destaque de novo pelo ⧉ do dock
-        </span>
+        <BrowserMessage text="esta janela abriu sem missão — feche-a e destaque de novo pelo ⧉ do dock" />
       </div>
     )
   }
@@ -216,7 +214,7 @@ export function BrowserPopoutView({
   if (engine === 'missing') {
     return (
       <div className="dock-browser browser-popout is-lost">
-        <span className="dock-browser-notice">// {BROWSER_NO_API}</span>
+        <BrowserMessage text={BROWSER_NO_API} />
       </div>
     )
   }
@@ -225,55 +223,48 @@ export function BrowserPopoutView({
     <div className="dock-browser browser-popout">
       <BrowserChrome
         missionId={missionId}
-        projectId={projectId}
         state={state}
-        hint={hint}
-        hints={hints}
         run={run}
+        notice={notice}
         notify={setNotice}
+        error={error}
         urlRef={urlRef}
         shellClass="browser-popout-shell"
         actions={
-          /* ⇤ REENCAIXAR — a porta de volta, no fim da barra (é ação da JANELA,
-             não da navegação). O X nativo faz o mesmo (o `close` da janela
-             reencaixa antes de destruir, lei 3 da sonda); este botão existe
-             porque "fechar para trazer de volta" não se adivinha. */
+          /* REENCAIXAR — a porta de volta, no fim da barra (é ação da JANELA).
+             O X nativo faz o mesmo; o botão existe porque "fechar para trazer
+             de volta" não se adivinha. */
           <button
             type="button"
             className="dock-browser-btn dock-browser-dock-act"
             aria-label="reencaixar o browser no painel do dock"
+            title="a página volta para o painel do dock e esta janela fecha"
             onClick={() => run((api) => api.dockBack(missionId))}
-            {...hints('a página volta para o painel do dock e esta janela fecha')}
           >
-            ⇤ reencaixar
+            <WorkspaceIcon name="redock" />
+            reencaixar
           </button>
         }
       >
-        {/* O RETÂNGULO. Vazio por contrato (a view nativa compõe por cima) e,
-            aqui, ELÁSTICO: ele come toda a altura que sobra da janela — não há
-            fração nem alça, porque quem redimensiona é a moldura da janela. */}
+        {/* O RETÂNGULO, aqui ELÁSTICO: ele come toda a altura que sobra — quem
+            redimensiona é a moldura da janela. */}
         <div
           ref={pageRef}
           className={`dock-browser-page browser-popout-page${state.alive ? ' live' : ''}`}
         >
-          {/* As faixas da MOLDURA DE DISPOSITIVO. É AQUI que elas contam mais: a
-              janela destacada é larga, e é nela que o dono viu o botão 375
-              esticar o site (a receita antiga ampliava 3,73×). Agora a página
-              fica em 375px reais no meio da janela, com o app dos dois lados. */}
           <BrowserPageBands state={state} painted={painted} />
           <BrowserPageOverlay
+            missionId={missionId}
             state={state}
             painted={painted}
-            hints={hints}
-            onOpen={openBrowser}
+            failureShown={failureShown}
+            onWait={wait}
+            run={run}
+            urlRef={urlRef}
             hiddenText="a página continua aberta — escondida enquanto esta janela não tem onde mostrá-la"
           />
         </div>
       </BrowserChrome>
-
-      {state.notice && <span className="dock-browser-notice">// {state.notice.text}</span>}
-      {error && <span className="dock-browser-notice stale">// {error}</span>}
-      {notice && <span className="dock-browser-notice">// {notice}</span>}
     </div>
   )
 }
@@ -284,23 +275,9 @@ export function BrowserPopoutView({
  * janela destacada é uma view do APP, com o preload inteiro, e fala com
  * `api.browser` igual ao painel. Todo IPC irmão é recusado pelo porteiro
  * host-only do main (P1 §5), e é por isso que não há nada de projeto, seat ou
- * chat nesta tela.
+ * chat nesta tela — nem o `projectId` que a rota ainda carrega é lido aqui.
  */
-export default function BrowserPopout({
-  missionId,
-  projectId
-}: {
-  missionId: string
-  projectId: string
-}): React.JSX.Element {
+export default function BrowserPopout({ missionId }: { missionId: string }): React.JSX.Element {
   const { state, engine, error } = useMissionBrowser(missionId)
-  return (
-    <BrowserPopoutView
-      missionId={missionId}
-      projectId={projectId}
-      state={state}
-      engine={engine}
-      error={error}
-    />
-  )
+  return <BrowserPopoutView missionId={missionId} state={state} engine={engine} error={error} />
 }
