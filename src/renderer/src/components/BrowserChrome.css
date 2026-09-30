@@ -9,7 +9,9 @@
    2. UM corpo, UMA borda, UM raio; por dentro, costuras de fio de cabelo (H7:
       caixa-dentro-de-caixa foi o "vale da estranheza" que o dono reprovou).
    3. NADA que aparece por causa do MOUSE muda a altura da página: dica é
-      `title` nativo, recado é linha da faixa de avisos. */
+      `title` nativo, recado é linha da faixa de avisos.
+
+   A faixa de avisos e o cartão de erro na página moram em `BrowserNotices.css`. */
 
 .dock-browser {
   display: flex;
@@ -537,116 +539,6 @@
   white-space: nowrap;
 }
 
-/* ——— a faixa de avisos ——— */
-
-/* A infobar: entre a barra e a página, cada recado com ×. O tom diz a
-   natureza — erro, cinza (a tela é a última fotografia), neutro (situação). */
-.dock-browser-infos {
-  flex: none;
-  border-bottom: 1px solid var(--ink);
-}
-
-.dock-browser-info {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  min-width: 0;
-  padding: 6px 5px 6px 9px;
-  background: color-mix(in srgb, var(--err) 7%, var(--card));
-  color: var(--ink);
-  font-size: 10.5px;
-  line-height: 1.45;
-}
-
-.dock-browser-info + .dock-browser-info {
-  border-top: 1px solid var(--line);
-}
-
-.dock-browser-info > svg {
-  flex: none;
-  width: 14px;
-  height: 14px;
-  margin-top: 1px;
-  color: var(--err);
-}
-
-.dock-browser-info.muted {
-  background: var(--paper-2);
-  color: var(--ink-2);
-}
-
-.dock-browser-info.muted > svg {
-  color: var(--ink-3);
-}
-
-.dock-browser-info.neutral,
-.dock-browser-info.neutral > svg {
-  background: var(--card);
-  color: var(--ink-2);
-}
-
-.dock-browser-info-text {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.dock-browser-info-act {
-  flex: none;
-  align-self: center;
-  height: 22px;
-  padding: 0 8px;
-  appearance: none;
-  border: 1px solid var(--ink);
-  border-radius: 4px;
-  background: transparent;
-  color: var(--ink);
-  font-family: var(--mono);
-  font-size: 9.5px;
-  font-weight: 700;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
-  cursor: pointer;
-}
-
-.dock-browser-info-act:hover {
-  background: var(--ink);
-  color: var(--card);
-}
-
-.dock-browser-info-x {
-  flex: none;
-  align-self: center;
-  display: grid;
-  place-items: center;
-  width: 22px;
-  height: 22px;
-  padding: 0;
-  appearance: none;
-  border: 0;
-  border-radius: 50%;
-  background: transparent;
-  color: var(--ink-2);
-  cursor: pointer;
-}
-
-.dock-browser-info-x:hover {
-  background: color-mix(in srgb, var(--ink) 8%, transparent);
-  color: var(--ink);
-}
-
-.dock-browser-info-x svg {
-  width: 11px;
-  height: 11px;
-}
-
-/* Recado sem instrumento em volta (preload velho, janela sem missão): a
-   mesma linha, emoldurada como o corpo que não existe. */
-.dock-browser-message {
-  border: 1px solid var(--line-strong);
-  border-radius: 8px;
-}
-
 /* ——— o retângulo da página ——— */
 
 /* A altura vem do componente (FRAÇÃO do trilho legado; altura é ORDEM). Sem
@@ -768,43 +660,6 @@
 .dock-browser-open:disabled {
   opacity: 0.55;
   cursor: default;
-}
-
-/* VARIANTE B — a página explica: o host esconde a view (ela seria um branco
-   mudo) e o retângulo fala, com a saída no meio, onde o olho já está. Mesma
-   gramática do convite "abrir browser". */
-.dock-browser-failure {
-  gap: 10px;
-  padding: 24px;
-  background: var(--panel-2);
-}
-
-.dock-browser-failure > svg {
-  width: 26px;
-  height: 26px;
-  color: var(--err-on-dark);
-}
-
-.dock-browser-failure-title {
-  font-size: 12.5px;
-  font-weight: 700;
-  color: var(--panel-ink);
-}
-
-.dock-browser-failure .dock-browser-empty-line {
-  max-width: 38ch;
-  line-height: 1.55;
-  color: var(--panel-ink-2);
-}
-
-.dock-browser-failure .dock-browser-open {
-  margin-top: 4px;
-  padding: 6px 14px;
-}
-
-.dock-browser-failure .dock-browser-empty-fine {
-  max-width: 38ch;
-  font-size: 10px;
 }
 
 /* ——— a alça da altura (trilho legado) ——— */

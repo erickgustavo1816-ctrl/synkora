@@ -14,7 +14,8 @@ import {
   BROWSER_TAB_CAP,
   activeBrowserTab,
   activeBrowserTabFailure,
-  browserNoticeRows,
+  browserFailureIdentity,
+  browserPageHidden,
   browserTabFailureTitle,
   browserTabLabel,
   browserTabOwnerPhrase,
@@ -27,16 +28,24 @@ import {
   browserViewportOf,
   browserViewportOptionLabel,
   browserViewportOptions,
+  browserViewportShortfall,
   browserViewportTitle,
-  liveNoticeDismissals,
+  liveBrowserWait,
   readBrowserAck,
   readViewportMode,
   tabCapNotice,
-  trimUrlInput,
-  type BrowserNoticeRow
+  trimUrlInput
 } from '../dockBrowserModel'
+import {
+  BROWSER_NOTICE_ACTION_WORDS,
+  browserFailureLook,
+  browserNoticeRows,
+  liveNoticeDismissals,
+  type BrowserNoticeRow
+} from '../browserNoticePresentation'
 import type { BrowserPanelState, BrowserTab, SynkoraApi } from '../../../preload/index'
 import './BrowserChrome.css'
+import './BrowserNotices.css'
 
 // O CHROME DO INSTRUMENTO — abas, barra, faixa de avisos e o que se pinta no
 // retângulo da página, comum aos DOIS hosts do browser da missão (o painel do
@@ -100,6 +109,26 @@ export function useBrowserRunner(): {
   return { notice, setNotice, run }
 }
 
+/**
+ * A ESPERA da página travada, comum aos dois hosts: `failureShown` diz se a
+ * página nativa sai de cena para o cartão; `wait` é o ESPERAR do cartão (o
+ * dono escolhe olhar a página travada). A espera morre com a falha que a
+ * motivou — mudou ou sumiu, a próxima volta ao cartão.
+ */
+export function useBrowserFailureWait(state: BrowserPanelState): {
+  failureShown: boolean
+  wait: () => void
+} {
+  const [waited, setWaited] = useState<string | null>(null)
+  const live = liveBrowserWait(state, waited)
+  // No RENDER, não num efeito: um quadro com a espera velha mostraria a página
+  // de uma falha nova que ninguém escolheu esperar.
+  if (live !== waited) setWaited(live)
+  const identity = browserFailureIdentity(state)
+  const wait = useCallback(() => setWaited(identity), [identity])
+  return { failureShown: browserPageHidden(state, live), wait }
+}
+
 const ADDRESS_SESSION_TITLE =
   'cookies e logins são da sessão deste universo — entrar uma vez vale para as próximas missões'
 
@@ -119,13 +148,12 @@ export function BrowserMessage({ text }: { text: string }): React.JSX.Element {
 
 const NO_DISMISSALS: ReadonlySet<string> = new Set()
 
-const NOTICE_ICONS = { error: 'alert', muted: 'queue', neutral: 'info' } as const
-
 /**
  * A FAIXA DE AVISOS: os recados do motor, da leitura, do gesto e da largura,
- * cada um com o seu tom e um ×. Dispensar vale para AQUELE recado: o que some
- * e volta — ou um carimbo novo do motor — aparece de novo. O recado do gesto é
- * do host, então o × dele o apaga lá.
+ * cada um com o tom, o ícone e a saída da SUA espécie
+ * (`browserNoticePresentation`) e um ×. Dispensar vale para AQUELE recado: o
+ * que some e volta — ou um carimbo novo do motor — aparece de novo. O recado do
+ * gesto é do host, então o × dele o apaga lá.
  */
 export function BrowserNoticeStrip({
   missionId,
@@ -144,7 +172,11 @@ export function BrowserNoticeStrip({
   notify: (text: string | null) => void
   run: BrowserRunner
 }): React.JSX.Element | null {
-  const rows = browserNoticeRows(state, error, notice)
+  const rows = browserNoticeRows(state, {
+    readError: error,
+    gesture: notice,
+    viewport: browserViewportShortfall(state)
+  })
   const [dismissed, setDismissed] = useState(NO_DISMISSALS)
   const rowKeys = rows.map((row) => row.key).join('\n')
   const rowsRef = useRef(rows)
@@ -158,6 +190,19 @@ export function BrowserNoticeStrip({
     else setDismissed((current) => new Set([...current, row.key]))
   }
 
+  const act = (row: BrowserNoticeRow): void => {
+    const action = row.action
+    if (!action) return
+    if (action.kind === 'reload') {
+      run((api) => api.reload(missionId))
+      return
+    }
+    // REABRIR resolve o recado: a linha sai junto, e um segundo clique não
+    // abre uma segunda aba do mesmo endereço.
+    run((api) => api.newTab(missionId, action.url))
+    dismiss(row)
+  }
+
   const shown = rows.filter((row) => !dismissed.has(row.key))
   if (shown.length === 0) return null
   return (
@@ -168,16 +213,24 @@ export function BrowserNoticeStrip({
           className={`dock-browser-info ${row.tone}`}
           role={row.tone === 'error' ? 'alert' : 'status'}
         >
-          <WorkspaceIcon name={NOTICE_ICONS[row.tone]} />
-          <span className="dock-browser-info-text">{row.text}</span>
-          {row.reload && (
+          <WorkspaceIcon name={row.icon} />
+          <span className="dock-browser-info-text">
+            {row.title && <b>{row.title}</b>}
+            {row.title ? ` — ${row.text}` : row.text}
+          </span>
+          {row.count && (
+            <span className="dock-browser-info-count" title={row.count.title}>
+              {row.count.label}
+            </span>
+          )}
+          {row.action && (
             <button
               type="button"
               className="dock-browser-info-act"
-              title="recarregar a página da aba ativa"
-              onClick={() => run((api) => api.reload(missionId))}
+              title={BROWSER_NOTICE_ACTION_WORDS[row.action.kind].title}
+              onClick={() => act(row)}
             >
-              recarregar
+              {BROWSER_NOTICE_ACTION_WORDS[row.action.kind].label}
             </button>
           )}
           <button
@@ -566,6 +619,8 @@ export function BrowserPageOverlay({
   missionId,
   state,
   painted,
+  failureShown,
+  onWait,
   run,
   urlRef,
   hiddenText = 'a página continua aberta — escondida enquanto esta tela está por cima'
@@ -574,6 +629,10 @@ export function BrowserPageOverlay({
   state: BrowserPanelState
   /** a medida concluiu que a página está à vista AGORA */
   painted: boolean
+  /** a falha da aba à vista toma o lugar da página (`useBrowserFailureWait`) */
+  failureShown: boolean
+  /** ESPERAR: o dono escolhe olhar a página travada */
+  onWait: () => void
   run: BrowserRunner
   /** quem abre o browser quer digitar um endereço: o foco cai na barra */
   urlRef: RefObject<HTMLInputElement | null>
@@ -600,25 +659,40 @@ export function BrowserPageOverlay({
       </div>
     )
   }
-  const failure = activeBrowserTabFailure(state)
+  const failure = failureShown ? activeBrowserTabFailure(state) : null
   if (failure) {
     const tab = activeBrowserTab(state)
     const reloading = tab?.loading === true
+    const look = browserFailureLook(failure)
     return (
       <div className="dock-browser-empty dock-browser-failure" role="alert">
-        <WorkspaceIcon name="alert" />
+        <WorkspaceIcon name={look.icon} />
         <span className="dock-browser-failure-title">{browserTabFailureTitle(failure)}</span>
         <span className="dock-browser-empty-line">{failure.text}</span>
-        <button
-          type="button"
-          className="dock-browser-open"
-          disabled={reloading}
-          title="recarregar a página desta aba"
-          onClick={() => run((api) => api.reload(missionId))}
-        >
-          {reloading ? 'recarregando…' : 'recarregar'}
-        </button>
+        <div className="dock-browser-failure-acts">
+          {look.canWait && (
+            <button
+              type="button"
+              className="dock-browser-open quiet"
+              title="voltar a mostrar a página e dar mais tempo a ela — o cartão volta se a falha mudar"
+              onClick={onWait}
+            >
+              esperar
+            </button>
+          )}
+          <button
+            type="button"
+            className="dock-browser-open"
+            disabled={reloading}
+            title="recarregar a página desta aba"
+            onClick={() => run((api) => api.reload(missionId))}
+          >
+            {reloading ? 'recarregando…' : 'recarregar'}
+          </button>
+        </div>
         {tab?.url && <span className="dock-browser-empty-fine">{tab.url}</span>}
+        {/* O código cru é diagnóstico, não frase: letra miúda, embaixo de tudo. */}
+        {failure.code && <span className="dock-browser-failure-code">{failure.code}</span>}
       </div>
     )
   }

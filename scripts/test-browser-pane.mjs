@@ -993,7 +993,8 @@ function makeManager(options = {}) {
     window: () => null,
     host,
     record: (input) => records.push(input),
-    push: (channel, ...args) => pushes.push({ channel, args })
+    push: (channel, ...args) => pushes.push({ channel, args }),
+    ...(options.now ? { now: options.now } : {})
   })
   const detaches = () => host.log.filter((entry) => entry.kind === 'detach').length
   // Existing geometry scenarios run with m1 open in the app. Navigation
@@ -1464,7 +1465,8 @@ test('MOTOR: o teto de 12 abas por missão RECUSA nomeando a receita (e vira not
   // A recusa também vira NOTA durável: o agente pode ter batido no teto sem o
   // dono estar olhando o painel.
   assert.equal(manager.state('m1').notice.kind, 'tab-cap')
-  assert.match(manager.state('m1').notice.text, /feche uma aba/u)
+  assert.equal(manager.state('m1').notice.title, `${BROWSER_TAB_CAP} abas é o teto desta missão`)
+  assert.equal(manager.state('m1').notice.text, 'feche uma (×) para abrir outra')
 
   // O teto é POR MISSÃO — a vizinha continua podendo abrir.
   assert.equal((await manager.newTab('m2', 'p')).ok, true)
@@ -1753,7 +1755,7 @@ test('NOTA: download barrado vira recado LEGÍVEL para o dono, além da caixa-pr
 
   const notice = manager.state('m1').notice
   assert.equal(notice.kind, 'download-blocked')
-  assert.match(notice.text, /relatorio-final\.zip/u)
+  assert.equal(notice.title, 'download barrado: relatorio-final.zip')
   // Beco sem saída é bug: a nota diz por onde o arquivo se consegue.
   assert.match(notice.text, /terminal da missão/u)
   assert.ok(Date.parse(notice.at) > 0, 'a nota tem carimbo — é ele que distingue dois avisos iguais')
@@ -1770,12 +1772,13 @@ test('NOTA: permissão negada, página que não carrega e página que cai també
 
   host.hooks.onPermissionDenied('geolocation', opened.webContents.id)
   assert.equal(manager.state('m1').notice.kind, 'permission-denied')
-  assert.match(manager.state('m1').notice.text, /geolocation/u)
+  assert.equal(manager.state('m1').notice.title, 'a página pediu a sua localização')
   assert.ok(records.some((entry) => entry.event === 'browser-permission-denied'))
 
   opened.webContents.emit('did-fail-load', {}, -105, 'ERR_NAME_NOT_RESOLVED', 'https://nao.existe/', true)
   assert.equal(manager.state('m1').notice.kind, 'load-failed')
-  assert.match(manager.state('m1').notice.text, /ERR_NAME_NOT_RESOLVED/u)
+  assert.equal(manager.state('m1').notice.title, 'a página não carregou')
+  assert.doesNotMatch(manager.state('m1').notice.text, /ERR_/u, 'o código do Chromium vai para a letra miúda, nunca para a frase')
 
   // -3 é ERR_ABORTED: navegação interrompida por outra navegação NÃO é falha —
   // um recado ali viraria ruído em todo clique de link.
@@ -1786,7 +1789,7 @@ test('NOTA: permissão negada, página que não carrega e página que cai també
 
   opened.webContents.emit('render-process-gone', {}, { reason: 'crashed' })
   assert.equal(manager.state('m1').notice.kind, 'crashed')
-  assert.match(manager.state('m1').notice.text, /⟳/u, 'a nota do crash nomeia o gesto que reabre')
+  assert.match(manager.state('m1').notice.text, /recarregar traz ela de volta/u, 'a nota do crash nomeia a saída')
 })
 
 test('NOTA: a guarda que dispara sem dono conhecido vai ao diário e NÃO inventa missão', async () => {
@@ -1805,14 +1808,14 @@ test('a recovered local preview clears its own load failure without erasing anot
   const second = await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_HELPER)
   first.webContents.emit('did-fail-load', {}, -102, 'ERR_CONNECTION_REFUSED', 'http://127.0.0.1:8790/', true)
   assert.match(manager.state('m1').notice.text, /prévia local.*8790/u)
-  assert.match(manager.state('m1').notice.text, /⟳/u)
+  assert.match(manager.state('m1').notice.text, /aguarde o servidor iniciar/u)
   second.webContents.emit('did-navigate', {}, 'https://a.test/', 200, 'OK')
   assert.equal(manager.state('m1').notice.kind, 'load-failed', 'another tab cannot retire this failure')
   first.webContents.emit('did-navigate', {}, 'http://127.0.0.1:8790/', 200, 'OK')
   assert.equal(manager.state('m1').notice, undefined, 'successful navigation retires the obsolete failure')
   first.webContents.emit('did-fail-load', {}, -102, 'ERR_CONNECTION_REFUSED', 'http://127.0.0.1:8790/', true)
-  // A notice with a different cause must survive recovery of the preview.
-  host.hooks.onPermissionDenied('geolocation', first.webContents.id)
+  // A notice another tab raised for a different cause must survive recovery of the preview.
+  host.hooks.onPermissionDenied('geolocation', second.webContents.id)
   first.webContents.emit('did-navigate', {}, 'http://127.0.0.1:8790/', 200, 'OK')
   assert.equal(manager.state('m1').notice.kind, 'permission-denied')
 })
@@ -1832,7 +1835,12 @@ test('FALHA POR ABA: a página que não carrega marca SÓ a sua aba, com o texto
   assert.equal(failureOf(manager, first.tabId), null, 'aba de pé viaja com `failure: null`, não ausente')
 
   first.webContents.emit('did-fail-load', {}, -105, 'ERR_NAME_NOT_RESOLVED', 'https://nao.existe/', true)
-  assert.deepEqual(failureOf(manager, first.tabId), { kind: 'load-failed', text: manager.state('m1').notice.text })
+  assert.deepEqual(failureOf(manager, first.tabId), {
+    kind: 'load-failed',
+    title: 'a página não carregou',
+    text: manager.state('m1').notice.text,
+    code: 'ERR_NAME_NOT_RESOLVED'
+  })
   assert.equal(failureOf(manager, second.tabId), null, 'a vizinha segue de pé')
 
   // Aborto e iframe não são falha da página — nem na nota, nem na aba.
@@ -1845,7 +1853,13 @@ test('FALHA POR ABA: a página que não carrega marca SÓ a sua aba, com o texto
     throw new Error("ERR_CONNECTION_REFUSED (-102) loading 'http://127.0.0.1:8790/'")
   }
   await manager.ensureTab('m1', 'p', 'http://127.0.0.1:8790/', OWNER_HELPER)
-  assert.deepEqual(failureOf(manager, second.tabId), { kind: 'load-failed', text: manager.state('m1').notice.text })
+  // Erro sem `code` (só a mensagem que o Electron monta): o nome sai do começo dela.
+  assert.deepEqual(failureOf(manager, second.tabId), {
+    kind: 'load-failed',
+    title: 'a página não carregou',
+    text: manager.state('m1').notice.text,
+    code: 'ERR_CONNECTION_REFUSED'
+  })
   assert.match(failureOf(manager, second.tabId).text, /8790/u)
   assert.equal(failureOf(manager, first.tabId).kind, 'load-failed', 'a falha da primeira não é da nota: é dela')
 })
@@ -1880,8 +1894,8 @@ test('FALHA POR ABA: a página que CAI vira `crashed` da aba, e voltar apaga a n
   second.webContents.emit('render-process-gone', {}, { reason: 'oom' })
   const notice = manager.state('m1').notice
   assert.equal(notice.kind, 'crashed')
-  assert.deepEqual(failureOf(manager, second.tabId), { kind: 'crashed', text: notice.text })
-  assert.match(failureOf(manager, second.tabId).text, /oom/u)
+  assert.deepEqual(failureOf(manager, second.tabId), { kind: 'crashed', title: 'a página caiu', text: notice.text, code: 'oom' })
+  assert.match(failureOf(manager, second.tabId).text, /sem memória/u)
   assert.equal(failureOf(manager, first.tabId), null, 'caiu o renderer da SEGUNDA, não o da primeira')
 
   second.webContents.emit('did-navigate', {}, 'https://b.test/', 200, 'OK')
@@ -1902,11 +1916,357 @@ test('FALHA POR ABA: voltar só apaga a nota que ELA levantou', async () => {
   assert.equal(manager.state('m1').notice.kind, 'crashed', 'o crash é da segunda, e ela segue caída')
   assert.equal(failureOf(manager, second.tabId).kind, 'crashed')
 
-  // Outro MOTIVO, na mesma aba, levantou a nota por último: ela sobrevive.
-  host.hooks.onPermissionDenied('geolocation', second.webContents.id)
+  // Outra ABA levantou, por último, uma nota de outro MOTIVO: ela sobrevive.
+  host.hooks.onPermissionDenied('geolocation', first.webContents.id)
   second.webContents.emit('did-navigate', {}, 'https://b.test/', 200, 'OK')
   assert.equal(failureOf(manager, second.tabId), null, 'a falha da aba sai mesmo com a nota sendo de outro')
   assert.equal(manager.state('m1').notice.kind, 'permission-denied')
+})
+
+// ————— CADA ERRO COM A SUA UI (lei 8, mockup de 2026-09-29 §6) —————
+//
+// O dono lê frase de gente: nada de nome cru de permissão ("media"), tool de
+// agente ("browser_wait") ou código do Chromium na cabeça ou na frase — o
+// código vai cru em `failure.code`. Recado repetido vira contador, e o recado
+// que perdeu a razão de existir some sozinho.
+
+/** O erro de rejeição do `loadURL` como o Electron o monta (`code` e `errno`). */
+const loadError = (name, errno, url) => Object.assign(new Error(`${name} (${errno}) loading '${url}'`), { errno, code: name })
+const settle = () => new Promise((resolve) => setImmediate(resolve))
+
+test('PERMISSÃO: a nota diz O QUE a página pediu, em palavras de gente — o nome cru fica no diário', async () => {
+  let clock = Date.parse('2026-09-29T12:00:00.000Z')
+  const { manager, host, records } = makeManager({ now: () => clock })
+  const opened = await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
+  const cases = [
+    ['media', { mediaTypes: ['video'] }, 'a página pediu a câmera'],
+    ['media', { mediaTypes: ['audio'] }, 'a página pediu o microfone'],
+    ['media', { mediaTypes: ['video', 'audio'] }, 'a página pediu a câmera e o microfone'],
+    ['geolocation', undefined, 'a página pediu a sua localização'],
+    // O caso real do dono ("permissão negada: storage-access — …").
+    ['storage-access', undefined, 'a página pediu acesso aos cookies de um conteúdo embutido de outro site'],
+    ['top-level-storage-access', undefined, 'a página pediu acesso aos cookies de outro site'],
+    ['permissao-que-ainda-nao-existe', undefined, 'a página pediu uma permissão do navegador']
+  ]
+  for (const [permission, details, title] of cases) {
+    host.hooks.onPermissionDenied(permission, opened.webContents.id, details)
+    const notice = manager.state('m1').notice
+    assert.equal(notice.kind, 'permission-denied')
+    assert.equal(notice.title, title)
+    assert.equal(notice.text, 'o browser da missão não libera isso por desenho; para testar, abra a página no seu browser')
+    assert.doesNotMatch(`${notice.title} ${notice.text}`, new RegExp(permission, 'u'), 'o nome cru não chega ao dono')
+    const logged = records.filter((entry) => entry.event === 'browser-permission-denied').at(-1)
+    assert.equal(logged.detail.permission, permission, 'o diário guarda o nome cru — é dado de diagnóstico')
+  }
+  const both = records.filter((entry) => entry.event === 'browser-permission-denied')[2]
+  assert.deepEqual(both.detail.mediaTypes, ['video', 'audio'], 'e os dispositivos do pedido')
+
+  // Login/vídeo embutido pede `storage-access` em silêncio e em LAÇO: é UMA
+  // linha que conta, com o carimbo parado — nunca uma faixa que pisca a cada
+  // pedido, nem uma linha dispensada que volta.
+  clock += 1000
+  const storage = () => host.hooks.onPermissionDenied('storage-access', opened.webContents.id)
+  storage()
+  const firstAsk = manager.state('m1').notice
+  assert.equal(firstAsk.count, undefined)
+  for (let n = 0; n < 3; n += 1) {
+    clock += 250
+    storage()
+  }
+  const looped = manager.state('m1').notice
+  assert.equal(looped.title, 'a página pediu acesso aos cookies de um conteúdo embutido de outro site')
+  assert.equal(looped.count, 4)
+  assert.equal(looped.at, firstAsk.at)
+})
+
+test('REPETIÇÃO: o mesmo recado conta ×N e GUARDA o carimbo — outro recado começa do zero', async () => {
+  let clock = Date.parse('2026-09-29T12:00:00.000Z')
+  const { manager, host } = makeManager({ now: () => clock })
+  const opened = await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
+  const camera = () => host.hooks.onPermissionDenied('media', opened.webContents.id, { mediaTypes: ['video'] })
+
+  camera()
+  const first = manager.state('m1').notice
+  assert.equal(first.count, undefined, 'a primeira vez não tem contador')
+  clock += 1000
+  camera()
+  clock += 1000
+  camera()
+  const looped = manager.state('m1').notice
+  assert.equal(looped.count, 3, 'a página que pede a câmera em laço é UMA linha "×3"')
+  assert.equal(looped.at, first.at, 'o carimbo é a identidade: a linha dispensada continua dispensada')
+
+  // Outro recado substitui, com carimbo novo e sem contador…
+  clock += 1000
+  host.hooks.onPermissionDenied('media', opened.webContents.id, { mediaTypes: ['audio'] })
+  const other = manager.state('m1').notice
+  assert.equal(other.count, undefined)
+  assert.notEqual(other.at, first.at)
+  // …e a volta do primeiro, depois de outro, também é recado novo.
+  clock += 1000
+  camera()
+  assert.equal(manager.state('m1').notice.count, undefined)
+  assert.notEqual(manager.state('m1').notice.at, first.at)
+
+  // Download repetido segue a mesma régua.
+  clock += 1000
+  host.hooks.onDownloadBlocked('a.zip', 'https://a.test/a.zip', opened.webContents.id)
+  const download = manager.state('m1').notice
+  clock += 1000
+  host.hooks.onDownloadBlocked('a.zip', 'https://a.test/a.zip', opened.webContents.id)
+  assert.equal(manager.state('m1').notice.count, 2)
+  assert.equal(manager.state('m1').notice.at, download.at)
+})
+
+test('CARGA: o erro de rede vira causa e saída em português — o código cru vai para a letra miúda', async () => {
+  const { manager } = makeManager()
+  const opened = await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
+  const cases = [
+    ['http://localhost:5173/', -102, 'ERR_CONNECTION_REFUSED', 'a prévia local na porta 5173 recusou a conexão — aguarde o servidor iniciar ou reinicie a prévia'],
+    ['https://remoto.test/', -102, 'ERR_CONNECTION_REFUSED', /^o servidor recusou a conexão — /u],
+    ['https://nao.existe/', -105, 'ERR_NAME_NOT_RESOLVED', /^o nome do site não foi encontrado — /u],
+    ['https://expirado.test/', -201, 'ERR_CERT_DATE_INVALID', /^o certificado de segurança do site não é válido — /u],
+    ['https://estranho.test/', -999, 'ERR_QUE_NINGUEM_MAPEOU', 'o carregamento falhou']
+  ]
+  for (const [url, errno, name, text] of cases) {
+    opened.webContents.emit('did-fail-load', {}, errno, name, url, true)
+    const failure = failureOf(manager, opened.tabId)
+    assert.equal(failure.title, 'a página não carregou')
+    if (typeof text === 'string') assert.equal(failure.text, text)
+    else assert.match(failure.text, text)
+    assert.equal(failure.code, name, 'o código cru viaja à parte')
+    assert.doesNotMatch(failure.text, /ERR_|⟳|browser_/u)
+    assert.equal(failure.text.includes(url), false, 'o cartão já mostra a URL; a frase fala da causa')
+    const notice = manager.state('m1').notice
+    assert.deepEqual([notice.title, notice.text], [failure.title, failure.text])
+  }
+
+  // A rejeição do `loadURL` chega DEPOIS do `did-fail-load` da mesma carga (é
+  // ele que a dispara, no Electron): a mesma falha vista duas vezes é UMA nota.
+  opened.webContents.loadURL = async (url) => {
+    opened.webContents.emit('did-fail-load', {}, -106, 'ERR_INTERNET_DISCONNECTED', url, true)
+    throw loadError('ERR_INTERNET_DISCONNECTED', -106, url)
+  }
+  await manager.navigate('m1', 'https://offline.test/')
+  assert.equal(failureOf(manager, opened.tabId).code, 'ERR_INTERNET_DISCONNECTED')
+  assert.match(failureOf(manager, opened.tabId).text, /sem internet/u)
+  assert.equal(manager.state('m1').notice.count, undefined, 'dois ouvidos, uma falha — nada de "×2"')
+
+  // Sem nome, o número do Chromium é o código.
+  opened.webContents.emit('did-fail-load', {}, -900, '', 'https://x.test/', true)
+  assert.deepEqual(
+    { text: failureOf(manager, opened.tabId).text, code: failureOf(manager, opened.tabId).code },
+    { text: 'o carregamento falhou', code: '-900' }
+  )
+})
+
+test('QUEDA: o motivo do processo vira frase com a saída — o motivo cru é o `code`', async () => {
+  const { manager } = makeManager()
+  const opened = await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
+  const cases = [
+    ['oom', 'o processo da página terminou (sem memória) — recarregar traz ela de volta'],
+    ['crashed', /quebrou — recarregar traz ela de volta$/u],
+    ['killed', /encerrado por fora — recarregar traz ela de volta$/u],
+    ['launch-failed', /não conseguiu iniciar — .*reinicie o Synkora$/u],
+    ['integrity-failure', /reinicie o Synkora$/u],
+    ['motivo-que-ainda-nao-existe', /tente recarregar$/u]
+  ]
+  for (const [reason, text] of cases) {
+    opened.webContents.emit('render-process-gone', {}, { reason, exitCode: 1 })
+    const failure = failureOf(manager, opened.tabId)
+    assert.equal(failure.kind, 'crashed')
+    assert.equal(failure.title, 'a página caiu')
+    if (typeof text === 'string') assert.equal(failure.text, text)
+    else assert.match(failure.text, text)
+    assert.equal(failure.code, reason)
+    assert.doesNotMatch(failure.text, new RegExp(`${reason}|⟳`, 'u'), 'o motivo cru não entra na frase')
+  }
+  opened.webContents.emit('render-process-gone', {}, {})
+  assert.equal('code' in failureOf(manager, opened.tabId), false, 'sem motivo, sem código inventado')
+})
+
+test('DEMORA: passar de 20 s vira nota da ABA (não falha) — e ela some quando a carga assenta', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const { manager } = makeManager()
+  const opened = await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
+  let finish = () => {}
+  opened.webContents.loadURL = (url) =>
+    new Promise((resolve) => {
+      finish = () => {
+        opened.webContents.url = url
+        resolve()
+      }
+    })
+
+  const going = manager.navigate('m1', 'https://lento.test/')
+  t.mock.timers.tick(20000)
+  await going
+  const notice = manager.state('m1').notice
+  assert.equal(notice.kind, 'load-slow', 'demora não é "não carregou"')
+  assert.equal(notice.title, 'a página está demorando')
+  assert.equal(notice.text, 'mais de 20 s carregando; ela continua tentando')
+  assert.equal(failureOf(manager, opened.tabId), null, 'a página não vira cartão de erro')
+
+  finish()
+  await settle()
+  assert.equal(manager.state('m1').notice, undefined, 'a carga assentou: a nota perdeu a razão de existir')
+
+  // A carga lenta que FALHA de verdade troca a demora pela falha.
+  opened.webContents.loadURL = (url) =>
+    new Promise((_resolve, reject) => {
+      finish = () => reject(loadError('ERR_CONNECTION_TIMED_OUT', -118, url))
+    })
+  const again = manager.navigate('m1', 'https://lento.test/b')
+  t.mock.timers.tick(20000)
+  await again
+  assert.equal(manager.state('m1').notice.kind, 'load-slow')
+  finish()
+  await settle()
+  assert.equal(manager.state('m1').notice.kind, 'load-failed')
+  assert.equal(failureOf(manager, opened.tabId).code, 'ERR_CONNECTION_TIMED_OUT')
+  assert.match(failureOf(manager, opened.tabId).text, /demorou demais/u)
+
+  // E a carga lenta que outra navegação ABORTA também leva a demora dela.
+  opened.webContents.loadURL = (url) =>
+    new Promise((_resolve, reject) => {
+      finish = () => reject(loadError('ERR_ABORTED', -3, url))
+    })
+  opened.webContents.emit('did-navigate', {}, 'https://a.test/', 200, 'OK')
+  const aborted = manager.navigate('m1', 'https://lento.test/c')
+  t.mock.timers.tick(20000)
+  await aborted
+  assert.equal(manager.state('m1').notice.kind, 'load-slow')
+  finish()
+  await settle()
+  assert.equal(manager.state('m1').notice, undefined)
+})
+
+test('TRAVA: a página que para de responder vira cartão da aba — e sai sozinha quando ela responde', async () => {
+  const { manager, host } = makeManager()
+  const first = await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
+  const second = await manager.ensureTab('m1', 'p', 'https://b.test/', OWNER_HELPER)
+
+  second.webContents.emit('unresponsive')
+  const frozen = {
+    kind: 'unresponsive',
+    title: 'a página parou de responder',
+    text: 'algum script dela está preso — espere mais um pouco ou recarregue'
+  }
+  assert.deepEqual(failureOf(manager, second.tabId), frozen)
+  assert.deepEqual(
+    (({ kind, title, text }) => ({ kind, title, text }))(manager.state('m1').notice),
+    frozen,
+    'a nota da missão nasce junto'
+  )
+  assert.equal(failureOf(manager, first.tabId), null, 'travou a SEGUNDA')
+
+  second.webContents.emit('responsive')
+  assert.equal(failureOf(manager, second.tabId), null)
+  assert.equal(manager.state('m1').notice, undefined, 'voltou a responder: o recado perdeu a razão')
+
+  // `responsive` só desfaz TRAVA — nunca uma queda, nem a nota de outra causa.
+  second.webContents.emit('render-process-gone', {}, { reason: 'crashed' })
+  second.webContents.emit('responsive')
+  assert.equal(failureOf(manager, second.tabId).kind, 'crashed')
+  second.webContents.emit('did-navigate', {}, 'https://b.test/', 200, 'OK')
+  second.webContents.emit('unresponsive')
+  host.hooks.onPermissionDenied('geolocation', second.webContents.id)
+  second.webContents.emit('responsive')
+  assert.equal(failureOf(manager, second.tabId), null)
+  assert.equal(manager.state('m1').notice.kind, 'permission-denied')
+})
+
+test('ABA PERDIDA: só a morte POR FORA vira nota (com o endereço do REABRIR) — o × e o teardown não', async () => {
+  const { manager, host, records } = makeManager()
+  const first = await manager.ensureTab('m1', 'p', 'https://www.figma.com/design/k3P9', OWNER_DEV)
+  const second = await manager.ensureTab('m1', 'p', 'https://b.test/x', OWNER_HELPER)
+  first.webContents.title = 'Figma — tokens do tema'
+  first.webContents.emit('page-title-updated')
+
+  first.webContents.destroyed = true
+  first.webContents.emit('destroyed')
+  const notice = manager.state('m1').notice
+  assert.equal(notice.kind, 'tab-lost')
+  assert.equal(notice.title, 'a aba "Figma — tokens do tema" fechou sozinha')
+  assert.equal(notice.text, 'a página morreu sem volta')
+  assert.equal(notice.url, 'https://www.figma.com/design/k3P9')
+  assert.ok(records.some((entry) => entry.event === 'browser-tab-lost'), 'e o diário registra')
+  // A nota não é de aba: a troca de página da vizinha não a apaga.
+  second.webContents.url = 'https://b.test/y'
+  second.webContents.emit('did-navigate', {}, 'https://b.test/y', 200, 'OK')
+  assert.equal(manager.state('m1').notice.kind, 'tab-lost')
+
+  // Sem título, o nome é o HOST — nunca a URL inteira.
+  second.webContents.title = ''
+  second.webContents.emit('page-title-updated')
+  second.webContents.destroyed = true
+  second.webContents.emit('destroyed')
+  assert.equal(manager.state('m1').notice.title, 'a aba "b.test" fechou sozinha')
+  assert.equal(manager.state('m1').notice.url, 'https://b.test/y')
+
+  // O × do dono NÃO é aba perdida — nem quando o `close` dispara `destroyed`,
+  // como no Electron.
+  const lostCount = () => records.filter((entry) => entry.event === 'browser-tab-lost').length
+  const before = lostCount()
+  const third = await manager.newTab('m1', 'p', 'https://c.test/')
+  const fourth = await manager.newTab('m1', 'p', 'https://d.test/')
+  for (const view of host.views.slice(-2)) {
+    const close = view.webContents.close
+    view.webContents.close = () => {
+      close()
+      view.webContents.emit('destroyed')
+    }
+  }
+  const standing = manager.state('m1').notice
+  assert.equal(manager.closeTab('m1', third.tabId), true)
+  assert.equal(lostCount(), before, 'o gesto do dono não é notícia')
+  assert.deepEqual(manager.state('m1').notice, standing, 'nem nota nova, nem contador na que já estava')
+
+  // Encerramento do app (janela já fora): a view que morre não é notícia.
+  const fifth = await manager.newTab('m1', 'p', 'https://e.test/')
+  host.size = null
+  const view = host.views.at(-1)
+  view.webContents.destroyed = true
+  view.webContents.emit('destroyed')
+  assert.equal(lostCount(), before)
+  host.size = { width: 1440, height: 900 }
+  manager.closeMission('m1')
+  assert.equal(lostCount(), before, 'o teardown da missão também não')
+  assert.ok(fourth.ok && fifth.ok)
+})
+
+test('VIDA DA NOTA: o recado de uma aba some quando a página DELA troca ou a aba fecha — o de outra fica', async () => {
+  const { manager, host } = makeManager()
+  const first = await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
+  const second = await manager.ensureTab('m1', 'p', 'https://b.test/', OWNER_HELPER)
+
+  host.hooks.onPermissionDenied('media', first.webContents.id, { mediaTypes: ['video'] })
+  second.webContents.emit('did-navigate', {}, 'https://b.test/2', 200, 'OK')
+  assert.equal(manager.state('m1').notice.kind, 'permission-denied', 'a troca de página de OUTRA aba não a aposenta')
+  first.webContents.emit('did-navigate-in-page', {}, 'https://a.test/#rota', true)
+  assert.equal(manager.state('m1').notice.kind, 'permission-denied', 'rota interna (SPA) não é página nova')
+  first.webContents.emit('did-navigate', {}, 'https://a.test/2', 200, 'OK')
+  assert.equal(manager.state('m1').notice, undefined, 'a página que pediu saiu: o recado perdeu a razão')
+
+  host.hooks.onDownloadBlocked('x.zip', 'https://b.test/x.zip', second.webContents.id)
+  second.webContents.emit('did-navigate', {}, 'https://b.test/3', 200, 'OK')
+  assert.equal(manager.state('m1').notice, undefined, 'download também é da aba')
+
+  // A permissão pedida DURANTE a carga sobrevive ao fim dela: o `loadURL` que
+  // resolve só aposenta notas de carga — a página nova já está de pé.
+  first.webContents.loadURL = async (url) => {
+    first.webContents.url = url
+    first.webContents.emit('did-navigate', {}, url, 200, 'OK')
+    host.hooks.onPermissionDenied('geolocation', first.webContents.id)
+  }
+  await manager.ensureTab('m1', 'p', 'https://a.test/3', OWNER_DEV)
+  assert.equal(manager.state('m1').notice.kind, 'permission-denied')
+
+  // Fechar a aba que pediu também leva o recado dela (o RECARREGAR/contexto
+  // cairia na aba que ficou ativa).
+  host.hooks.onPermissionDenied('geolocation', second.webContents.id)
+  assert.equal(manager.closeTab('m1', second.tabId), true)
+  assert.equal(manager.state('m1').notice, undefined)
 })
 
 // ————— captura, ⚡ e geometria da janela —————

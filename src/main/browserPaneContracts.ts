@@ -136,18 +136,40 @@ export interface BrowserTabView {
   failure: BrowserTabFailure | null
 }
 
+/** `title` é a cabeça curta do cartão ("a página caiu"); `text`, a frase de
+ *  gente que explica e aponta a saída — nunca código do Chromium. `code` é o
+ *  código cru (ERR_…, motivo do crash) para diagnóstico, em letra miúda. */
 export interface BrowserTabFailure {
-  kind: 'load-failed' | 'crashed'
+  kind: 'load-failed' | 'crashed' | 'unresponsive'
+  title: string
   text: string
+  code?: string
 }
 
 /** Nota legível do motor para o dono (o "evento legível" do download barrado).
  *  Viaja DENTRO do state — mensagem durável com recibo, nunca um pulso que se
  *  perde se o painel ainda não estava montado. */
 export interface BrowserNotice {
-  kind: 'download-blocked' | 'tab-cap' | 'permission-denied' | 'load-failed' | 'crashed' | 'reference-failed'
+  kind:
+    | 'download-blocked'
+    | 'tab-cap'
+    | 'permission-denied'
+    | 'load-failed'
+    | 'load-slow'
+    | 'crashed'
+    | 'unresponsive'
+    | 'tab-lost'
+    | 'reference-failed'
+  /** a cabeça em negrito da linha ("a página pediu a câmera") — opcional */
+  title?: string
+  /** a frase de gente; com `title`, é o complemento dele */
   text: string
+  /** carimbo de IDENTIDADE: a repetição coalescida mantém o mesmo `at` */
   at: string
+  /** quantas vezes o MESMO recado se repetiu (≥ 2 vira "×N" na faixa) */
+  count?: number
+  /** `tab-lost`: o endereço da aba que morreu, para o REABRIR */
+  url?: string
 }
 
 /** Onde a página desta missão está pendurada AGORA. Espelho declarado do

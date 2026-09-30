@@ -220,7 +220,7 @@ export function normalizeBrowserPanel(value: unknown): BrowserPanelState {
     const owner = readTabOwner(tab.owner)
     if (owner) view.owner = owner
     if (bool(tab.driving)) view.driving = true
-    const failure = readEngineWords(tab.failure)
+    const failure = readTabFailure(tab.failure)
     if (failure) view.failure = failure
     tabs.push(view)
   }
@@ -261,16 +261,40 @@ export function browserIsPopout(state: BrowserPanelState): boolean {
 
 /** Palavras do motor (a nota da missão, a falha de uma aba) só entram na tela
  *  se tiverem TEXTO: uma nota muda ocuparia uma linha dizendo nada. */
-function readEngineWords(value: unknown): BrowserTabFailure | null {
+function readEngineWords(value: unknown): { kind: string; text: string; title?: string } | null {
   if (!value || typeof value !== 'object') return null
-  const bag = value as { kind?: unknown; text?: unknown }
+  const bag = value as { kind?: unknown; text?: unknown; title?: unknown }
   const text = str(bag.text).trim()
-  return text ? { kind: str(bag.kind), text } : null
+  if (!text) return null
+  // Os campos opcionais só são escritos quando o motor os manda: a ausência é
+  // o motor anterior, e uma segunda grafia repintaria o dock à toa.
+  const words: { kind: string; text: string; title?: string } = { kind: str(bag.kind), text }
+  const title = str(bag.title).trim()
+  if (title) words.title = title
+  return words
+}
+
+function readTabFailure(value: unknown): BrowserTabFailure | null {
+  const words = readEngineWords(value)
+  if (!words) return null
+  const failure: BrowserTabFailure = words
+  const code = str((value as { code?: unknown }).code).trim()
+  if (code) failure.code = code
+  return failure
 }
 
 function readBrowserNotice(value: unknown): BrowserNoticeView | null {
   const words = readEngineWords(value)
-  return words ? { ...words, at: str((value as { at?: unknown }).at) } : null
+  if (!words) return null
+  const bag = value as { at?: unknown; count?: unknown; url?: unknown }
+  const notice: BrowserNoticeView = { ...words, at: str(bag.at) }
+  // Só a REPETIÇÃO conta (≥ 2 vira "×N"); um recado só é o padrão.
+  if (typeof bag.count === 'number' && Number.isFinite(bag.count) && bag.count >= 2) {
+    notice.count = Math.floor(bag.count)
+  }
+  const url = str(bag.url).trim()
+  if (url) notice.url = url
+  return notice
 }
 
 /** Ack de alavanca, lido com a mesma frouxidão: `undefined` de um motor que
@@ -306,8 +330,17 @@ export function sameBrowserPanel(a: BrowserPanelState, b: BrowserPanelState): bo
     return false
   }
   // A nota do motor tem CARIMBO: duas notas do mesmo texto em momentos
-  // diferentes são dois avisos, e o segundo precisa chegar à tela.
-  if (a.notice?.at !== b.notice?.at || a.notice?.text !== b.notice?.text) return false
+  // diferentes são dois avisos, e o segundo precisa chegar à tela. A repetição
+  // coalescida MANTÉM o carimbo — é o contador que muda o "×N".
+  if (
+    a.notice?.at !== b.notice?.at ||
+    a.notice?.text !== b.notice?.text ||
+    a.notice?.title !== b.notice?.title ||
+    a.notice?.count !== b.notice?.count ||
+    a.notice?.url !== b.notice?.url
+  ) {
+    return false
+  }
   if (a.tabs.length !== b.tabs.length) return false
   return a.tabs.every((tab, index) => {
     const other = b.tabs[index]
@@ -327,7 +360,9 @@ export function sameBrowserPanel(a: BrowserPanelState, b: BrowserPanelState): bo
       tab.owner?.label === other.owner?.label &&
       // A FALHA acende o cartão de erro na página e a marca na aba.
       tab.failure?.kind === other.failure?.kind &&
-      tab.failure?.text === other.failure?.text
+      tab.failure?.text === other.failure?.text &&
+      tab.failure?.title === other.failure?.title &&
+      tab.failure?.code === other.failure?.code
     )
   })
 }
@@ -372,16 +407,45 @@ export function browserTabOwnerPhrase(tab: BrowserTab): string | null {
   return `aba de ${owner.label}`
 }
 
-/** O título do cartão de erro, pela ESPÉCIE da falha (nunca pelo texto). */
+/** O título do cartão de erro: o do motor e, no motor anterior (sem `title`),
+ *  o da ESPÉCIE da falha — nunca derivado do texto. */
 export function browserTabFailureTitle(failure: BrowserTabFailure): string {
+  if (failure.title) return failure.title
   if (failure.kind === 'load-failed') return 'a página não carregou'
   if (failure.kind === 'crashed') return 'a página caiu'
+  if (failure.kind === 'unresponsive') return 'a página parou de responder'
   return 'a página falhou'
 }
 
 /** A falha da aba À VISTA — é ela que troca a página nativa pelo cartão. */
 export function activeBrowserTabFailure(state: BrowserPanelState): BrowserTabFailure | null {
   return activeBrowserTab(state)?.failure ?? null
+}
+
+// ————— ESPERAR A PÁGINA TRAVADA (2026-09-29) —————
+//
+// ESPERAR é o dono escolhendo OLHAR a página travada em vez do cartão: o host
+// para de esconder a página por AQUELA falha (aba + espécie + texto). Falha que
+// muda ou some encerra a espera — a próxima volta ao cartão.
+
+/** A identidade da falha à vista; `null` = página de pé. */
+export function browserFailureIdentity(state: BrowserPanelState): string | null {
+  const tab = activeBrowserTab(state)
+  if (!tab?.failure) return null
+  return `${tab.tabId}\n${tab.failure.kind}\n${tab.failure.text}`
+}
+
+/** A espera que ainda vale: a MESMA string enquanto a falha é a mesma, `null`
+ *  quando ela mudou ou sumiu (espelho do `liveNoticeDismissals`). */
+export function liveBrowserWait(state: BrowserPanelState, waited: string | null): string | null {
+  return waited !== null && waited === browserFailureIdentity(state) ? waited : null
+}
+
+/** O host ESCONDE a página nativa (e o retângulo mostra o cartão)? Só com a
+ *  aba à vista em falha que o dono não escolheu esperar. */
+export function browserPageHidden(state: BrowserPanelState, waited: string | null): boolean {
+  const identity = browserFailureIdentity(state)
+  return identity !== null && identity !== waited
 }
 
 /** A frase inteira da aba: de quem é, que página é, e o que a ficha e a marca
@@ -436,70 +500,6 @@ export function browserSectionSummary(
 export function tabCapNotice(count: number): string | null {
   if (count < BROWSER_TAB_CAP) return null
   return `teto de ${BROWSER_TAB_CAP} abas nesta missão — feche uma (×) para abrir outra`
-}
-
-// ————— A FAIXA DE AVISOS (2026-09-29) —————
-//
-// Os recados moram DENTRO do corpo, entre a barra e a página, e fecham com ×
-// (`docs/mockups/browser-chrome-2026-09-29.html`). O tom diz a natureza: erro
-// (motor, gesto recusado), cinza (leitura falhou — a tela é a última
-// fotografia) e neutro (largura que não coube, situação e não falha).
-
-export type BrowserNoticeTone = 'error' | 'muted' | 'neutral'
-
-export interface BrowserNoticeRow {
-  /** identidade do recado: dispensar vale para ELE, não para os próximos */
-  key: string
-  source: 'engine' | 'read' | 'gesture' | 'viewport'
-  tone: BrowserNoticeTone
-  text: string
-  /** carga ou queda da página: a linha traz RECARREGAR */
-  reload: boolean
-}
-
-const PAGE_FAILURE_KINDS: readonly string[] = ['load-failed', 'crashed']
-
-/**
- * As linhas da faixa, na ordem em que o dono lê. A nota de carga/queda do motor
- * NÃO se repete quando o motor já conta a falha POR ABA — o cartão na página
- * diz isso onde o olho está; motor anterior sem `failure` cai na faixa.
- */
-export function browserNoticeRows(
-  state: BrowserPanelState,
-  readError: string | null,
-  gestureNotice: string | null
-): BrowserNoticeRow[] {
-  const rows: BrowserNoticeRow[] = []
-  const notice = state.notice
-  const pageFailure = notice !== undefined && PAGE_FAILURE_KINDS.includes(notice.kind)
-  if (notice && !(pageFailure && state.tabs.some((tab) => tab.failure))) {
-    const key = `engine:${notice.at || notice.text}`
-    rows.push({ key, source: 'engine', tone: 'error', text: notice.text, reload: pageFailure })
-  }
-  if (readError) {
-    rows.push({ key: `read:${readError}`, source: 'read', tone: 'muted', text: readError, reload: false })
-  }
-  if (gestureNotice) {
-    const key = `gesture:${gestureNotice}`
-    rows.push({ key, source: 'gesture', tone: 'error', text: gestureNotice, reload: false })
-  }
-  const shortfall = browserViewportShortfall(state)
-  if (shortfall) {
-    rows.push({ key: `viewport:${shortfall}`, source: 'viewport', tone: 'neutral', text: shortfall, reload: false })
-  }
-  return rows
-}
-
-/** Dispensar vale enquanto o recado EXISTE: o que sumiu e voltou é recado
- *  novo. Devolve o MESMO conjunto quando nada caiu (sem render à toa). */
-export function liveNoticeDismissals(
-  dismissed: ReadonlySet<string>,
-  rows: readonly BrowserNoticeRow[]
-): ReadonlySet<string> {
-  if (!dismissed.size) return dismissed
-  const live = new Set(rows.map((row) => row.key))
-  const kept = [...dismissed].filter((key) => live.has(key))
-  return kept.length === dismissed.size ? dismissed : new Set(kept)
 }
 
 // ————— GEOMETRIA —————

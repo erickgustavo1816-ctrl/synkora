@@ -274,52 +274,99 @@ test('ABAS: a dica nativa da aba é a frase inteira e, embaixo, o endereço', ()
   assert.equal(model.browserTabTitle(state.tabs[2]), 'aba de inv-brand · QA visual · a página não carregou')
 })
 
-test('FAIXA: cada recado tem o SEU tom, a sua identidade e, na carga/queda, RECARREGAR', () => {
-  const state = painel([dono({ viewport: 1280 })], {
-    viewport: 1280,
-    viewportWidth: 1200,
-    notice: { kind: 'load-failed', text: 'a prévia recusou a conexão', at: '2026-09-29T20:00:00.000Z' }
+// ————— CADA ERRO COM A SUA UI (2026-09-29, lei 8 do playbook) —————
+//
+// O motor passou a mandar a cabeça (`title`), o código cru (`code`), o
+// contador da repetição (`count`) e o endereço da aba que morreu (`url`). A
+// FORMA de cada recado é da `test-browser-notices.mjs`; aqui se prende o
+// espelho, o portão do store e a ESPERA da página travada.
+
+test('ESPELHO: os campos novos do motor atravessam — e a ausência não é escrita', () => {
+  const state = painel([doDev({ failure: falhou({ title: '  a prévia não respondeu ', code: ' ERR_CONNECTION_REFUSED ' }) })], {
+    notice: {
+      kind: 'permission-denied',
+      title: ' a página pediu a câmera ',
+      text: 'o browser da missão não libera dispositivos.',
+      at: 'c1',
+      count: 3.7,
+      url: '  '
+    }
   })
-  const rows = model.browserNoticeRows(state, 'não deu para ler o browser: timeout', 'teto de 12 abas nesta missão')
-  assert.deepEqual(
-    rows.map((row) => [row.source, row.tone, row.reload]),
-    [
-      ['engine', 'error', true],
-      ['read', 'muted', false],
-      ['gesture', 'error', false],
-      ['viewport', 'neutral', false]
-    ]
-  )
-  assert.equal(rows[0].key, 'engine:2026-09-29T20:00:00.000Z', 'a nota do motor é identificada pelo CARIMBO')
-  assert.match(rows[3].text, /estreito demais para 1280px/u)
-  assert.equal(new Set(rows.map((row) => row.key)).size, rows.length, 'identidades nunca colidem entre fontes')
+  assert.deepEqual(state.notice, {
+    kind: 'permission-denied',
+    title: 'a página pediu a câmera',
+    text: 'o browser da missão não libera dispositivos.',
+    at: 'c1',
+    count: 3
+  })
+  assert.deepEqual(state.tabs[0].failure, {
+    kind: 'load-failed',
+    title: 'a prévia não respondeu',
+    text: 'a prévia na porta 5173 recusou a conexão',
+    code: 'ERR_CONNECTION_REFUSED'
+  })
 
-  // Nota que não é de página (download barrado) não oferece RECARREGAR.
-  const download = painel([dono()], { notice: { kind: 'download-blocked', text: 'download barrado', at: 't1' } })
-  assert.deepEqual(model.browserNoticeRows(download, null, null).map((row) => row.reload), [false])
-  assert.deepEqual(model.browserNoticeRows(painel([dono()]), null, null), [], 'sem recado, sem faixa')
+  const morta = painel([dono()], {
+    notice: { kind: 'tab-lost', text: 'a aba fechou sozinha', at: 'l1', url: 'https://example.test/a' }
+  })
+  assert.equal(morta.notice.url, 'https://example.test/a')
+
+  // Motor ANTERIOR e payload torto: nada inventado, nenhuma segunda grafia.
+  for (const count of [1, 0, -2, '3', Number.NaN, Number.POSITIVE_INFINITY]) {
+    const torto = painel([dono()], { notice: { kind: 'tab-cap', text: 'teto', at: 't', count, title: 7, url: 9 } })
+    assert.deepEqual(torto.notice, { kind: 'tab-cap', text: 'teto', at: 't' }, `count ${String(count)}`)
+  }
+  const velha = painel([doDev({ failure: { kind: 'crashed', text: 'caiu', title: '   ', code: 42 } })])
+  assert.deepEqual(velha.tabs[0].failure, { kind: 'crashed', text: 'caiu' })
 })
 
-test('FAIXA: com a falha POR ABA, a nota de carga/queda não se repete — o cartão já diz', () => {
-  const nota = { kind: 'crashed', text: 'a página caiu', at: 't9' }
-  const comFalha = painel([dono(), doDev({ active: false, failure: falhou({ kind: 'crashed' }) })], { notice: nota })
-  assert.deepEqual(model.browserNoticeRows(comFalha, null, null), [])
-  // Motor ANTERIOR (sem `failure`): a faixa é o único lugar do recado.
-  const motorVelho = painel([dono()], { notice: nota })
-  assert.equal(model.browserNoticeRows(motorVelho, null, null)[0]?.reload, true)
-  // Recado que não é de página segue na faixa mesmo com aba em erro.
-  const download = painel([doDev({ failure: falhou() })], { notice: { kind: 'download-blocked', text: 'barrado', at: 't2' } })
-  assert.equal(model.browserNoticeRows(download, null, null).length, 1)
+test('PORTÃO: o ×N subir repinta — o carimbo da repetição coalescida é o MESMO', () => {
+  const nota = (over = {}) => painel([dono()], { notice: { kind: 'permission-denied', text: 'câmera', at: 'c1', count: 2, ...over } })
+  assert.equal(sameBrowserPanel(nota(), nota()), true)
+  assert.equal(sameBrowserPanel(nota(), nota({ count: 3 })), false, 'o contador mudou com o carimbo igual')
+  assert.equal(sameBrowserPanel(nota(), nota({ title: 'a página pediu a câmera' })), false, 'a cabeça nasceu')
+  assert.equal(sameBrowserPanel(nota(), nota({ url: 'https://example.test/' })), false, 'o REABRIR ganhou endereço')
+
+  const falha = (over = {}) => painel([doDev({ failure: falhou(over) })])
+  assert.equal(sameBrowserPanel(falha({ code: 'ERR_A' }), falha({ code: 'ERR_A' })), true)
+  assert.equal(sameBrowserPanel(falha(), falha({ title: 'a prévia não respondeu' })), false, 'a cabeça do cartão mudou')
+  assert.equal(sameBrowserPanel(falha({ code: 'ERR_A' }), falha({ code: 'ERR_B' })), false, 'o código miúdo mudou')
 })
 
-test('FAIXA: dispensar vale enquanto o recado existe — o que some e volta é recado novo', () => {
-  const rows = model.browserNoticeRows(painel([dono()]), 'leitura falhou', null)
-  const vazio = new Set()
-  assert.equal(model.liveNoticeDismissals(vazio, rows), vazio, 'nada a podar devolve o MESMO conjunto')
-  const dispensado = new Set([rows[0].key])
-  assert.equal(model.liveNoticeDismissals(dispensado, rows), dispensado, 'o recado vivo continua dispensado')
-  const sumiu = model.liveNoticeDismissals(dispensado, [])
-  assert.equal(sumiu.size, 0, 'o recado sumiu: a próxima vez que ele vier, aparece')
+test('FALHA: a cabeça do MOTOR vence; sem ela, a espécie — e a página travada tem a sua', () => {
+  assert.equal(model.browserTabFailureTitle(falhou({ title: 'a prévia não respondeu' })), 'a prévia não respondeu')
+  assert.equal(model.browserTabFailureTitle({ kind: 'unresponsive', text: 'preso' }), 'a página parou de responder')
+  // A frase da aba (dica nativa e leitor de tela) conta a MESMA cabeça.
+  const state = painel([doAjudante('inv-brand', { failure: { kind: 'unresponsive', text: 'preso' } })])
+  assert.equal(model.browserTabSentence(state.tabs[0]), 'aba de inv-brand · QA visual · a página parou de responder')
+})
+
+test('ESPERAR: o dono olha a página travada até a falha MUDAR ou SUMIR', () => {
+  const travada = (over = {}) => ({ kind: 'unresponsive', text: 'algum script dela está preso', ...over })
+  const state = painel([doDev({ failure: travada() }), dono({ tabId: 'b', active: false })])
+  const identity = model.browserFailureIdentity(state)
+  assert.equal(typeof identity, 'string')
+  assert.equal(model.browserPageHidden(state, null), true, 'sem espera, o cartão toma o lugar da página')
+  assert.equal(model.browserPageHidden(state, identity), false, 'ESPERAR: a página volta à vista')
+  assert.equal(model.liveBrowserWait(state, identity), identity, 'a mesma falha mantém a espera (mesma string)')
+
+  // A falha MUDOU (outro texto, outra espécie): a espera era por aquela.
+  const outra = painel([doDev({ failure: travada({ text: 'ainda preso, agora no layout' }) }), dono({ tabId: 'b', active: false })])
+  assert.equal(model.liveBrowserWait(outra, identity), null)
+  assert.equal(model.browserPageHidden(outra, identity), true)
+  const caiu = painel([doDev({ failure: travada({ kind: 'crashed' }) }), dono({ tabId: 'b', active: false })])
+  assert.equal(model.browserPageHidden(caiu, identity), true)
+
+  // A MESMA falha em OUTRA aba não herda a espera.
+  const outraAba = painel([doDev({ active: false }), dono({ tabId: 'b', failure: travada() })])
+  assert.equal(model.browserPageHidden(outraAba, identity), true)
+
+  // A falha SUMIU: nada a esconder, e a espera morre junto.
+  const dePe = painel([doDev(), dono({ tabId: 'b', active: false })])
+  assert.equal(model.browserFailureIdentity(dePe), null)
+  assert.equal(model.browserPageHidden(dePe, identity), false)
+  assert.equal(model.liveBrowserWait(dePe, identity), null)
+  assert.equal(model.browserPageHidden(model.EMPTY_BROWSER_PANEL, null), false)
 })
 
 test('LARGURA: a nota de moldura vira a dica do seletor e a do piso vira linha da faixa', () => {

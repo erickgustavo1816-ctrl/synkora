@@ -931,7 +931,11 @@ export interface BrowserTab {
  *  mesmo motivo do `BrowserNoticeView`: o motor é o dono do vocabulário. */
 export interface BrowserTabFailure {
   kind: string
+  /** cabeça do cartão; ausente (motor anterior) = o chrome deriva do `kind` */
+  title?: string
   text: string
+  /** código cru para diagnóstico (ERR_…, motivo do crash), em letra miúda */
+  code?: string
 }
 
 /** Nota legível do MOTOR para o dono (download barrado, teto de abas, página
@@ -941,8 +945,14 @@ export interface BrowserTabFailure {
  *  um valor novo não pode quebrar a tela. */
 export interface BrowserNoticeView {
   kind: string
+  /** cabeça em negrito da linha — espelho do `BrowserNotice.title` do main */
+  title?: string
   text: string
   at: string
+  /** repetições coalescidas do MESMO recado (≥ 2 vira "×N") */
+  count?: number
+  /** `tab-lost`: endereço da aba que morreu, para o REABRIR */
+  url?: string
 }
 
 /** ONDE a página desta missão está: no painel do dock ou numa JANELA PRÓPRIA

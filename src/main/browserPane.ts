@@ -92,7 +92,20 @@ import type {
 // corte de 2026-08-29, pelo mesmo motivo do `./browserPaneHost`. Extensionless
 // pela mesma razão declarada acima.
 import { createBrowserHostMachine } from './browserPaneHosting'
-import { browserLoadFailureText } from './browserLoadFailure'
+// AS PALAVRAS PARA O DONO (lei 8 do mockup de 2026-09-29): toda frase de nota e
+// de cartão sai de lá, escolhida por sinal estrutural. Aqui mora só QUANDO.
+import {
+  browserCrashFailure,
+  browserDownloadNotice,
+  browserLoadFailure,
+  browserLoadSlowNotice,
+  browserNetError,
+  browserPermissionNotice,
+  browserTabCapNotice,
+  browserTabLostNotice,
+  browserUnresponsiveFailure,
+  type BrowserNoticeCopy
+} from './browserLoadFailure'
 import { installBrowserReferencePicker } from './browserReferencePicker'
 import { resolveBrowserSurfaceLayout, roundBrowserRect as roundRect } from './browserSurfaceLayout'
 // OS SETE GESTOS DO DONO (barra de URL, +, ← → ⟳, × e devtools) moram no módulo
@@ -209,6 +222,10 @@ export type { BrowserTabOwner, BrowserTabOwnerKind } from './browserTabOwner'
 const BROWSER_CHANGE_COALESCE_MS = 40
 /** Teto do `loadURL` do gesto: página que não responde não prende a tool. */
 const BROWSER_LOAD_TIMEOUT_MS = 20000
+/** As notas de CARGA que uma aba levanta: o `loadURL` que resolve as aposenta.
+ *  Permissão e download pedidos pela página nova no meio da carga ficam — só a
+ *  TROCA de página (`did-navigate`) leva toda nota da aba. */
+const LOAD_NOTICE_KINDS: readonly BrowserNotice['kind'][] = ['load-failed', 'crashed', 'unresponsive', 'load-slow']
 
 // ————————————————————————————————————————————————————————————————
 // Estado interno
@@ -218,12 +235,14 @@ const BROWSER_LOAD_TIMEOUT_MS = 20000
  *  máquina de host precisa) — uma definição só, sem espelho. */
 interface TabRecord extends BrowserHostedTab, BrowserDrivingFlag {
   ephemeralPartition?: string
-  /** A página DESTA aba não carregou ou caiu (o cartão de erro do chrome). Só
-   *  a próxima carga bem-sucedida dela apaga — nunca o início do ⟳. */
+  /** A página DESTA aba não carregou, caiu ou travou (o cartão de erro do
+   *  chrome). Só a próxima carga bem-sucedida dela apaga — nunca o início do ⟳
+   *  — e a trava também sai quando a página volta a responder. */
   failure?: BrowserTabFailure | null
-  /** A nota da missão que esta falha levantou: a recuperação só a apaga se
-   *  ela ainda for a nota da vez (outra aba ou outro motivo pode ter vencido). */
-  failureNotice?: BrowserNotice | null
+  /** O último título/endereço vistos: o `destroyed` chega com o objeto já
+   *  morrendo, e a nota da aba perdida ainda precisa dizer QUAL aba era. */
+  lastTitle: string
+  lastUrl: string
   view: BrowserViewHandle
   wc: WebContents
   disposers: (() => void)[]
@@ -242,6 +261,10 @@ interface MissionRecord extends BrowserHostedMission, BrowserDrivingFlag {
   tabs: TabRecord[]
   activeTabId: string | null
   notice: BrowserNotice | null
+  /** A aba que levantou a nota da vez (falha, demora, permissão, download);
+   *  `null` quando a nota não é de aba nenhuma (teto, aba perdida, referência).
+   *  Nota de aba some sozinha quando a página dela troca, assenta ou fecha. */
+  noticeTabId: string | null
   /** A última largura de moldura APLICADA (dock ou janela destacada). É a base
    *  do zoom e a única forma de o `state` contar a largura efetiva sem
    *  perguntar geometria de novo. `0` = ninguém relatou ainda. */
@@ -272,7 +295,7 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
   let dockMissionId: string | null = null
   /** webContents.id → missão, para os ganchos da session (que são por PROJETO)
    *  saberem em qual missão o download/permissão aconteceu. */
-  const owners = new Map<number, { missionId: string; projectId: string }>()
+  const owners = new Map<number, { missionId: string; projectId: string; tabId: string }>()
   const changePending = new Set<string>()
   let changeTimer: NodeJS.Timeout | null = null
   let unwatchWindow: (() => void) | null = null
@@ -324,27 +347,48 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
     changeTimer.unref?.()
   }
 
-  const notice = (mission: MissionRecord, kind: BrowserNotice['kind'], text: string): void => {
-    mission.notice = { kind, text, at: new Date(now()).toISOString() }
+  /**
+   * A nota da MISSÃO (a última vence), dita por `raisedBy` quando nasce de uma
+   * aba. O MESMO recado de novo (tipo, cabeça e frase iguais) não é recado
+   * novo: conta (`count`, a partir de 2) e GUARDA o `at` — o carimbo é a
+   * identidade, então a página que pede a câmera em laço vira UMA linha "×3" e
+   * a linha que o dono dispensou continua dispensada. Qualquer outro recado
+   * substitui com carimbo novo e sem contador.
+   */
+  const raiseNotice = (mission: MissionRecord, next: BrowserNoticeCopy, raisedBy: TabRecord | null): void => {
+    const current = mission.notice
+    mission.notice =
+      current && current.kind === next.kind && current.title === next.title && current.text === next.text
+        ? { ...current, ...next, count: (current.count ?? 1) + 1 }
+        : { ...next, at: new Date(now()).toISOString() }
+    mission.noticeTabId = raisedBy ? raisedBy.tabId : null
     emitChanged(mission.missionId)
   }
 
-  /** A falha é da ABA (o cartão) e a nota é da MISSÃO (a última vence) — as
-   *  duas nascem juntas, com o mesmo texto. */
-  const tabFailure = (mission: MissionRecord, tab: TabRecord, kind: BrowserTabFailure['kind'], text: string): void => {
-    tab.failure = { kind, text }
-    notice(mission, kind, text)
-    tab.failureNotice = mission.notice
+  /** Aposenta a nota da vez SE foi esta aba que a levantou (e, com `kinds`, só
+   *  se ela for de um desses tipos). Nota de outra aba ou de outra causa fica. */
+  const clearTabNotice = (mission: MissionRecord, tab: TabRecord, kinds?: readonly BrowserNotice['kind'][]): boolean => {
+    const current = mission.notice
+    if (!current || mission.noticeTabId !== tab.tabId) return false
+    if (kinds && !kinds.includes(current.kind)) return false
+    mission.notice = null
+    mission.noticeTabId = null
+    return true
   }
-  const clearTabFailure = (mission: MissionRecord, tab: TabRecord): void => {
-    let changed = Boolean(tab.failure)
+
+  /** A falha é da ABA (o cartão) e a nota é da MISSÃO — as duas nascem juntas,
+   *  com as mesmas palavras. Aba que já saiu do motor não fala mais. */
+  const tabFailure = (mission: MissionRecord, tab: TabRecord, failure: BrowserTabFailure): void => {
+    if (!mission.tabs.includes(tab)) return
+    tab.failure = failure
+    raiseNotice(mission, { kind: failure.kind, title: failure.title, text: failure.text }, tab)
+  }
+  /** A página da aba ficou de pé: a falha sai, e a nota dela também (todas,
+   *  ou só as de `kinds`). */
+  const clearTabFailure = (mission: MissionRecord, tab: TabRecord, kinds?: readonly BrowserNotice['kind'][]): void => {
+    const had = Boolean(tab.failure)
     tab.failure = null
-    if (tab.failureNotice && mission.notice === tab.failureNotice) {
-      mission.notice = null
-      changed = true
-    }
-    tab.failureNotice = undefined
-    if (changed) emitChanged(mission.missionId)
+    if (clearTabNotice(mission, tab, kinds) || had) emitChanged(mission.missionId)
   }
 
   // ——— A MÁQUINA DE HOST (`./browserPaneHosting`) ———
@@ -505,6 +549,9 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
       }
     }
     owners.delete(tab.wc.id)
+    // A nota que esta aba levantou perdeu a razão de existir — e o RECARREGAR
+    // dela cairia na aba que ficou ativa, que não é a que falhou.
+    if (clearTabNotice(mission, tab)) emitChanged(mission.missionId)
     // O ⚡ desta aba morre com ela: um relógio pendurado seguraria a referência
     // de uma aba fechada até decair.
     clearBrowserDriving(tab)
@@ -528,16 +575,27 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
           const receive = deps.prepareReference?.(mission.missionId, mission.projectId)
           return receive ? snapshot => receive(tab.tabId, snapshot) : undefined
         },
-        onError: text => notice(mission, 'reference-failed', text),
+        // As frases do seletor já são completas (e em primeira pessoa): uma
+        // cabeça aqui só repetiria o que elas dizem.
+        onError: text => raiseNotice(mission, { kind: 'reference-failed', text }, null),
         onCaptured: () => {
           if (mission.notice?.kind === 'reference-failed') {
             mission.notice = null
+            mission.noticeTabId = null
             emitChanged(mission.missionId)
           }
         }
       }))
     }
-    const repaint = (): void => emitChanged(mission.missionId)
+    const remember = (): void => {
+      if (wc.isDestroyed()) return
+      tab.lastTitle = wc.getTitle()
+      tab.lastUrl = wc.getURL()
+    }
+    const repaint = (): void => {
+      remember()
+      emitChanged(mission.missionId)
+    }
     // O `WebContents` do Electron tem ~90 sobrecargas de `on` por evento; o
     // gate roda com um fake. Uma única ponte solta (o `EventEmitter` cru, que é
     // o que as duas coisas SÃO) troca 8 casts por um.
@@ -570,20 +628,42 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
       const [, errorCode, errorDescription, validatedURL, isMainFrame] = args
       // -3 = ERR_ABORTED: navegação interrompida (redirect, novo goto), não falha.
       if (isMainFrame === false || errorCode === -3) return
-      tabFailure(mission, tab, 'load-failed', browserLoadFailureText(String(validatedURL), String(errorDescription || errorCode)))
+      tabFailure(mission, tab, browserLoadFailure(String(validatedURL), { code: errorDescription, errno: errorCode }))
     })
     on('render-process-gone', (...args) => {
       const details = args[1]
-      const reason =
-        details && typeof details === 'object' && 'reason' in details
-          ? String((details as { reason?: unknown }).reason)
-          : 'desconhecido'
-      tabFailure(mission, tab, 'crashed', `a página caiu (${reason}) — use ⟳ para recarregar`)
+      const reason = details && typeof details === 'object' && 'reason' in details ? (details as { reason?: unknown }).reason : undefined
+      tabFailure(mission, tab, browserCrashFailure(reason))
+    })
+    // A TRAVA: um script da página prendeu o renderer. Ela não é queda — pode
+    // voltar sozinha, e o `responsive` aposenta o cartão e a nota dela.
+    on('unresponsive', () => tabFailure(mission, tab, browserUnresponsiveFailure()))
+    on('responsive', () => {
+      if (tab.failure?.kind === 'unresponsive') clearTabFailure(mission, tab, ['unresponsive'])
     })
     on('destroyed', () => {
-      // A view morreu por fora (crash irrecuperável): some do state sem
-      // desanexar nada de quem continua vivo.
+      // A view morreu POR FORA (crash irrecuperável, `window.close()` da
+      // página): some do state sem desanexar nada de quem continua vivo. O
+      // nosso fechamento nunca chega aqui — o `dropTab` desliga este ouvinte
+      // ANTES do `close` —, e no encerramento do app (motor encerrado ou
+      // janela já fora) o sumiço não é notícia para ninguém.
+      remember()
       dropTab(mission, tab, false)
+      if (!disposed && resolveHost().contentSize() !== null) {
+        const lostUrl = tab.lastUrl.trim()
+        raiseNotice(mission, {
+          ...browserTabLostNotice(tab.lastTitle, lostUrl),
+          // REABRIR abre o mesmo endereço numa aba nova — nunca o de uma prévia
+          // de artefato, que só nasce pelo link do chat (sessão efêmera).
+          ...(lostUrl && lostUrl !== 'about:blank' && !tab.ephemeralPartition ? { url: lostUrl } : {})
+        }, null)
+        record('browser-tab-lost', {
+          actor: 'harness',
+          ids: { projectId: mission.projectId, missionId: mission.missionId },
+          reason: 'a aba do browser morreu por fora e saiu da missão',
+          detail: { tabId: tab.tabId, url: sanitizeGuiArtifactPreviewUrl(lostUrl)?.slice(0, 200), tabs: liveTabs(mission).length }
+        })
+      }
       emitChanged(mission.missionId)
     })
     // Seletor de Bluetooth abriria um diálogo do Chromium sem UI nossa.
@@ -637,22 +717,32 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
     const watchdog = new Promise<void>((resolve) => {
       const timer = setTimeout(() => {
         if (settled) return
-        notice(
-          mission,
-          'load-failed',
-          `${url.slice(0, 160)} passou de ${Math.round(BROWSER_LOAD_TIMEOUT_MS / 1000)}s carregando — a aba segue viva; use browser_wait ou ⟳`
-        )
+        // DEMORA não é falha: a nota é da aba e some quando esta carga assenta
+        // (a que dá certo apaga; a que falha de verdade a substitui). Aba que já
+        // morreu não demora.
+        if (mission.tabs.includes(tab)) {
+          raiseNotice(mission, browserLoadSlowNotice(Math.round(BROWSER_LOAD_TIMEOUT_MS / 1000)), tab)
+        }
         resolve()
       }, BROWSER_LOAD_TIMEOUT_MS)
       timer.unref?.()
     })
     const load = tab.wc
       .loadURL(url)
-      .then(() => clearTabFailure(mission, tab))
+      .then(() => clearTabFailure(mission, tab, LOAD_NOTICE_KINDS))
       .catch((error: unknown) => {
-        const detail = error instanceof Error ? error.message : String(error)
-        if (detail.includes('ERR_ABORTED')) return
-        tabFailure(mission, tab, 'load-failed', browserLoadFailureText(url, detail))
+        const { name, errno } = browserNetError(error)
+        if (name === 'ERR_ABORTED' || errno === -3) {
+          // Outra navegação tomou o lugar desta: a demora DELA acabou.
+          if (clearTabNotice(mission, tab, ['load-slow'])) emitChanged(mission.missionId)
+          return
+        }
+        const failure = browserLoadFailure(url, error)
+        // O `did-fail-load` desta mesma carga já contou a falha (é ele que
+        // rejeita o `loadURL`): ver o mesmo evento duas vezes não é repetição.
+        const seen = tab.failure
+        if (seen && seen.kind === failure.kind && seen.text === failure.text && seen.code === failure.code) return
+        tabFailure(mission, tab, failure)
       })
     await Promise.race([load.finally(() => (settled = true)), watchdog])
   }
@@ -674,7 +764,7 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
         reason: error,
         detail: { tabs: liveTabs(mission).length, cap: BROWSER_TAB_CAP, url: sanitizeGuiArtifactPreviewUrl(url)?.slice(0, 200) }
       })
-      notice(mission, 'tab-cap', error)
+      raiseNotice(mission, browserTabCapNotice(BROWSER_TAB_CAP), null)
       return { ok: false, error }
     }
     const activeHost = resolveHost()
@@ -697,14 +787,16 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
       viewport: 'auto',
       owner,
       driving: false,
-      driveTimer: null
+      driveTimer: null,
+      lastTitle: '',
+      lastUrl: url ?? ''
     }
     mission.tabs.push(tab)
     // D2 — A ABA NOVA NASCE ATIVA: o dono VÊ o recém-chegado (é assim que ele
     // acompanha a frota sem caçar aba). Quem NÃO rouba a vista é a navegação de
     // uma aba que já existe — essa parte mora no `ensureTab`.
     mission.activeTabId = tab.tabId
-    owners.set(tab.wc.id, { missionId: mission.missionId, projectId: mission.projectId })
+    owners.set(tab.wc.id, { missionId: mission.missionId, projectId: mission.projectId, tabId: tab.tabId })
     wireTab(mission, tab)
     // Aba nova de missão DESTACADA nasce na janela destacada — nunca na janela
     // do app, de onde teria de dar um segundo salto (e teria um instante fora
@@ -752,6 +844,7 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
       driving: false,
       driveTimer: null,
       notice: null,
+      noticeTabId: null,
       host: 'dock',
       staleReported: null,
       frameWidth: 0,
@@ -762,15 +855,16 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
   }
 
   // ——— ganchos da session (por PROJETO; a missão vem do webContents) ———
-  /** Uma guarda barrada = caixa-preta SEMPRE + nota legível QUANDO houver dono
-   *  conhecido (a session é do projeto e pode ter view de outra missão). */
+  /** Uma guarda barrada = caixa-preta SEMPRE (com o nome cru, que é dado de
+   *  diagnóstico) + nota legível QUANDO houver dono conhecido (a session é do
+   *  projeto e pode ter view de outra missão). A nota é da ABA que pediu: some
+   *  quando a página dela troca. */
   const guardFired = (
     event: string,
     reason: string,
     detail: Record<string, unknown>,
     webContentsId: number | null,
-    kind: BrowserNotice['kind'],
-    text: string
+    copy: BrowserNoticeCopy
   ): void => {
     const owner = webContentsId !== null ? owners.get(webContentsId) : undefined
     record(event, {
@@ -780,7 +874,7 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
       detail
     })
     const mission = owner ? missions.get(owner.missionId) : undefined
-    if (mission) notice(mission, kind, text)
+    if (mission && owner) raiseNotice(mission, copy, findTab(mission, owner.tabId) ?? null)
   }
 
   const sessionHooks: BrowserSessionHooks = {
@@ -790,18 +884,17 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
         'o browser da missão não baixa arquivos (v1)',
         { filename: filename.slice(0, 200), url: sanitizeGuiArtifactPreviewUrl(url)?.slice(0, 200) },
         webContentsId,
-        'download-blocked',
-        `download bloqueado: "${filename.slice(0, 80)}" — o browser da missão não baixa arquivos; se precisar dele, baixe pelo terminal da missão`
+        browserDownloadNotice(filename)
       )
     },
-    onPermissionDenied(permission, webContentsId) {
+    onPermissionDenied(permission, webContentsId, details) {
+      const mediaTypes = details?.mediaTypes
       guardFired(
         'browser-permission-denied',
         'o browser da missão nega toda permissão por desenho (v1)',
-        { permission },
+        { permission, ...(mediaTypes ? { mediaTypes: [...mediaTypes] } : {}) },
         webContentsId,
-        'permission-denied',
-        `permissão negada: ${permission} — o browser da missão nega mic/câmera/geo/notificações por desenho`
+        browserPermissionNotice(permission, mediaTypes)
       )
     }
   }

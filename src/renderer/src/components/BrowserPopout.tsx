@@ -5,12 +5,12 @@ import BrowserChrome, {
   BrowserPageBands,
   BrowserPageOverlay,
   browserApi,
+  useBrowserFailureWait,
   useBrowserRunner
 } from './BrowserChrome'
 import { useMissionBrowser } from './DockBrowser'
 import {
   BROWSER_NO_API,
-  activeBrowserTabFailure,
   browserRect,
   clipBrowserRect,
   createBrowserBoundsGate,
@@ -101,10 +101,10 @@ export function BrowserPopoutView({
   const { notice, setNotice, run } = useBrowserRunner()
   const [painted, setPainted] = useState(false)
   // VARIANTE B, como no dock: aba à vista em erro = página nativa escondida e o
-  // cartão de erro no retângulo.
-  const pageFailed = activeBrowserTabFailure(state) !== null
-  const pageFailedRef = useRef(pageFailed)
-  pageFailedRef.current = pageFailed
+  // cartão de erro no retângulo — até o dono escolher ESPERAR a página travada.
+  const { failureShown, wait } = useBrowserFailureWait(state)
+  const failureShownRef = useRef(failureShown)
+  failureShownRef.current = failureShown
 
   // ————— GEOMETRIA: o único canal entre esta janela e a view nativa —————
   //
@@ -141,7 +141,7 @@ export function BrowserPopoutView({
       const box = browserRect(el.getBoundingClientRect(), 'inward')
       lastRectRef.current = box
       const clipped = clipBrowserRect(box, [viewportRect()])
-      if (!rectHasArea(clipped) || pageFailedRef.current || !elementIsPainted(el)) {
+      if (!rectHasArea(clipped) || failureShownRef.current || !elementIsPainted(el)) {
         report(mission, clipped, false)
         return
       }
@@ -193,11 +193,12 @@ export function BrowserPopoutView({
   }, [missionId, report])
 
   // O que nenhum observador de tamanho enxerga: a tira de abas EMPURRA o
-  // retângulo sem mudar o tamanho dele, e a aba à vista cai em erro ou volta.
+  // retângulo sem mudar o tamanho dele, e a aba à vista cai em erro, volta ou
+  // o dono escolhe ESPERAR.
   useEffect(() => {
     gateRef.current.reset()
     measureRef.current?.()
-  }, [state.alive, state.tabs.length, pageFailed])
+  }, [state.alive, state.tabs.length, failureShown])
 
   // Janela sem missão na URL: não existe gesto possível, e um instrumento
   // desenhado por cima de nada seria pior que a verdade. A frase nomeia a
@@ -256,6 +257,8 @@ export function BrowserPopoutView({
             missionId={missionId}
             state={state}
             painted={painted}
+            failureShown={failureShown}
+            onWait={wait}
             run={run}
             urlRef={urlRef}
             hiddenText="a página continua aberta — escondida enquanto esta janela não tem onde mostrá-la"

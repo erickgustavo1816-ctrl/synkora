@@ -17,6 +17,7 @@ import BrowserChrome, {
   BrowserPageBands,
   BrowserPageOverlay,
   browserApi,
+  useBrowserFailureWait,
   useBrowserRunner
 } from './BrowserChrome'
 import {
@@ -24,7 +25,6 @@ import {
   BROWSER_PAGE_KEYBOARD_STEP,
   EMPTY_BROWSER_PANEL,
   activeBrowserTab,
-  activeBrowserTabFailure,
   browserAgentDriving,
   browserIsPopout,
   browserPageFraction,
@@ -271,11 +271,11 @@ export default function DockBrowser({
   // vez de um buraco escuro sem explicação.
   const [painted, setPainted] = useState(false)
   // VARIANTE B: aba à vista em erro = página nativa ESCONDIDA (ela seria um
-  // branco mudo) e o cartão de erro no retângulo. Ref porque a medida é uma
-  // closure do efeito de geometria.
-  const pageFailed = activeBrowserTabFailure(state) !== null
-  const pageFailedRef = useRef(pageFailed)
-  pageFailedRef.current = pageFailed
+  // branco mudo) e o cartão de erro no retângulo — até o dono escolher ESPERAR
+  // a página travada. Ref porque a medida é uma closure do efeito de geometria.
+  const { failureShown, wait } = useBrowserFailureWait(state)
+  const failureShownRef = useRef(failureShown)
+  failureShownRef.current = failureShown
 
   // ————— ALTURA DA PÁGINA: a fatia do trilho que o dono escolheu —————
   //
@@ -629,7 +629,7 @@ export default function DockBrowser({
       if (stopped) return
       const box = browserRect(el.getBoundingClientRect(), 'inward')
       lastRectRef.current = box
-      if (!visible || pageFailedRef.current || !elementIsPainted(el)) {
+      if (!visible || failureShownRef.current || !elementIsPainted(el)) {
         report(mission, box, false)
         return
       }
@@ -782,10 +782,11 @@ export default function DockBrowser({
   //  · o trilho saiu/voltou de vista (o Board mantém o dock montado);
   //  · a tira de abas mudou e EMPURROU o retângulo (lugar, não tamanho);
   //  · a view acabou de NASCER e precisa ouvir a geometria de novo;
-  //  · a aba à vista caiu em erro ou voltou (a página troca pelo cartão).
+  //  · a aba à vista caiu em erro, voltou ou o dono escolheu ESPERAR (a página
+  //    troca de lugar com o cartão).
   useLayoutEffect(() => {
     forceReport()
-  }, [forceReport, visible, state.alive, state.tabs.length, pageFailed])
+  }, [forceReport, visible, state.alive, state.tabs.length, failureShown])
 
   if (engine === 'missing') {
     return (
@@ -897,6 +898,8 @@ export default function DockBrowser({
             missionId={missionId}
             state={state}
             painted={painted}
+            failureShown={failureShown}
+            onWait={wait}
             run={run}
             urlRef={urlRef}
           />
