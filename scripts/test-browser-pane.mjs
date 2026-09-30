@@ -102,13 +102,14 @@ import {
   normalizeBrowserUrl
 } from '../.tmp/browser-pane-test/browserPane.js'
 
+import { applyViewportFit } from '../.tmp/browser-pane-test/browserViewportFit.js'
+
 // A MATEMÁTICA da largura emulada (2026-08-29). Módulo puro, sem Electron: ele
 // chega compilado de carona no import graph do motor, que é quem o consome.
 import {
   BROWSER_VIEWPORT_MAX_WIDTH,
   BROWSER_VIEWPORT_MIN_WIDTH,
   BROWSER_ZOOM_FLOOR,
-  applyViewportFit,
   normalizeViewportMode,
   viewportBandWidth,
   viewportEffectiveWidth,
@@ -851,17 +852,7 @@ function fakeWebContents() {
   wc.setWindowOpenHandler = (handler) => {
     wc.windowOpenHandler = handler
   }
-  // ——— O ZOOM DE AJUSTE (a largura que a página enxerga, 2026-08-29) ———
-  //
-  // O dublê é o `HostZoomMap` do Chromium visto de fora, e ele é COMPARTILHADO
-  // POR ORIGEM de propósito: a sonda mediu que `setZoomFactor` numa aba VAZA
-  // para toda aba do mesmo host na mesma sessão (a view irmã pulou de
-  // `innerWidth 540` para 1728 sozinha; a de outra partition não se mexeu).
-  //
-  // Isso não é capricho de fidelidade: é o que faz a ORDEM de escrita importar.
-  // Com duas abas da mesma missão no mesmo endereço e modos diferentes, quem
-  // escrever por último vence — e tem de ser a aba que o dono está OLHANDO. Um
-  // dublê com zoom por aba não prenderia essa regressão.
+  // Origin-scoped host zoom remains shared; device emulation belongs to each page.
   wc.zooms = []
   wc.zoomKey = () => {
     try {
@@ -875,6 +866,10 @@ function fakeWebContents() {
     HOST_ZOOM.set(wc.zoomKey(), factor)
     wc.zooms.push(factor)
   }
+  wc.emulation = null
+  wc.enableDeviceEmulation = parameters => { wc.emulation = parameters }
+  wc.disableDeviceEmulation = () => { wc.emulation = null }
+  wc.fitScale = () => wc.emulation?.scale ?? 1
   // Escrever `wc.zoom` continua valendo (é como a suíte simula o vazamento de um
   // vizinho): ele é a mesma célula do mapa, vista pela aba.
   Object.defineProperty(wc, 'zoom', {
@@ -3084,10 +3079,14 @@ test('LARGURA/PURO: o zoom é a moldura dividida pela largura — e o PISO do Ch
   assert.equal(viewportFitZoom(1280, Number.NaN), 1)
 })
 
-test('LARGURA/PURO: o fit LÊ o valor vivo antes de escrever (e só escreve quando muda)', () => {
+test('LARGURA/NATIVO: o fit evita reaplicar a mesma geometria e corrige zoom compartilhado', () => {
   const wc = {
     zoom: 1,
     writes: 0,
+    emulation: null,
+    getURL: () => 'https://synthetic.test/',
+    enableDeviceEmulation(parameters) { wc.emulation = parameters; wc.writes++ },
+    disableDeviceEmulation() { wc.emulation = null; wc.writes++ },
     getZoomFactor: () => wc.zoom,
     setZoomFactor: (z) => {
       wc.zoom = z
@@ -3108,7 +3107,8 @@ test('LARGURA/PURO: o fit LÊ o valor vivo antes de escrever (e só escreve quan
   // Vizinho que empurrou zoom errado é corrigido no próximo layout.
   wc.zoom = 0.9
   assert.equal(applyViewportFit(wc, 1280, 400).changed, true)
-  assert.equal(wc.zoom, 0.3125)
+  assert.equal(wc.zoom, 1)
+  assert.equal(wc.emulation.scale, 0.3125)
 
   // Aba morrendo entre a decisão e a escrita não derruba o layout de ninguém.
   const morto = {
@@ -3129,12 +3129,12 @@ test('LARGURA/MOTOR: o modo nasce AUTO, é POR ABA, e o inválido recusa com rec
 
   assert.equal(manager.viewportOf('m1'), 'auto')
   assert.equal(manager.state('m1').viewport, 'auto')
-  assert.equal(primeira.webContents.getZoomFactor(), 1, 'AUTO não escala nada')
+  assert.equal(primeira.webContents.fitScale(), 1, 'AUTO não escala nada')
 
   assert.deepEqual(manager.setViewportMode('m1', 1280), { ok: true, tabId: primeira.tabId })
   assert.equal(manager.state('m1').viewport, 1280)
   assert.equal(manager.state('m1').viewportWidth, 1280)
-  assert.equal(primeira.webContents.getZoomFactor(), 0.3125)
+  assert.equal(primeira.webContents.fitScale(), 0.3125)
   const diario = records.filter((entry) => entry.event === 'browser-viewport-mode')
   assert.equal(diario.length, 1)
   assert.equal(diario[0].actor, 'user', 'o gesto do dono é do dono')
@@ -3175,9 +3175,9 @@ test('LARGURA/MOTOR: AUTO devolve a moldura FÍSICA — a porta de volta é grá
   manager.applyBounds('m1', { x: 0, y: 0, width: 400, height: 600 }, true)
 
   manager.setViewportMode('m1', 1280)
-  assert.equal(tab.webContents.getZoomFactor(), 0.3125)
+  assert.equal(tab.webContents.fitScale(), 0.3125)
   assert.deepEqual(manager.setViewportMode('m1', 'auto'), { ok: true, tabId: tab.tabId })
-  assert.equal(tab.webContents.getZoomFactor(), 1, 'AUTO é zoom 1, não um zoom "quase 1"')
+  assert.equal(tab.webContents.fitScale(), 1, 'AUTO é zoom 1, não um zoom "quase 1"')
   assert.equal(manager.state('m1').viewport, 'auto')
   assert.equal(manager.state('m1').viewportWidth, 400, 'em AUTO a largura efetiva É a moldura')
 
@@ -3185,7 +3185,7 @@ test('LARGURA/MOTOR: AUTO devolve a moldura FÍSICA — a porta de volta é grá
   // é a rota de saída quando o zoom de um vizinho do mesmo host vazou por cima.
   tab.webContents.zoom = 0.5
   assert.deepEqual(manager.setViewportMode('m1', 'auto'), { ok: true, tabId: tab.tabId })
-  assert.equal(tab.webContents.getZoomFactor(), 1)
+  assert.equal(tab.webContents.fitScale(), 1)
 })
 
 test('LARGURA/MOTOR: o fit é RECALCULADO a cada relato de bounds (o dono arrastando a alça)', async () => {
@@ -3193,19 +3193,19 @@ test('LARGURA/MOTOR: o fit é RECALCULADO a cada relato de bounds (o dono arrast
   const tab = await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
   manager.applyBounds('m1', { x: 0, y: 0, width: 400, height: 600 }, true)
   manager.setViewportMode('m1', 1280)
-  assert.equal(tab.webContents.getZoomFactor(), 0.3125)
+  assert.equal(tab.webContents.fitScale(), 0.3125)
 
   // O dono alarga o painel. Sem recalcular, a página seguiria com zoom 0,3125 e
   // passaria a enxergar 2432px lógicos — deixaria de ser o modo que o botão
   // aceso promete (medido na sonda, P5).
   manager.applyBounds('m1', { x: 0, y: 0, width: 760, height: 600 }, true)
-  assert.equal(tab.webContents.getZoomFactor(), 760 / 1280)
+  assert.equal(tab.webContents.fitScale(), 760 / 1280)
   assert.equal(manager.state('m1').viewportWidth, 1280)
 
   // E encolher também: o piso do Chromium entra em cena, e o state conta a
   // verdade (1200, não 1280) para o chrome poder avisar.
   manager.applyBounds('m1', { x: 0, y: 0, width: 300, height: 600 }, true)
-  assert.equal(tab.webContents.getZoomFactor(), BROWSER_ZOOM_FLOOR)
+  assert.equal(tab.webContents.fitScale(), BROWSER_ZOOM_FLOOR)
   assert.equal(manager.state('m1').viewportWidth, 1200)
 
   // Gesto na JANELA (arrastar a borda) passa pelo mesmo caminho: o clamp muda a
@@ -3214,34 +3214,35 @@ test('LARGURA/MOTOR: o fit é RECALCULADO a cada relato de bounds (o dono arrast
   const alvo = await outro.manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
   outro.manager.applyBounds('m1', { x: 0, y: 0, width: 800, height: 600 }, true)
   outro.manager.setViewportMode('m1', 1280)
-  assert.equal(alvo.webContents.getZoomFactor(), 0.625)
+  assert.equal(alvo.webContents.fitScale(), 0.625)
   outro.host.size = { width: 500, height: 600 }
   outro.host.windowHooks.onGeometry()
-  assert.equal(alvo.webContents.getZoomFactor(), 500 / 1280, 'a janela encolheu e o fit acompanhou')
+  assert.equal(alvo.webContents.fitScale(), 500 / 1280, 'a janela encolheu e o fit acompanhou')
 })
 
-test('LARGURA/MOTOR: a aba ATIVA escreve por ÚLTIMO (o zoom do Chromium é por origem)', async () => {
+test('LARGURA/MOTOR: duas identidades no mesmo endereço mantêm larguras independentes', async () => {
   const { manager } = makeManager()
   const primeira = await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
-  await manager.newTab('m1', 'p', 'https://a.test/')
+  await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_HELPER)
   const ativa = manager.activeTab('m1')
   manager.applyBounds('m1', { x: 0, y: 0, width: 400, height: 600 }, true)
   manager.setViewportMode('m1', 1280)
 
-  // Duas abas no MESMO host: o Chromium compartilha o zoom por origem dentro da
-  // sessão (medido — a view irmã pulou de innerWidth 540 para 1728 sozinha). A
-  // aba de FUNDO está em AUTO; se ELA escrevesse por último, o dono ficaria
-  // olhando a página dele com o zoom da aba que ele NÃO está vendo.
   assert.notEqual(ativa.tabId, primeira.tabId)
   assert.equal(manager.state('m1').tabs.find((tab) => !tab.active).viewport, 'auto')
-  assert.equal(primeira.webContents.getZoomFactor(), 0.3125, 'as duas dividem a MESMA célula')
-  assert.equal(ativa.webContents.getZoomFactor(), 0.3125)
+  assert.equal(primeira.webContents.fitScale(), 1)
+  assert.equal(ativa.webContents.fitScale(), 0.3125)
+  assert.equal(primeira.webContents.getZoomFactor(), 1)
+  assert.equal(ativa.webContents.getZoomFactor(), 1)
 
-  // Um relayout inteiro (o dono arrastando a alça) termina com a escrita da
-  // ATIVA: o valor que sobra na célula compartilhada é o do modo DELA.
+  manager.setViewportMode('m1', 768, 'agent', primeira.tabId)
+  assert.equal(primeira.webContents.emulation.viewSize.width, 768)
+  assert.equal(ativa.webContents.emulation.viewSize.width, 1280)
+  manager.selectTab('m1', primeira.tabId)
   manager.applyBounds('m1', { x: 0, y: 0, width: 640, height: 600 }, true)
-  assert.equal(ativa.webContents.getZoomFactor(), 0.5, 'o último a escrever é o que o dono vê')
-  assert.equal(ativa.webContents.zooms.at(-1), 0.5)
+  assert.equal(ativa.webContents.fitScale(), 0.5)
+  assert.equal(primeira.webContents.emulation.viewSize.width, 768)
+  assert.equal(ativa.webContents.emulation.viewSize.width, 1280)
 })
 
 test('LARGURA/MOTOR: o modo SOBREVIVE à navegação (e o fit é re-aplicado), mas MORRE com a aba', async () => {
@@ -3256,12 +3257,12 @@ test('LARGURA/MOTOR: o modo SOBREVIVE à navegação (e o fit é re-aplicado), m
   // RE-DERIVÁVEL, não uma entrega única: o zoom do Chromium mora num mapa por
   // HOST, e uma origem nova pode chegar sem ele. O evento de navegação REFAZ o
   // fit — aqui, o mesmo evento que o Chromium emite.
-  tab.webContents.zoom = 1
+  tab.webContents.emulation = null
   tab.webContents.emit('did-navigate')
-  assert.equal(tab.webContents.getZoomFactor(), 0.3125)
-  tab.webContents.zoom = 1
+  assert.equal(tab.webContents.fitScale(), 0.3125)
+  tab.webContents.emulation = null
   tab.webContents.emit('did-finish-load')
-  assert.equal(tab.webContents.getZoomFactor(), 0.3125)
+  assert.equal(tab.webContents.fitScale(), 0.3125)
 
   // MORRE COM A ABA: fechar e abrir outra devolve AUTO. Nada disto é persistido
   // — uma página emulada que voltasse assim depois de um restart seria um estado
@@ -3276,7 +3277,7 @@ test('LARGURA/MOTOR: destacar (⧉) refaz o fit com a moldura da JANELA', async 
   const tab = await manager.ensureTab('m1', 'p', 'https://a.test/', OWNER_DEV)
   manager.applyBounds('m1', { x: 0, y: 0, width: 400, height: 600 }, true)
   manager.setViewportMode('m1', 1280)
-  assert.equal(tab.webContents.getZoomFactor(), 0.3125)
+  assert.equal(tab.webContents.fitScale(), 0.3125)
 
   // A janela destacada é MUITO mais larga: o mesmo modo passa a quase não
   // escalar. Sem refazer o fit aqui, a página iria para a janela grande com o
@@ -3284,13 +3285,13 @@ test('LARGURA/MOTOR: destacar (⧉) refaz o fit com a moldura da JANELA', async 
   manager.popOut('m1')
   manager.applyBounds('m1', POPOUT_RECT, true, 'popout')
   assert.ok(popouts.get('m1'))
-  assert.equal(tab.webContents.getZoomFactor(), POPOUT_RECT.width / 1280)
+  assert.equal(tab.webContents.fitScale(), POPOUT_RECT.width / 1280)
   assert.equal(manager.state('m1').viewportWidth, 1280)
 
   // E o reencaixe volta para a moldura do dock.
   manager.dockBack('m1')
   manager.applyBounds('m1', { x: 0, y: 0, width: 400, height: 600 }, true)
-  assert.equal(tab.webContents.getZoomFactor(), 0.3125)
+  assert.equal(tab.webContents.fitScale(), 0.3125)
 })
 
 test('LARGURA/PAINEL: o seletor lê o estado do motor — inclusive o que o AGENTE pôs', () => {
@@ -3466,7 +3467,7 @@ test('MOLDURA/MOTOR: o preset que CABE vira bounds menores e centralizados, por 
   })
   // ZOOM 1: nada foi esticado. É o ponto todo — o que o dono vir quebrado ali
   // dentro é do SITE.
-  assert.equal(primeira.webContents.getZoomFactor(), 1)
+  assert.equal(primeira.webContents.fitScale(), 1)
   assert.equal(manager.state('m1').viewportWidth, 375)
   assert.equal(manager.state('m1').viewportBand, 512)
 
@@ -3501,7 +3502,7 @@ test('MOLDURA/MOTOR: o gesto do modo REPOSICIONA a view na hora (não espera o R
   // MUDA de tamanho — o que não acontece ao trocar de modo).
   manager.setViewportMode('m1', 768)
   assert.deepEqual(boundsNow(), { x: 66, y: 0, width: 768, height: 600 })
-  assert.equal(tab.webContents.getZoomFactor(), 1)
+  assert.equal(tab.webContents.fitScale(), 1)
 
   // A volta para AUTO devolve a moldura inteira, no mesmo passo.
   manager.setViewportMode('m1', 'auto')
@@ -3533,7 +3534,7 @@ test('MOLDURA/MOTOR: arrastar a alça re-centraliza a faixa a cada relato (sem d
   ])
   // A largura da view NUNCA muda no meio disso: é essa a promessa de "tamanho
   // real" — a página não se mexe, a faixa é que cresce.
-  assert.equal(tab.webContents.getZoomFactor(), 1)
+  assert.equal(tab.webContents.fitScale(), 1)
 
   // E encolher ABAIXO da largura pedida devolve o ramo que ENCOLHE: a faixa
   // morre, a view volta a ocupar a moldura e a escala volta a trabalhar.
@@ -3542,7 +3543,7 @@ test('MOLDURA/MOTOR: arrastar a alça re-centraliza a faixa a cada relato (sem d
     .filter((entry) => entry.kind === 'setBounds' && entry.wc === tab.webContents.id)
     .at(-1).bounds
   assert.deepEqual(apertado, { x: 0, y: 0, width: 300, height: 600 })
-  assert.equal(tab.webContents.getZoomFactor(), 300 / 375)
+  assert.equal(tab.webContents.fitScale(), 300 / 375)
   assert.equal(manager.state('m1').viewportBand, undefined)
   assert.equal(manager.state('m1').viewportWidth, 375, 'e a página segue enxergando 375')
 })
@@ -3628,7 +3629,7 @@ test('MOLDURA/MOTOR: a JANELA DESTACADA é onde a faixa mais vale (e o reencaixe
     width: 375,
     height: POPOUT_RECT.height
   })
-  assert.equal(tab.webContents.getZoomFactor(), 1, 'a janela larga NÃO amplia mais')
+  assert.equal(tab.webContents.fitScale(), 1, 'a janela larga NÃO amplia mais')
   assert.equal(manager.state('m1').viewportBand, faixa)
 
   // E o reencaixe volta para a moldura do dock — com a faixa recalculada ali.

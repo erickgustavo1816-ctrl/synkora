@@ -121,7 +121,7 @@ export interface BrowserHostMachineContext<M extends BrowserHostedMission> {
    *  é outra na janela destacada. Destacar e reencaixar têm de refazer o fit no
    *  mesmo passo do `setBounds`, senão a página fica com o zoom da moldura de
    *  onde ela saiu. Quem sabe a receita é o motor (`./browserViewport`). */
-  fitViewport(mission: M, frameWidth: number): void
+  fitViewport(mission: M, frameWidth: number, frameHeight: number): void
   record(event: string, input: Omit<BlackboxEventInput, 'cat' | 'event'>): void
   changed(missionId: string): void
 }
@@ -193,7 +193,7 @@ export function createBrowserHostMachine<M extends BrowserHostedMission>(
     // A janela destacada é MUITO mais larga que o trilho: o mesmo modo "1280"
     // que ali pedia zoom de 0,31 aqui pede quase 1. O fit sai da geometria de
     // AGORA, no mesmo passo do `setBounds`.
-    ctx.fitViewport(mission, rect.width)
+    ctx.fitViewport(mission, rect.width, rect.height)
   }
 
   const popOut = (missionId: string): BrowserGestureResult => {

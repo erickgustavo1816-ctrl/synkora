@@ -116,11 +116,7 @@ import { createBrowserGestureMachine } from './browserPaneGestures'
 // Electron; re-exportado logo abaixo para o endereço público não mudar.
 import { browserPartitionFor, normalizeBrowserTarget, normalizeBrowserUrl } from './browserPaneUrl'
 import type { BrowserHostedMission, BrowserHostedTab, BrowserMissionLayout } from './browserPaneHosting'
-// A LARGURA QUE A PÁGINA ENXERGA (2026-08-29). Módulo puro, sem Electron: a
-// receita medida (`setZoomFactor(moldura / larguraLógica)`) e a matemática do
-// piso do Chromium moram lá; aqui mora só QUANDO ela se aplica.
 import {
-  applyViewportFit,
   normalizeViewportMode,
   viewportBandWidth,
   viewportEffectiveWidth,
@@ -128,6 +124,7 @@ import {
   viewportViewRect,
   type BrowserViewportMode
 } from './browserViewport'
+import { applyViewportFit } from './browserViewportFit'
 // DE QUEM É A ABA (2026-09-01). Módulo PURO, sem Electron — e IMPORTADO pelos
 // dois lados da fronteira (aqui e no kit de tools `./guiBrowserTools`), porque
 // dono de aba é um conceito, não um detalhe do motor. O corte também tira daqui
@@ -269,6 +266,7 @@ interface MissionRecord extends BrowserHostedMission, BrowserDrivingFlag {
    *  do zoom e a única forma de o `state` contar a largura efetiva sem
    *  perguntar geometria de novo. `0` = ninguém relatou ainda. */
   frameWidth: number
+  frameHeight: number
   /** O ESTADO da narração da largura (`tem faixa`:`o piso mordeu`) da última
    *  vez que a geometria foi aplicada. Ele existe para o motor saber QUANDO
    *  vale acordar o chrome: o relato de bounds chega a cada quadro de um
@@ -407,27 +405,22 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
     // A janela destacada tem OUTRA largura — e é a largura que manda no zoom.
     // Reencaixar/destacar tem de refazer o fit no mesmo passo do `setBounds`,
     // senão a página fica com o zoom da moldura antiga.
-    fitViewport: (mission, frameWidth) => fitViewport(mission, frameWidth),
+    fitViewport: (mission, frameWidth, frameHeight) => fitViewport(mission, frameWidth, frameHeight),
     record,
     changed: (missionId) => emitChanged(missionId)
   })
 
   /**
-   * A RECEITA MEDIDA, aplicada. Ordem importa: a aba ATIVA é a ÚLTIMA a
-   * escrever. O zoom do Chromium é por ORIGEM dentro da sessão (a sonda mediu o
-   * vazamento entre views irmãs do mesmo host), então com duas abas da mesma
-   * missão no mesmo endereço e modos diferentes quem tem de vencer é a que o
-   * dono está OLHANDO.
+   * A escala de cada WebContents é independente, mesmo na sessão do projeto.
    */
-  const fitViewport = (mission: MissionRecord, frameWidth: number): void => {
+  const fitViewport = (mission: MissionRecord, frameWidth: number, frameHeight: number): void => {
     mission.frameWidth = frameWidth
+    mission.frameHeight = frameHeight
     const tabs = liveTabs(mission)
     const active = activeRecord(mission)
     for (const tab of tabs) {
-      if (tab === active) continue
-      applyViewportFit(tab.wc, tab.viewport, frameWidth)
+      applyViewportFit(tab.wc, tab.viewport, frameWidth, frameHeight)
     }
-    if (active) applyViewportFit(active.wc, active.viewport, frameWidth)
 
     // ——— A NARRAÇÃO DA LARGURA (2026-08-29) ———
     // A geometria já foi aplicada acima; o que falta é o chrome CONTAR o que
@@ -487,7 +480,7 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
     // do painel muda a moldura a cada quadro, e o zoom é `moldura ÷ largura
     // lógica`: sem recalcular aqui, a página deixaria de ter a largura pedida
     // (a sonda mediu: moldura 400→760 sem recálculo vira 2432 lógicos).
-    fitViewport(mission, rect.width)
+    fitViewport(mission, rect.width, rect.height)
   }
 
   /** Gesto na JANELA DO APP: só as missões que estão no dock mudam de lugar. A
@@ -605,13 +598,9 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
       tab.disposers.push(() => emitter.off(event, listener))
     }
 
-    // NAVEGAR PODE APAGAR O FIT. O zoom do Chromium mora num mapa por HOST: a
-    // sonda viu a receita sobreviver a uma troca de origem, mas confiar nisso
-    // seria depender de entrega única. Re-aplicar é idempotente e custa uma
-    // comparação de float (o `applyViewportFit` só escreve quando muda) — a
-    // doutrina da casa manda a ação ser RE-DERIVÁVEL.
+    // A navigation can replace the emulated renderer surface.
     const repaintAndRefit = (): void => {
-      applyViewportFit(tab.wc, tab.viewport, mission.frameWidth)
+      applyViewportFit(tab.wc, tab.viewport, mission.frameWidth, mission.frameHeight, true)
       repaint()
     }
 
@@ -848,6 +837,7 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
       host: 'dock',
       staleReported: null,
       frameWidth: 0,
+      frameHeight: 0,
       viewportNarration: 'false:false'
     }
     missions.set(missionId, created)
@@ -1217,10 +1207,6 @@ export function createBrowserManager(deps: BrowserPaneDeps): BrowserPaneManager 
         }
       }
       if (tab.viewport === normalized) {
-        // Gesto idempotente: clicar duas vezes no mesmo botão não é recusa. Mas
-        // a geometria é REAPLICADA — é a rota de saída quando o zoom de um
-        // vizinho do mesmo host vazou por cima deste (o vazamento por origem,
-        // medido).
         applyLayout(mission)
         return { ok: true, tabId: tab.tabId }
       }
