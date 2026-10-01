@@ -2405,6 +2405,7 @@ export const useStore = create<SynkoraState>((set, get) => ({
       return { ok: false, error: plainIpcError(err) }
     }
     await get().loadProjects()
+    get().openProject(res.id)
     return { ok: true, projectId: res.id, warning: projectCreateWarning(res) }
   },
 
