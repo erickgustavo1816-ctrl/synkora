@@ -305,6 +305,20 @@ export class MissionStore {
     return mission
   }
 
+  setVersion(id: string, versionId: string): Mission | undefined {
+    const index = this.missions.findIndex(mission => mission.id === id)
+    if (index < 0) return undefined
+    const mission: Mission = {
+      ...this.missions[index],
+      versionId,
+      updatedAt: new Date().toISOString()
+    }
+    const next = [...this.missions]
+    next[index] = mission
+    this.commit(next)
+    return mission
+  }
+
   update(
     id: string,
     patch: Partial<

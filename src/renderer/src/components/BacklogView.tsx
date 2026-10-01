@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import type { MissionRemovalConfirmation, MissionRemovalDiscard } from '../../../shared/missionRemoval'
 import {
   useStore,
+  missionTypeOf,
   type BacklogItem,
   type BacklogItemType,
   type Mission,
@@ -15,6 +16,7 @@ import ReleaseChangeHistory from './ReleaseChangeHistory'
 import VersionMissionDeliveries from './VersionMissionDeliveries'
 import './BacklogView.css'
 import NewMissionModal from './NewMissionModal'
+import MissionVersionChangeModal from './MissionVersionChangeModal'
 import Select from './Select'
 import { TestServerModal } from './TestServerModal'
 import { NoticeStack, useNoticeStack } from './NoticeStack'
@@ -43,6 +45,8 @@ function MissionsPane({ projectId, versions }: { projectId: string; versions: Ve
   const [sort, setSort] = useState<'recentes' | 'antigas'>('recentes')
   const [page, setPage] = useState(0)
   const [confirmDelete, setConfirmDelete] = useState<Mission | null>(null)
+  const [versionChangeMission, setVersionChangeMission] = useState<Mission | null>(null)
+  const closeVersionChange = useCallback(() => setVersionChangeMission(null), [])
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const [discardConfirmation, setDiscardConfirmation] = useState<{
@@ -245,6 +249,15 @@ function MissionsPane({ projectId, versions }: { projectId: string; versions: Ve
                   {m.status === 'integrando' && <span>· ⇪ integrando desde {fmtAt(m.updatedAt)}</span>}
                 </span>
               </button>
+              {m.status === 'ativa' && missionTypeOf(m) === 'dev' && m.kind !== 'direta' && (
+                <button
+                  className="btn ghost tiny mission-version-change-action"
+                  data-tip="Escolher outra versão para integrar esta missão"
+                  onClick={() => setVersionChangeMission(m)}
+                >
+                  Alterar versão
+                </button>
+              )}
               {(m.status === 'ativa' || m.status === 'arquivada') && (
                 <button
                   className="btn ghost tiny"
@@ -357,6 +370,13 @@ function MissionsPane({ projectId, versions }: { projectId: string; versions: Ve
         </div>, document.body
       )}
 
+      {versionChangeMission && (
+        <MissionVersionChangeModal
+          mission={missions.find((mission) => mission.id === versionChangeMission.id) ?? versionChangeMission}
+          versions={versions}
+          onClose={closeVersionChange}
+        />
+      )}
       {chatViewer && <ArchivedMissionChat mission={chatViewer} onClose={closeChatViewer} />}
     </div>
   )
