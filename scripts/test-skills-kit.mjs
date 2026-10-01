@@ -41,9 +41,9 @@ import {
   rmSync,
   writeFileSync
 } from 'node:fs'
-import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import test from 'node:test'
+import { fileURLToPath } from 'node:url'
 
 import {
   SkillsKitStore,
@@ -95,7 +95,9 @@ const signals = []
 attachSkillsKitRecorder((signal) => signals.push(signal))
 
 function sandbox(t, label) {
-  const root = mkdtempSync(join(tmpdir(), `synkora-skills-${label}-`))
+  const fixtures = fileURLToPath(new URL('../.tmp/sk/', import.meta.url))
+  mkdirSync(fixtures, { recursive: true })
+  const root = mkdtempSync(join(fixtures, `${label}-`))
   t.after(() => rmSync(root, { recursive: true, force: true }))
   return root
 }
@@ -436,16 +438,105 @@ test('kitForChat dedupa a pasta e deixa o desligado fora; a poda vê os dois', (
 test('arquivo ilegível volta ao seed, e o sinal diz que ele EXISTIA', (t) => {
   const root = sandbox(t, 'degrada-total')
   const file = join(root, 'skills-kit.json')
-  writeFileSync(file, '{ isto não é json', 'utf8')
+  const documents = [
+    [file, Buffer.from('{ isto não é json\r\n✦', 'utf8')],
+    [`${file}.bak`, Buffer.from([0, 0xff, 0x7b])],
+    [`${file}.bak.1`, Buffer.from('{"version":99}\r\n', 'utf8')]
+  ]
+  for (const [path, bytes] of documents) writeFileSync(path, bytes)
+  const names = readdirSync(root)
 
   const marker = signals.length
-  const state = new SkillsKitStore(file).state()
+  const store = new SkillsKitStore(file)
+  const state = store.state()
   assert.equal(state.dev.execucao.length, 11)
   assert.equal(state.dev.execucao[0].id, 'impeccable')
   assert.ok(signals.length > marker)
   assert.equal(signals.at(-1).event, 'skills-kit-seeded')
   assert.match(signals.at(-1).reason, /existia mas não era legível/u)
   assert.equal(signals.at(-1).detail.existed, true)
+  assert.equal(signals.at(-1).detail.writesBlocked, true)
+  for (const mutate of [
+    () => store.setSlotEnabled('dev', 'impeccable', false),
+    () => store.addSlot('planejamento', { id: 'nova-skill', occasion: 'teste' }),
+    () => store.removeSlot('dev', 'impeccable')
+  ]) {
+    assert.throws(mutate, { code: 'JSON_STORE_UNRECOVERABLE' })
+    assert.deepEqual(store.state(), state, 'a mutação recusada mudou o seed em memória')
+    for (const [path, bytes] of documents) assert.deepEqual(readFileSync(path), bytes)
+    assert.deepEqual(readdirSync(root), names, 'o fallback criou ou removeu arquivos')
+  }
+})
+
+test('backup inválido sem principal mantém o seed somente em memória', (t) => {
+  const root = sandbox(t, 'backup-invalido')
+  const file = join(root, 'skills-kit.json')
+  const bytes = Buffer.from('{"version":1,"dev":{}}\n')
+  writeFileSync(`${file}.bak`, bytes)
+
+  const store = new SkillsKitStore(file)
+  assert.equal(store.state().dev.execucao[0].id, 'impeccable')
+  assert.equal(signals.at(-1).detail.existed, true)
+  assert.equal(signals.at(-1).detail.writesBlocked, true)
+  assert.throws(() => store.removeSlot('dev', 'impeccable'), { code: 'JSON_STORE_UNRECOVERABLE' })
+  assert.deepEqual(readFileSync(`${file}.bak`), bytes)
+  assert.deepEqual(readdirSync(root), ['skills-kit.json.bak'])
+})
+
+test('mutação só volta a gravar após recarregar uma cópia válida', (t) => {
+  const root = sandbox(t, 'recarga-valida')
+  const file = join(root, 'skills-kit.json')
+  const corrupt = Buffer.from('{ documento interrompido\r\n')
+  writeFileSync(file, corrupt)
+  const store = new SkillsKitStore(file)
+  const initial = store.state()
+  const mutate = () => store.setSlotEnabled('dev', 'impeccable', false)
+  assert.throws(mutate, { code: 'JSON_STORE_UNRECOVERABLE' })
+
+  const valid = Buffer.from(JSON.stringify({
+    version: 1,
+    dev: { execucao: [slot('impeccable', 'ocasião restaurada')], orquestracao: [] },
+    planejamento: []
+  }))
+  writeFileSync(`${file}.bak.1`, valid)
+  assert.throws(mutate, { code: 'JSON_STORE_UNRECOVERABLE' })
+  assert.deepEqual(store.state(), initial)
+  assert.deepEqual(readFileSync(file), corrupt)
+
+  const reloaded = new SkillsKitStore(file)
+  assert.equal(reloaded.state().dev.execucao[0].occasion, 'ocasião restaurada')
+  assert.deepEqual(readFileSync(file), corrupt, 'a carga da cópia válida reescreveu o principal')
+  assert.equal(reloaded.setSlotEnabled('dev', 'impeccable', false).ok, true)
+  assert.equal(JSON.parse(readFileSync(file, 'utf8')).dev.execucao[0].enabled, false)
+  assert.deepEqual(readFileSync(`${file}.bak.1`), valid)
+  const preserved = readdirSync(root).filter((name) => name.startsWith('skills-kit.json.corrupt-'))
+  assert.equal(preserved.length, 1)
+  assert.deepEqual(readFileSync(join(root, preserved[0])), corrupt)
+})
+
+test('falha de I/O não é tratada como documento corrompido', (t) => {
+  const root = sandbox(t, 'io-indisponivel')
+  const file = join(root, 'skills-kit.json')
+  mkdirSync(file)
+  const marker = signals.length
+
+  assert.throws(() => new SkillsKitStore(file), { code: 'EISDIR' })
+  assert.equal(signals.length, marker, 'a falha de I/O foi anunciada como seed benigno')
+  assert.deepEqual(readdirSync(file), [])
+  assert.deepEqual(readdirSync(root), ['skills-kit.json'])
+})
+
+test('erro do recorder continua visível na carga', (t) => {
+  const root = sandbox(t, 'recorder-falhou')
+  const file = join(root, 'skills-kit.json')
+  writeFileSync(file, '{ documento inválido')
+  const failure = new TypeError('falha sintética do recorder')
+  attachSkillsKitRecorder(() => { throw failure })
+  try {
+    assert.throws(() => new SkillsKitStore(file), (error) => error === failure)
+  } finally {
+    attachSkillsKitRecorder((signal) => signals.push(signal))
+  }
 })
 
 test('lixo parcial derruba SÓ o slot podre — o kit do dono sobrevive', (t) => {
@@ -582,6 +673,7 @@ test('re-sincronizar não toca o disco (o reconciliador roda a cada remontagem)'
   const kit = [slot('owasp-security')]
 
   const first = syncPaneSkills(cwd, 'dev', { kit, libraryRoot: lib })
+  assert.equal(first.ok, true, JSON.stringify(first.failures))
   const manifestBefore = readFileSync(join(cwd, CLAUDE_TARGET, SYNC_MANIFEST), 'utf8')
   const second = syncPaneSkills(cwd, 'dev', { kit, libraryRoot: lib })
 
@@ -1459,7 +1551,8 @@ test('discardAgentSkill leva a pasta dos dois alvos e nomeia o que fica', (t) =>
   const root = sandbox(t, 'agent-descarta')
   const cwd = join(root, 'worktree')
   mkdirSync(cwd, { recursive: true })
-  assert.equal(materializeAgentSkill(cwd, fakeDownload(root, 'gsap-core'), 'gsap-core').ok, true)
+  const materialized = materializeAgentSkill(cwd, fakeDownload(root, 'gsap-core'), 'gsap-core')
+  assert.equal(materialized.ok, true, materialized.error)
 
   const out = discardAgentSkill(cwd, 'gsap-core')
   assert.equal(out.ok, true, out.error)
