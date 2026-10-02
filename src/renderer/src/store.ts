@@ -25,6 +25,7 @@ import type {
   GuiAttachmentDescriptor,
   HistoryPaneConversation,
   HistoryTranscriptMessage,
+  MissionVersionChangeResult,
   SynkoraSettings,
   SynkoraSettingsPatch
 } from '../../preload/index'
@@ -1979,6 +1980,7 @@ interface SynkoraState {
   missionsByProject: Record<string, Mission[]>
   loadMissions: (projectId: string) => Promise<void>
   createMission: (projectId: string, input: NewMissionInput) => Promise<Mission | null>
+  changeMissionVersion: (missionId: string, targetVersionId: string) => Promise<MissionVersionChangeResult>
   archiveMission: (id: string, archived: boolean) => Promise<void>
   /** planejamento: conclui num clique — a missão encerra e some da coluna; o
    *  plano/ fica no repo e a aba do plano segue no mapa (o main guarda a porta:
@@ -2300,6 +2302,32 @@ export const useStore = create<SynkoraState>((set, get) => ({
     const pid = get().openProjectId
     if (pid) await get().loadMissions(pid)
   },
+  changeMissionVersion: async (missionId, targetVersionId) => {
+    if (!window.synkora.missions?.changeVersion) {
+      return { ok: false, error: 'Reinicie o Synkora para alterar a versão da missão.' }
+    }
+    let result: MissionVersionChangeResult
+    try {
+      result = await window.synkora.missions.changeVersion(missionId, targetVersionId)
+    } catch {
+      return { ok: false, error: 'Não foi possível confirmar a alteração. Confira a versão da missão na lista e tente novamente.' }
+    }
+    if (!result.ok) return result
+    const mission = result.mission
+    const projectId = mission.projectId
+    missionListEpochs.set(projectId, (missionListEpochs.get(projectId) ?? 0) + 1)
+    set((state) => {
+      const list = state.missionsByProject[projectId] ?? (state.openProjectId === projectId ? state.missions : [])
+      const missions = list.some((item) => item.id === mission.id)
+        ? list.map((item) => item.id === mission.id ? mission : item)
+        : [...list, mission]
+      return {
+        missionsByProject: { ...state.missionsByProject, [projectId]: missions },
+        ...(state.openProjectId === projectId ? { missions } : {})
+      }
+    })
+    return result
+  },
   finishMission: async (id) => {
     if (!window.synkora.missions?.finish) {
       return { ok: false, error: 'reinicie o app (npm run dev) para finalizar missões' }
@@ -2405,6 +2433,7 @@ export const useStore = create<SynkoraState>((set, get) => ({
       return { ok: false, error: plainIpcError(err) }
     }
     await get().loadProjects()
+    get().openProject(res.id)
     return { ok: true, projectId: res.id, warning: projectCreateWarning(res) }
   },
 

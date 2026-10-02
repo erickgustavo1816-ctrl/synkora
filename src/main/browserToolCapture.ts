@@ -1,6 +1,7 @@
 /** Capture intent is explicit: owner artifacts do not add a model image. */
 import type { BrowserDriverSession } from './browserDriver'
 import { captureBrowserShot, type BrowserShotResult, type ShotCapturer } from './browserShot'
+import { viewportCaptureRect } from './browserViewportFit'
 import { sanitizeGuiArtifactPreviewText, sanitizeGuiArtifactPreviewUrl } from './guiFileBrowserUrl'
 
 export interface BrowserToolShotInput {
@@ -57,7 +58,7 @@ export async function captureBrowserToolShot(
     format: input.format,
     quality: input.quality,
     maxWidth: input.maxWidth,
-    clip,
+    clip: viewportCaptureRect(context.capturer, clip),
     clipLabel: clipLabel ? sanitizeGuiArtifactPreviewText(clipLabel) : undefined,
     inline: input.purpose === 'vision' && context.cli === 'claude',
     freshness: await context.session.freshness()

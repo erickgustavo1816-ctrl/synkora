@@ -984,6 +984,14 @@ export function registerMissionsIpc(ctx: MainContext, extras: MissionsIpcExtras)
   )
 
   ipcMain.handle('missions:update', (_e, id: string, patch: MissionMetadataPatch) => lifecycle.update(id, patch))
+  ipcMain.handle('missions:changeVersion', (event, missionId: unknown, targetVersionId: unknown) => {
+    try {
+      extras.assertAppRendererSender(event)
+    } catch {
+      return { ok: false, error: 'Esta janela não está autorizada a alterar a versão. Reabra a missão na janela do Synkora.' }
+    }
+    return lifecycle.changeVersion(missionId, targetVersionId)
+  })
   ipcMain.handle('missions:finish', (_e, id: string) => lifecycle.finish(id))
 
   // R17 (2026-08-19): o ⇪ virou ASSÍNCRONO — cada git dele viaja pelo

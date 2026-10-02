@@ -88,6 +88,7 @@ import {
   type BrowserConsoleEntry, type BrowserConsoleResult, type BrowserProbeResult,
   type BrowserWaitOptions, type BrowserWaitResult
 } from './browserObservationRuntime'
+import { viewportInputParams } from './browserViewportFit'
 export { BROWSER_READ_DEFAULT_MAX_CHARS, BROWSER_READ_CEILING_CHARS, BROWSER_RESPONSE_DEFAULT_MAX_CHARS } from './browserObservation'
 export type { BrowserReadOptions, BrowserObservationResult } from './browserObservation'
 export { BROWSER_WAIT_DEFAULT_MS, BROWSER_WAIT_MAX_MS } from './browserObservationRuntime'
@@ -319,7 +320,8 @@ export class BrowserDriverSession {
   /** Toda ida ao CDP passa por aqui: teto de tempo e erro legível. */
   private async send(method: string, params?: Record<string, unknown>): Promise<unknown> {
     return withTimeout(
-      this.page.debugger.sendCommand(method, params ?? {}),
+      this.page.debugger.sendCommand(method, method === 'Input.dispatchMouseEvent'
+        ? viewportInputParams(this.page, params ?? {}) : params ?? {}),
       BROWSER_CDP_TIMEOUT_MS,
       method
     )
@@ -766,24 +768,7 @@ export class BrowserDriverSession {
     }
   }
 
-  /**
-   * O TEMA que a página realmente enxerga (`prefers-color-scheme`), não um
-   * truque de CSS. Metade do que era `browser_viewport`.
-   *
-   * A OUTRA METADE SAIU DAQUI (2026-08-29). A LARGURA não é mais
-   * `Emulation.setDeviceMetricsOverride`: ela virou zoom de ajuste no MOTOR
-   * (`browserPane` + `browserViewport`), porque a moldura da página é do painel
-   * e o dono manda nela pelo seletor do chrome. Duas razões medidas
-   * (`PROBE_BROWSER_VIEWPORT_FIT_2026-08-29.md`):
-   * - a emulação REDIMENSIONA a superfície da view, e o `capturePage` do
-   *   `browser_shot` passava a devolver um bitmap do tamanho EMULADO com a
-   *   página ocupando 31% dele;
-   * - sob emulação com `scale`, o `Input.dispatchMouseEvent` deste driver
-   *   deixaria de acertar o alvo em coordenada lógica (é o que
-   *   `browserActions` usa, vindo do `getBoundingClientRect`).
-   * Sob a receita de zoom, este driver não muda uma linha: as coordenadas
-   * continuam lógicas e a captura continua do tamanho da moldura.
-   */
+  /** Theme emulation is independent of the native per-tab viewport fit. */
   async colorScheme(scheme: 'light' | 'dark'): Promise<string> {
     await this.ensureAttached()
     await this.send('Emulation.setEmulatedMedia', {

@@ -1980,15 +1980,18 @@ export class GuiSessionRegistry {
     if (fastWrite === true) next.delegateFast = true
     else if (fastWrite === false) delete next.delegateFast
     next.updatedAt = new Date().toISOString()
-    this.doc.panes[paneId] = next
+    const nextDoc = { ...this.doc, panes: { ...this.doc.panes, [paneId]: next } }
     if (this.deps.storeFile) {
       try {
-        persistJsonStore(this.deps.storeFile, this.doc)
+        persistJsonStore(this.deps.storeFile, nextDoc)
       } catch {
-        // O pino já vale em memória para a próxima delegação; o disco tenta de
-        // novo no próximo checkpoint em vez de derrubar a escolha do dono.
+        return {
+          ok: false,
+          error: 'não foi possível salvar os padrões dos ajudantes; verifique o acesso aos arquivos ou restaure uma cópia válida antes de tentar novamente'
+        }
       }
     }
+    this.doc = nextDoc
     const applied = guiDelegationDefaultsOf(next)
     // O diário responde à pergunta que o dono faria depois ("por que a frota
     // abriu em fable?") sem depender de ele lembrar quando mexeu na abinha.
