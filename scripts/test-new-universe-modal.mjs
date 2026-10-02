@@ -90,10 +90,12 @@ const flush = () => act(async () => { await new Promise((resolve) => setTimeout(
 /** Monta o modal com uma pasta, uma leitura dela e uma resposta do main. */
 async function harness({ folder = 'C:\\Users\\Erick\\Documents\\proposta-clinica', inspect, create: onCreate } = {}) {
   const calls = { create: [], inspect: [], closed: 0 }
+  let createdProject
   windowStub.synkora = {
     pickFolder: async () => folder,
+    missions: { list: async () => [] },
     projects: {
-      list: async () => [],
+      list: async () => createdProject ? [createdProject] : [],
       inspectFolder: async (path) => {
         calls.inspect.push(path)
         if (inspect instanceof Error) throw inspect
@@ -101,12 +103,14 @@ async function harness({ folder = 'C:\\Users\\Erick\\Documents\\proposta-clinica
       },
       create: async (...args) => {
         calls.create.push(args)
-        if (onCreate) return onCreate(...args)
-        return { id: 'p-new', name: args[0], path: args[1], createdAt: '2026-09-30T12:00:00.000Z' }
+        createdProject = onCreate
+          ? await onCreate(...args)
+          : { id: 'p-new', name: args[0], path: args[1], versioning: args[3], createdAt: '2026-09-30T12:00:00.000Z' }
+        return createdProject
       }
     }
   }
-  useStore.setState({ projects: [] })
+  useStore.setState({ projects: [], openProjectId: null, mountedProjects: [], missions: [], missionsByProject: {} })
   let tree
   await act(async () => {
     tree = create(React.createElement(NewUniverseModal, { onClose: () => { calls.closed += 1 } }))
@@ -135,6 +139,54 @@ async function pickFolder(h) {
   await h.click(h.button(/escolher pasta/i))
   await flush()
 }
+
+for (const origin of [null, 'p-existing']) {
+  for (const versioning of ['git', 'none']) {
+    test(`criar universo ${versioning} a partir de ${origin ?? 'Home'} abre o universo recém-criado`, async () => {
+      const h = await harness()
+      useStore.setState({ openProjectId: origin, mountedProjects: origin ? [origin] : [] })
+      await pickFolder(h)
+      if (versioning === 'none') await h.click(h.toggle())
+      await h.click(h.button(/criar universo/i))
+
+      const state = useStore.getState()
+      assert.equal(state.openProjectId, 'p-new')
+      assert.ok(state.mountedProjects.includes('p-new'), 'o universo aberto precisa estar montado')
+      if (origin) assert.ok(state.mountedProjects.includes(origin), 'o universo anterior permanece montado')
+      assert.equal(state.projects.find((project) => project.id === 'p-new')?.versioning, versioning)
+      assert.equal(h.calls.closed, 1)
+    })
+  }
+}
+
+test('criação recusada preserva o universo aberto e mantém o modal', async () => {
+  const h = await harness({ create: async () => { throw new Error('Pasta indisponível') } })
+  useStore.setState({ openProjectId: 'p-existing', mountedProjects: ['p-existing'] })
+  await pickFolder(h)
+  await h.click(h.button(/criar universo/i))
+
+  assert.equal(useStore.getState().openProjectId, 'p-existing')
+  assert.deepEqual(useStore.getState().mountedProjects, ['p-existing'])
+  assert.equal(h.calls.closed, 0)
+})
+
+test('universo criado com aviso do GitHub já fica aberto e preserva o aviso até confirmar', async () => {
+  const h = await harness({
+    create: async (name, path) => ({
+      id: 'p-new', name, path, createdAt: '2026-09-30T12:00:00.000Z', gitWarning: 'Não foi possível enviar ao GitHub.'
+    })
+  })
+  await pickFolder(h)
+  await h.click(h.button(/criar universo/i))
+
+  assert.equal(useStore.getState().openProjectId, 'p-new')
+  assert.ok(useStore.getState().mountedProjects.includes('p-new'))
+  assert.match(textOf(h.root()), /Não foi possível enviar ao GitHub\./)
+  assert.equal(h.calls.closed, 0)
+  await h.click(h.button(/entendi/i))
+  assert.equal(h.calls.closed, 1)
+  assert.equal(useStore.getState().openProjectId, 'p-new')
+})
 
 // ————————————————————————— o interruptor —————————————————————————
 

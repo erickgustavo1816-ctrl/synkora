@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import {
+  default as fs,
   appendFileSync,
   existsSync,
   mkdtempSync,
@@ -10,6 +11,8 @@ import {
   symlinkSync,
   writeFileSync
 } from 'node:fs'
+import { syncBuiltinESMExports } from 'node:module'
+import { fileURLToPath } from 'node:url'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -119,6 +122,63 @@ const ownerMailModule = await import('../.tmp/gui-sessions-test/main/guiOwnerMai
 const ownerDebtModule = await import('../.tmp/gui-sessions-test/main/guiOwnerReplyDebt.js').catch(
   () => ({})
 )
+
+test('delegation preference failure returns an error without changing memory or disk', t => {
+  const root = mkdtempSync(fileURLToPath(new URL('../.tmp/gui-preference-failure-', import.meta.url)))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const storeFile = join(root, 'gui-sessions.json')
+  const record = {
+    cli: 'codex', projectId: 'synthetic-project', updatedAt: '2026-10-01T00:00:00.000Z',
+    delegateModel: 'prior-model', delegateEffort: 'high'
+  }
+  writeFileSync(storeFile, JSON.stringify({ panes: { synthetic: record }, transcripts: {} }))
+  const journal = []
+  const gui = new GuiSessionRegistry({
+    push: () => undefined, systemPromptFile: () => undefined, storeFile,
+    record: (...args) => journal.push(args)
+  })
+  const before = readFileSync(storeFile)
+  const originalRename = fs.renameSync
+  fs.renameSync = (source, destination) => {
+    if (destination === storeFile) throw Object.assign(new Error('synthetic disk failure'), { code: 'EIO' })
+    return originalRename(source, destination)
+  }
+  syncBuiltinESMExports()
+  let result
+  try {
+    result = gui.setDelegationDefaults('synthetic', { model: 'next-model', effort: 'low', fast: true })
+  } finally {
+    fs.renameSync = originalRename
+    syncBuiltinESMExports()
+  }
+  assert.equal(result.ok, false)
+  assert.equal(typeof result.error, 'string')
+  assert.deepEqual(gui.remembered('synthetic'), record)
+  assert.deepEqual(gui.delegationDefaults('synthetic'), { model: 'prior-model', effort: 'high' })
+  assert.deepEqual(readFileSync(storeFile), before)
+  assert.equal(journal.length, 0)
+  assert.equal(gui.setDelegationDefaults('synthetic', { model: 'next-model' }).ok, true)
+  const reloaded = new GuiSessionRegistry({ push: () => undefined, systemPromptFile: () => undefined, storeFile })
+  assert.equal(reloaded.delegationDefaults('synthetic').model, 'next-model')
+})
+
+test('invalid GUI persistence can boot with fallback but cannot overwrite damaged sessions', t => {
+  const root = mkdtempSync(fileURLToPath(new URL('../.tmp/gui-corrupt-write-', import.meta.url)))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const storeFile = join(root, 'gui-sessions.json')
+  writeFileSync(storeFile, '{broken-main')
+  writeFileSync(`${storeFile}.bak`, '{broken-backup')
+  const gui = new GuiSessionRegistry({ push: () => undefined, systemPromptFile: () => undefined, storeFile })
+  gui.spawnSession = () => ({ alive: true, kill: () => undefined })
+  assert.equal(gui.create({ paneId: 'synthetic', projectId: 'synthetic-project', cli: 'codex', configDir: root, cwd: root }).ok, true)
+  const previous = { ...gui.remembered('synthetic') }
+  const result = gui.setDelegationDefaults('synthetic', { model: 'next-model' })
+  assert.equal(result.ok, false)
+  assert.deepEqual(gui.remembered('synthetic'), previous)
+  assert.equal(readFileSync(storeFile, 'utf8'), '{broken-main')
+  assert.equal(readFileSync(`${storeFile}.bak`, 'utf8'), '{broken-backup')
+  gui.kill('synthetic')
+})
 
 test('permissão permanente mostra e grava apenas a regra Bash estreita', () => {
   assert.equal(

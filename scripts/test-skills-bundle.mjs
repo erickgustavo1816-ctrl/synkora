@@ -62,7 +62,11 @@ test('seeds missing skills byte-for-byte and preserves provenance and unrelated 
   assert.deepEqual(manifest.installed.unrelated, old.installed.unrelated)
   assert.deepEqual(manifest.updates, old.updates)
   assert.deepEqual(manifest.ownerField, old.ownerField)
-  assert.deepEqual(JSON.parse(readFileSync(`${input.manifestFile}.bak`, 'utf8')), manifest)
+  assert.deepEqual(JSON.parse(readFileSync(`${input.manifestFile}.bak`, 'utf8')), {
+    ...old,
+    installed: { ...old.installed, 'upstream-skill': manifest.installed['upstream-skill'] }
+  })
+  assert.deepEqual(JSON.parse(readFileSync(`${input.manifestFile}.bak.1`, 'utf8')), old)
 })
 
 test('never overwrites an existing library folder or its manifest entry', (t) => {

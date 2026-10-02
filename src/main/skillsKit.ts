@@ -32,7 +32,7 @@
  * node puro, como as do backlog e dos planos.
  */
 import { app } from 'electron'
-import { existsSync } from 'fs'
+import { readFileSync } from 'fs'
 import { join } from 'path'
 import { loadJsonStore, persistJsonStore } from './jsonStore'
 
@@ -297,13 +297,21 @@ export class SkillsKitStore {
 
   constructor(file = join(app.getPath('userData'), 'skills-kit.json')) {
     this.file = file
-    // "não existia" e "existia e estava podre" são histórias diferentes no
-    // diário — e é a segunda que alguém vai investigar.
-    const existed = existsSync(file)
+    let existed = false
     let degraded = false
     const loaded = loadJsonStore<SkillsKitState>(
       this.file,
       () => {
+        for (const candidate of [this.file, `${this.file}.bak`, `${this.file}.bak.1`]) {
+          try {
+            readFileSync(candidate)
+            existed = true
+          } catch (error) {
+            if (!(error instanceof Error) || !('code' in error) || error.code !== 'ENOENT') {
+              throw error
+            }
+          }
+        }
         degraded = true
         return seedSkillsKit()
       },
@@ -315,9 +323,9 @@ export class SkillsKitStore {
       signal({
         event: 'skills-kit-seeded',
         reason: existed
-          ? 'o skills-kit.json existia mas não era legível — o kit voltou ao seed aprovado'
+          ? 'a persistência do skills-kit.json existia mas não era legível — seed aprovado em memória, arquivos preservados e gravação bloqueada'
           : 'primeira leitura: o kit nasceu do seed aprovado',
-        detail: { file: this.file, existed }
+        detail: { file: this.file, existed, writesBlocked: existed }
       })
     } else if (report.dropped.length > 0) {
       signal({
@@ -333,10 +341,7 @@ export class SkillsKitStore {
         detail: { migrated: report.migrated }
       })
     }
-    // A primeira leitura SEMEIA o arquivo: o disco passa a ter a fotografia
-    // que a tela mostra, mesmo que ninguém clique em nada. A migração também
-    // pousa — senão o segundo boot a refaria e falaria de novo.
-    if (degraded || report.dropped.length > 0 || report.migrated.length > 0) {
+    if ((degraded && !existed) || report.dropped.length > 0 || report.migrated.length > 0) {
       persistJsonStore(this.file, next)
     }
     this.data = next

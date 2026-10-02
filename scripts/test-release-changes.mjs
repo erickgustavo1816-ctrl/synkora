@@ -2,7 +2,6 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { execFileSync } from 'node:child_process'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync, symlinkSync } from 'node:fs'
-import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { releaseNextStep, releaseDoneDecision, ensureReleaseMission } from '../src/main/releaseChat.ts'
 import { resolveReleaseChangeScope } from '../src/main/releaseChangesScope.ts'
@@ -41,9 +40,10 @@ const git = (cwd, ...args) => execFileSync('git', args, {
 }).trim()
 
 function fixture(t) {
-  const root = mkdtempSync(join(tmpdir(), 'synkora-release-fixture-'))
+  const fixtures = resolve('.tmp')
+  const root = mkdtempSync(join(fixtures, 'synkora-release-fixture-'))
   t.after(() => {
-    assert.equal(dirname(root), resolve(tmpdir()))
+    assert.equal(dirname(root), fixtures)
     rmSync(root, { recursive: true, force: true })
   })
   const cwd = join(root, 'project')
@@ -214,11 +214,19 @@ test('recibo sanitizado, backup legível e trava de concorrência são preservad
   const input = { ...f.input, reason: 'Synthetic password=not-a-real-password' }
   await buildReleaseChanges(f.deps).save(identity, input)
   assert.doesNotMatch(readFileSync(f.file, 'utf8'), /not-a-real-password/u)
+  const savedHead = git(f.cwd, 'rev-parse', 'HEAD')
+  assert.equal(new ReleaseChangesStore(f.file).list('p1', 'v1')[0].state, 'saved')
+  const backup = readFileSync(`${f.file}.bak`)
   writeFileSync(f.file, 'corrupted synthetic primary')
   const restored = new ReleaseChangesStore(f.file).list('p1', 'v1')
   assert.equal(restored.length, 1)
-  assert.equal(restored[0].state, 'saved')
+  assert.equal(restored[0].state, 'prepared')
+  assert.equal(restored[0].sha, savedHead)
+  assert.equal(readFileSync(f.file, 'utf8'), 'corrupted synthetic primary')
+  assert.deepEqual(readFileSync(`${f.file}.bak`), backup)
   assert.match(await buildReleaseChanges(f.deps).save(identity, input), /CORREÇÃO SALVA/u)
+  assert.equal(new ReleaseChangesStore(f.file).list('p1', 'v1')[0].state, 'saved')
+  assert.equal(git(f.cwd, 'rev-parse', 'HEAD'), savedHead)
 })
 
 test('push explícito usa remoto local, repete falha sem duplicar commit e não atesta instalador', async (t) => {
