@@ -1,0 +1,64 @@
+.mission-version-change-overlay {
+  padding: 20px;
+}
+
+.mission-version-change-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.mission-version-change-mission-title {
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.mission-version-change-current,
+.mission-version-change-description,
+.mission-version-change-error {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.mission-version-change-description {
+  color: var(--ink-2);
+}
+
+.mission-version-change-field .sel,
+.mission-version-change-field .sel-trigger {
+  width: 100%;
+}
+
+.mission-version-change-error {
+  color: var(--err);
+}
+
+.mission-version-change-error p {
+  margin: 0 0 8px;
+}
+
+.mission-version-change-actions {
+  flex-wrap: wrap;
+}
+
+.mission-version-change-action {
+  flex: none;
+}
+
+@media (max-width: 640px) {
+  .ms-row:has(.mission-version-change-action) {
+    flex-wrap: wrap;
+  }
+
+  .ms-row:has(.mission-version-change-action) .ms-main {
+    flex-basis: 100%;
+  }
+
+  .ms-row:has(.mission-version-change-action) .ms-head-line {
+    flex-wrap: wrap;
+  }
+
+  .ms-row:has(.mission-version-change-action) .ms-title {
+    flex-basis: 100%;
+  }
+}

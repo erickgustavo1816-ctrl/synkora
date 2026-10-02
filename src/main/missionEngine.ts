@@ -1090,6 +1090,14 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
     if (isUnversionedProject(project)) return unversionedRefusal('integration')
     const missionProjectId = mission.projectId
     const missionTitle = mission.title
+    const preparationVersionId = mission.versionId
+    const preparationProjectPath = project.path
+    const preparationChangedMessage = 'A missão mudou durante a preparação da integração. Confira a versão na lista de missões e tente integrar novamente.'
+    const preparationIsCurrent = (): boolean => {
+      const current = missions.get(missionId)
+      return current?.projectId === missionProjectId && current.status === 'ativa' &&
+        current.versionId === preparationVersionId && projects.get(missionProjectId)?.path === preparationProjectPath
+    }
     // Bloqueio de integração NUNCA é mudo (2026-08-10: o clique do dono no ⇪
     // devolvia só uma string que virava banner — zero rastro no journal e
     // cara de clique morto): todo retorno bloqueante audita na caixa-preta
@@ -1190,6 +1198,8 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
             'a missão NÃO está pronta para o aval do dono: a branch tem alterações não commitadas depois dos gates — enquadre a árvore (commit auditado ou limpeza) antes de pedir integração'
           )
       }
+      if (!preparationIsCurrent())
+        return integrateBlocked('mission-changed', preparationChangedMessage)
       if (!missions.get(missionId)?.pendingIntegrationApproval) {
         missions.update(missionId, { pendingIntegrationApproval: true })
         emitMissionsChanged(mission.projectId)
@@ -1208,6 +1218,8 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
       )
     }
     if (!gitProject) {
+      if (!preparationIsCurrent())
+        return integrateBlocked('mission-changed', preparationChangedMessage)
       // sem git não há merge: concluir é só marcar.
       // R16: e não há entrega a capturar — sem commits, o `goal` é tudo o que
       // existe. `delivery` fica AUSENTE e o briefing de quem depender desta
@@ -1261,6 +1273,8 @@ export function createMissionEngine(ctx: MainContext, extras: MissionEngineExtra
         'heads',
         'integração bloqueada: não consegui identificar os commits atuais da missão e do destino'
       )
+    if (!preparationIsCurrent())
+      return integrateBlocked('mission-changed', preparationChangedMessage)
     // O AVAL do dono só se consome quando o clique ATRAVESSA todas as
     // checagens (2026-08-10: o clear precoce apagava a pulsação do botão
     // mesmo com o clique bloqueado — a intenção do agente se perdia).

@@ -1103,6 +1103,7 @@ function createIntegrationHarness(t, extras = {}) {
     createdAt: '2026-08-19T00:00:00.000Z',
     updatedAt: '2026-08-19T00:00:00.000Z'
   }
+  const versions = [version]
 
   const missionsStore = new Map()
   const published = []
@@ -1140,13 +1141,13 @@ function createIntegrationHarness(t, extras = {}) {
       }
     },
     backlog: {
-      missionVersionChoices: () => ({ versions: [version], defaultVersionId: version.id }),
-      getVersion: (id) => (id === version.id ? version : undefined),
+      missionVersionChoices: () => ({ versions, defaultVersionId: version.id }),
+      getVersion: (id) => versions.find(candidate => candidate.id === id),
       ensureDefaultVersion: () => version,
       setVersionBranch: () => {},
       completeMissionItems: () => 0,
       addDelivery: (versionId, missionId, title) => {
-        version.deliveries.push({ missionId, title })
+        versions.find(candidate => candidate.id === versionId).deliveries.push({ missionId, title })
         return true
       }
     },
@@ -1218,6 +1219,7 @@ function createIntegrationHarness(t, extras = {}) {
     engine,
     projectPath,
     version,
+    versions,
     integrationQueue,
     published,
     audited,
@@ -1227,6 +1229,7 @@ function createIntegrationHarness(t, extras = {}) {
     missionWithDelivery,
     devPaneOf: (mission) => guiMissionPaneId('dev', mission.id),
     missionOf: (id) => missionsStore.get(id),
+    updateMission: (id, patch) => ctx.missions.update(id, patch),
     targetSha: () => gitCli(projectPath, ['rev-parse', `refs/heads/${version.branch}`]),
     /** A versão anda por fora, como outra missão integrando antes desta. */
     advanceTarget: (content) => {
@@ -1240,6 +1243,54 @@ function createIntegrationHarness(t, extras = {}) {
       stimuli.filter((entry) => entry.paneId === paneId).map((entry) => entry.text)
   }
 }
+
+test('a reassigned mission integrates into its chosen version and preserves its Git origin', async (t) => {
+  const h = createIntegrationHarness(t)
+  const mission = await h.missionWithDelivery('Synthetic version transfer', 'transfer.txt', 'synthetic work\n')
+  const originHead = h.targetSha()
+  const isolation = worktreeApi.createVersionWorktree(h.projectPath, join(userData, 'worktrees', 'proj-1'), 'V2.0', randomUUID())
+  assert.ok(isolation)
+  const target = { ...h.version, id: 'synthetic-target', name: 'V2.0', branch: isolation.branch, worktree: isolation.dir, deliveries: [] }
+  h.versions.push(target)
+  h.updateMission(mission.id, { versionId: target.id })
+
+  await h.engine.startMissionIntegration(mission.id, 'user')
+  const ticket = h.integrationQueue.getByMission(mission.id)
+  assert.equal(ticket.versionId, target.id)
+  assert.equal(ticket.targetBranch, target.branch)
+  assert.equal(h.missionOf(mission.id).baseBranch, h.version.branch)
+  assert.match(await h.engine.runMissionIntegration('proj-1', mission.id), /INTEGRADA/u)
+  assert.equal(readFileSync(join(target.worktree, 'transfer.txt'), 'utf8').replace(/\r\n/gu, '\n'), 'synthetic work\n')
+  assert.equal(h.targetSha(), originHead)
+  assert.equal(h.version.deliveries.length, 0)
+  assert.equal(target.deliveries[0].missionId, mission.id)
+})
+
+for (const actor of ['user', 'dev']) test(`changing version during integration preparation rejects stale ${actor} intent`, async (t) => {
+  const h = createIntegrationHarness(t)
+  const mission = await h.missionWithDelivery('Synthetic transfer race', 'race.txt', 'synthetic work\n')
+  let release, enter
+  const waiting = new Promise(resolve => { release = resolve })
+  const entered = new Promise(resolve => { enter = resolve })
+  t.after(() => release())
+  gitOffOverride = async (fn, args) => {
+    const pause = actor === 'user'
+      ? fn === 'gitHead' && args[0] === h.version.worktree
+      : fn === 'isWorktreeClean' && args[0] === mission.worktree
+    if (pause) { enter(); await waiting }
+    return worktreeApi[fn](...args)
+  }
+  const preparing = h.engine.startMissionIntegration(mission.id, actor)
+  await entered
+  h.updateMission(mission.id, { versionId: 'synthetic-other-version' })
+  release()
+  const result = await preparing
+  assert.equal(h.integrationQueue.getByMission(mission.id), undefined, 'stale integration must not enter the queue')
+  assert.notEqual(h.missionOf(mission.id).pendingIntegrationApproval, true, 'stale agent preparation must not create approval intent')
+  assert.match(result, /mudou|alterad/iu)
+  assert.equal(h.missionOf(mission.id).versionId, 'synthetic-other-version')
+  assert.equal(existsSync(join(mission.worktree, 'race.txt')), true)
+})
 
 test('o ⇪ do dono ENTREGA a subida ao agente — e NADA mescla sozinho', async (t) => {
   const h = createIntegrationHarness(t)

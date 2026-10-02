@@ -382,6 +382,11 @@ export interface MissionVersionChoices {
   defaultVersionId?: string
 }
 
+/** Mirror of the dedicated missions:changeVersion IPC result. */
+export type MissionVersionChangeResult =
+  | { ok: true; mission: Mission }
+  | { ok: false; error: string }
+
 export interface BacklogItem {
   id: string
   projectId: string
@@ -1392,6 +1397,8 @@ const api = {
     /** Fonte canonica de destinos elegiveis para uma nova missao. */
     versionChoices: (projectId: string): Promise<MissionVersionChoices> =>
       ipcRenderer.invoke('missions:versionChoices', projectId),
+    changeVersion: (missionId: string, targetVersionId: string): Promise<MissionVersionChangeResult> =>
+      ipcRenderer.invoke('missions:changeVersion', missionId, targetVersionId),
     create: (projectId: string, input: NewMission): Promise<Mission | null> =>
       ipcRenderer.invoke('missions:create', projectId, input),
     update: (

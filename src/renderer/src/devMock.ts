@@ -618,6 +618,7 @@ export function installDevMock(): void {
     missions: {
       list: async (projectId: string) => missions.filter((m) => m.projectId === projectId),
       versionChoices: async () => ({ versions: [], defaultVersionId: undefined }),
+      changeVersion: async () => ({ ok: false as const, error: 'A alteração de versão está indisponível nesta prévia. Abra a missão no aplicativo.' }),
       create: async (projectId: string, input) => {
         const now = new Date().toISOString()
         const m: Mission = {

@@ -13,6 +13,7 @@ import { MissionRemovalAuthorization } from './missionRemovalAuthorization'
 import { discardMissionWorktreeChanges, missionWorktreeSnapshot } from './missionWorktreeDiscard'
 import { isUnversionedProject, unversionedRefusal } from '../shared/projectVersioning'
 import { buildSoloMissionLifecycle } from './soloMission'
+import { changeMissionVersion, type MissionVersionChangeResult } from './missionVersionChange'
 
 export interface MissionMetadataPatch {
   title?: string
@@ -48,9 +49,17 @@ export function buildMissionLifecycle(ctx: MainContext, extras: MissionLifecycle
     finish: solo.finish,
     stopSolo: solo.stop,
     closeInBackground: closeGuiPanesInBackground,
+    changeVersion(missionId: unknown, targetVersionId: unknown): MissionVersionChangeResult {
+      if (typeof missionId === 'string' && removing.has(missionId))
+        return { ok: false, error: 'A exclusão desta missão está em andamento. Aguarde o resultado antes de alterar a versão.' }
+      return changeMissionVersion(ctx, missionId, targetVersionId, emitMissionsChanged)
+    },
     update(id: string, input: MissionMetadataPatch): Mission | null {
       if (removing.has(id)) return null
-      const patch = { ...input }
+      const patch: MissionMetadataPatch = {}
+      for (const key of ['title', 'goal', 'scope', 'status'] as const) {
+        if (Object.hasOwn(input ?? {}, key)) Object.assign(patch, { [key]: input[key] })
+      }
       const mission = missions.get(id)
       if (!mission) return null
       if (isUnversionedProject(projects.get(mission.projectId)) && patch.status && patch.status !== mission.status)
