@@ -9,3 +9,12 @@ release/
 # área de trabalho de sessões de depuração (evidências preservadas, frames de
 # vídeo, saídas de bench) — nunca é código do produto
 .tmp/
+# segredos e relatórios locais — nunca entram no repositório público
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+.synkora/

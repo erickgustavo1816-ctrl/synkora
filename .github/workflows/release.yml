@@ -14,7 +14,9 @@ concurrency:
 
 jobs:
   release:
-    if: github.ref == 'refs/heads/main'
+    # Releases are built only from the private repository, which holds the
+    # RELEASES_TOKEN secret. In the public repository this job is skipped.
+    if: github.ref == 'refs/heads/main' && github.repository == 'erickgustavo1816-ctrl/synkora-privado'
     runs-on: windows-latest
     timeout-minutes: 45
     defaults:

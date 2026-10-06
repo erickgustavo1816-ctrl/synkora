@@ -1,7 +1,9 @@
 # Atualização automática do Synkora
 
-O código continua no repositório **privado** `erickgustavo1816-ctrl/synkora`.
-Os instaladores ficam no repositório **público**
+O código-fonte é público em `erickgustavo1816-ctrl/synkora`. As releases são
+compiladas a partir do repositório **privado** `erickgustavo1816-ctrl/synkora-privado`,
+que guarda o secret de publicação; no repositório público o workflow de release
+fica desligado. Os instaladores ficam no repositório **público**
 `erickgustavo1816-ctrl/synkora-releases`.
 
 ## Como a atualização chega ao app
@@ -27,7 +29,7 @@ instalador. Depois disso, as versões seguintes chegam pelo próprio app.
    tokens**, crie um token. Escolha `erickgustavo1816-ctrl` como proprietário e
    limite o acesso ao repositório `synkora-releases`. Em **Repository
    permissions**, dê a **Contents** a permissão **Read and write**.
-3. No repositório **privado** `synkora`, abra **Settings → Secrets and variables
+3. No repositório **privado** `synkora-privado`, abra **Settings → Secrets and variables
    → Actions → New repository secret**. Salve o token com o nome exato
    `RELEASES_TOKEN`.
 
